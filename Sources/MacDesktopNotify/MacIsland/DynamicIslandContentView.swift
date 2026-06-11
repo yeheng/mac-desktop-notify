@@ -221,7 +221,7 @@ struct MessageCard: View {
     @ObservedObject var vm: DynamicIslandViewModel
     @Environment(NotifyManager.self) var manager
     @State private var isHovered = false
-    @State private var isExpanded = false
+    @State private var isExpanded = true
     @State private var now = Date()
 
     var body: some View {
