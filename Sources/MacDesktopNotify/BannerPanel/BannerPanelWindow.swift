@@ -1,11 +1,12 @@
 import Cocoa
 
-/// 侧边通知面板窗口
-/// 使用 NSPanel 而非 NSWindow，因为它是一个辅助面板：
-/// - becomesKeyOnlyIfNeeded = true → 不抢其他应用的焦点
-/// - isFloatingPanel = true → 浮动在其他窗口之上
-/// - canBecomeKey = true → 可以接收按钮点击等交互事件
-class SidePanelWindow: NSPanel {
+/// 单条横幅通知的 NSPanel 窗口
+/// 每条通知拥有独立窗口，便于独立生命周期管理（超时、关闭、展开）
+class BannerPanelWindow: NSPanel {
+    /// 通知 ID（由 BannerStackManager 在创建后设置）
+    var notificationID: UUID = UUID()
+
+    // 必须重写 4 参数 init — NSPanel 的 screen 变体内部会调用此方法
     override init(
         contentRect: NSRect,
         styleMask style: NSWindow.StyleMask,
@@ -18,7 +19,13 @@ class SidePanelWindow: NSPanel {
             backing: backingStoreType,
             defer: flag
         )
+        setupWindow()
+    }
 
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    private func setupWindow() {
         isOpaque = false
         alphaValue = 1
         titleVisibility = .hidden
@@ -36,7 +43,4 @@ class SidePanelWindow: NSPanel {
         hidesOnDeactivate = false
         hasShadow = true
     }
-
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
 }

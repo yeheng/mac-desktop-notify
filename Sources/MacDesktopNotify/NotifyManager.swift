@@ -37,6 +37,7 @@ struct NotifyCreateRequest: Codable {
     let body: String
     let type: NotifyType?
     let icon: String?
+    let group: String?
     let timeout: TimeInterval?
     let actions: [NotificationActionRequest]?
     let waitForAction: Bool?
@@ -163,9 +164,13 @@ struct NotificationRecord: Identifiable, Codable, Equatable {
     var body: String
     var type: NotifyType
     var icon: String?
+    var group: String?
     var createdAt: Date
     var timeout: TimeInterval
     var actions: [NotificationAction]
+
+    /// 分组键：有 group 字段用 group，否则按 type 分组
+    var groupKey: String { group ?? "type:\(type.rawValue)" }
 
     init(
         id: UUID = UUID(),
@@ -173,6 +178,7 @@ struct NotificationRecord: Identifiable, Codable, Equatable {
         body: String,
         type: NotifyType = .info,
         icon: String? = nil,
+        group: String? = nil,
         createdAt: Date = Date(),
         timeout: TimeInterval = 8,
         actions: [NotificationAction] = []
@@ -182,6 +188,7 @@ struct NotificationRecord: Identifiable, Codable, Equatable {
         self.body = body
         self.type = type
         self.icon = icon
+        self.group = group
         self.createdAt = createdAt
         self.timeout = timeout
         self.actions = actions
@@ -194,6 +201,7 @@ struct NotificationRecord: Identifiable, Codable, Equatable {
             body: request.body,
             type: request.type ?? .info,
             icon: request.icon,
+            group: request.group,
             timeout: request.timeout ?? fallbackTimeout,
             actions: Self.normalizedActions(from: request.actions ?? [])
         )

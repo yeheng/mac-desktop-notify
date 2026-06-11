@@ -4,7 +4,6 @@ import SwiftUI
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    var panelController: SidePanelWindowController?
     var apiServer: APIServer?
     var statusItem: NSStatusItem?
     private let statusMenu = NSMenu()
@@ -26,16 +25,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         EventMonitors.shared.start()
-
-        rebuildPanel()
         setupStatusItem()
 
         let server = APIServer(manager: manager)
         apiServer = server
 
-        // MARK: 使用事件总线订阅
+        // MARK: 配置横幅通知
 
-        // Action 被触发 → 执行回调 → 反馈结果
+        if let screen = NSScreen.builtIn ?? NSScreen.main {
+            BannerStackManager.shared.configure(
+                manager: manager,
+                eventBus: eventBus,
+                screen: screen
+            )
+        }
+
+        // MARK: 事件总线订阅
+
+        // Action 被触发 → 执行回调 → 反馈结果 → 关闭横幅
         eventBus.subscribe(for: .actionTriggered) { [weak self] event in
             guard let self else { return }
             Task { @MainActor [weak self] in
@@ -43,6 +50,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard case .actionTriggered(let actionEvent) = event else { return }
 
                 let result = await self.apiServer?.handleActionSelection(actionEvent)
+
+                // 关闭该通知的横幅（已操作）
+                BannerStackManager.shared.dismissBanner(
+                    id: actionEvent.notification.id,
+                    animated: true
+                )
 
                 // 发布回调结果事件
                 if let result {
@@ -52,7 +65,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         result: result
                     ))
 
-                    // 在面板中创建结果通知
+                    // 创建结果横幅
                     let resultNotification = NotificationRecord(
                         title: result.success
                             ? "✓ \(actionEvent.action.title)"
@@ -95,40 +108,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             print("Failed to start API server: \(message)")
         }
 
+        // 屏幕参数变化 → 重新定位横幅
         NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(rebuildPanel),
-            name: NSApplication.didChangeScreenParametersNotification,
-            object: nil
-        )
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                if let screen = NSScreen.builtIn ?? NSScreen.main {
+                    BannerStackManager.shared.updateScreen(screen)
+                }
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         apiServer?.stop()
         EventMonitors.shared.stop()
-    }
-
-    // MARK: - 面板管理
-
-    @objc func rebuildPanel() {
-        panelController?.destroy()
-        panelController = nil
-
-        guard let screen = NSScreen.builtIn ?? NSScreen.main else { return }
-        let controller = SidePanelWindowController(
-            screen: screen,
-            manager: manager,
-            eventBus: eventBus
-        )
-        panelController = controller
+        BannerStackManager.shared.dismissAll()
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
-        panelController?.togglePanel()
         return true
     }
 
-    // MARK: - 状态栏图标
+    // MARK: - 状态栏图标（菜单模式）
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -141,43 +145,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             )
             button.image?.isTemplate = true
             button.toolTip = "MacDesktopNotify"
-            button.action = #selector(statusBarClicked)
-            button.target = self
         }
 
-        // 右键菜单保留
         statusMenu.delegate = self
+        item.menu = statusMenu
     }
 
-    @objc private func statusBarClicked() {
-        panelController?.togglePanel()
-    }
-
-    // 右键菜单（保留快捷操作入口）
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        menu.addItem(makeMenuItem(
-            title: "切换面板",
-            systemImage: "menubar.rectangle",
-            action: #selector(togglePanelFromMenu)
-        ))
-        menu.addItem(makeMenuItem(
-            title: "设置",
-            systemImage: "gearshape",
-            action: #selector(openSettingsFromMenu)
-        ))
-
-        menu.addItem(.separator())
-
-        menu.addItem(makeMenuItem(
-            title: manager.isLocked ? "恢复自动收起" : "保持展开",
-            systemImage: manager.isLocked ? "pin.slash" : "pin",
-            action: #selector(toggleAutoCloseFromMenu)
-        ))
-
         let clearItem = makeMenuItem(
-            title: "清空全部",
+            title: "清空全部通知",
             systemImage: "trash",
             action: #selector(clearAllFromMenu)
         )
@@ -206,19 +184,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - 菜单动作
 
-    @objc private func togglePanelFromMenu() {
-        panelController?.togglePanel()
-    }
-
-    @objc private func openSettingsFromMenu() {
-        panelController?.vm?.showSettings()
-    }
-
-    @objc private func toggleAutoCloseFromMenu() {
-        manager.toggleLock()
-    }
-
     @objc private func clearAllFromMenu() {
+        BannerStackManager.shared.dismissAll()
         manager.clear()
     }
 
