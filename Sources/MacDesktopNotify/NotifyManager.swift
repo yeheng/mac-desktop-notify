@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -33,6 +34,90 @@ struct NotifyCreateRequest: Codable {
     let type: NotifyType?
     let icon: String?
     let timeout: TimeInterval?
+    let actions: [NotificationActionRequest]?
+    let waitForAction: Bool?
+    let block: Bool?
+    let actionTimeout: TimeInterval?
+
+    var shouldWaitForAction: Bool {
+        waitForAction == true || block == true
+    }
+
+    // MARK: - Input Validation
+
+    enum ValidationError: String, Sendable {
+        case emptyTitle = "title must not be empty"
+        case titleTooLong = "title too long (max 200 characters)"
+        case bodyTooLong = "body too long (max 5000 characters)"
+        case invalidTimeout = "timeout must be between 0 and 3600"
+    }
+
+    func validate() -> ValidationError? {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedTitle.isEmpty { return .emptyTitle }
+        if trimmedTitle.count > 200 { return .titleTooLong }
+        if body.count > 5000 { return .bodyTooLong }
+        if let timeout, timeout < 0 || timeout > 3600 { return .invalidTimeout }
+        return nil
+    }
+}
+
+struct NotificationActionRequest: Codable, Equatable {
+    let id: String?
+    let title: String
+    let style: NotificationActionStyle?
+    let callback: NotificationActionCallback?
+}
+
+enum NotificationActionStyle: String, Codable, Equatable {
+    case normal
+    case primary
+    case destructive
+}
+
+enum NotificationActionCallbackType: String, Codable, Equatable {
+    case webhook
+    case command
+}
+
+struct NotificationActionCallback: Codable, Equatable {
+    let type: NotificationActionCallbackType
+    let url: String?
+    let method: String?
+    let headers: [String: String]?
+    let body: String?
+    let command: String?
+    let arguments: [String]?
+    let shell: Bool?
+    let timeout: TimeInterval?
+}
+
+struct NotificationAction: Identifiable, Codable, Equatable {
+    let id: String
+    var title: String
+    var style: NotificationActionStyle
+    var callback: NotificationActionCallback?
+}
+
+struct NotificationActionSelection: Codable, Equatable {
+    let notificationId: UUID
+    let actionId: String
+    let actionTitle: String
+    let selectedAt: Date
+}
+
+struct NotificationActionEvent {
+    let notification: NotificationRecord
+    let action: NotificationAction
+    let selection: NotificationActionSelection
+}
+
+enum NotificationDismissReason: String, Codable, Equatable {
+    case removed
+    case cleared
+    case timeout
+    case actionSelected
+    case waitTimeout
 }
 
 struct NotificationRecord: Identifiable, Codable, Equatable {
@@ -43,6 +128,7 @@ struct NotificationRecord: Identifiable, Codable, Equatable {
     var icon: String?
     var createdAt: Date
     var timeout: TimeInterval
+    var actions: [NotificationAction]
 
     init(
         id: UUID = UUID(),
@@ -51,7 +137,8 @@ struct NotificationRecord: Identifiable, Codable, Equatable {
         type: NotifyType = .info,
         icon: String? = nil,
         createdAt: Date = Date(),
-        timeout: TimeInterval = 8
+        timeout: TimeInterval = 8,
+        actions: [NotificationAction] = []
     ) {
         self.id = id
         self.title = title
@@ -60,16 +147,61 @@ struct NotificationRecord: Identifiable, Codable, Equatable {
         self.icon = icon
         self.createdAt = createdAt
         self.timeout = timeout
+        self.actions = actions
     }
 
     init(request: NotifyCreateRequest) {
+        let fallbackTimeout: TimeInterval = request.shouldWaitForAction ? 0 : 8
         self.init(
             title: request.title,
             body: request.body,
             type: request.type ?? .info,
             icon: request.icon,
-            timeout: request.timeout ?? 8
+            timeout: request.timeout ?? fallbackTimeout,
+            actions: Self.normalizedActions(from: request.actions ?? [])
         )
+    }
+
+    var validationError: String? {
+        for action in actions {
+            guard let callback = action.callback else { continue }
+            switch callback.type {
+            case .webhook:
+                guard let rawURL = callback.url?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      let url = URL(string: rawURL),
+                      ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+                else {
+                    return "Action '\(action.id)' has an invalid webhook URL"
+                }
+            case .command:
+                guard callback.command?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                    return "Action '\(action.id)' has an empty command"
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func normalizedActions(from requests: [NotificationActionRequest]) -> [NotificationAction] {
+        var seen = Set<String>()
+
+        return requests.enumerated().map { index, request in
+            let fallbackId = "action-\(index + 1)"
+            let rawId = request.id?.trimmingCharacters(in: .whitespacesAndNewlines)
+            var id = rawId?.isEmpty == false ? rawId! : fallbackId
+            if seen.contains(id) {
+                id = "\(id)-\(index + 1)"
+            }
+            seen.insert(id)
+
+            let rawTitle = request.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            return NotificationAction(
+                id: id,
+                title: rawTitle.isEmpty ? id : rawTitle,
+                style: request.style ?? .normal,
+                callback: request.callback
+            )
+        }
     }
 }
 
@@ -103,12 +235,24 @@ enum APIServiceState: Equatable {
 @Observable
 final class NotifyManager {
     private let maxItems = 100
+    private var timeoutTasks: [UUID: Task<Void, Never>] = [:]
 
     private(set) var items: [NotificationRecord] = []
     var isLocked = false
     var serviceState: APIServiceState = .stopped
-    var onNewNotification: ((NotificationRecord) -> Void)?
-    var onLockChanged: ((Bool) -> Void)?
+
+    // MARK: - Combine Publishers（支持多订阅者）
+
+    /// 新通知到达时发送事件
+    let newNotificationSubject = PassthroughSubject<NotificationRecord, Never>()
+    /// 锁定状态变化时发送事件
+    let lockChangedSubject = PassthroughSubject<Bool, Never>()
+    /// Action 被触发时发送事件
+    let actionTriggeredSubject = PassthroughSubject<NotificationActionEvent, Never>()
+    /// 通知被移除时发送事件
+    let notificationDismissedSubject = PassthroughSubject<(UUID, NotificationDismissReason), Never>()
+
+    // MARK: - Mutation Methods
 
     func add(_ item: NotificationRecord) {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
@@ -117,31 +261,74 @@ final class NotifyManager {
                 items.removeLast(items.count - maxItems)
             }
         }
-        onNewNotification?(item)
+        newNotificationSubject.send(item)
+
+        // 清理因溢出被移除的项对应的 timeout 任务
+        let activeIDs = Set(items.map(\.id))
+        for id in timeoutTasks.keys where !activeIDs.contains(id) {
+            timeoutTasks.removeValue(forKey: id)?.cancel()
+        }
 
         guard item.timeout > 0 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + item.timeout) { [weak self] in
-            Task { @MainActor in
-                self?.remove(id: item.id)
-            }
+        let id = item.id
+        let timeout = item.timeout
+        timeoutTasks[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
+            guard !Task.isCancelled else { return }
+            self?.remove(id: id, reason: .timeout)
         }
     }
 
-    func remove(id: UUID) {
+    func remove(id: UUID, reason: NotificationDismissReason = .removed) {
+        let hadItem = items.contains { $0.id == id }
+        guard hadItem else { return }
+
+        timeoutTasks.removeValue(forKey: id)?.cancel()
+
         withAnimation(.easeInOut(duration: 0.3)) {
             items.removeAll { $0.id == id }
+        }
+
+        if reason != .actionSelected {
+            notificationDismissedSubject.send((id, reason))
         }
     }
 
     func clear() {
+        timeoutTasks.values.forEach { $0.cancel() }
+        timeoutTasks.removeAll()
+
+        let removedIDs = items.map(\.id)
+        guard !removedIDs.isEmpty else { return }
+
         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
             items.removeAll()
         }
+        removedIDs.forEach { notificationDismissedSubject.send(($0, .cleared)) }
+    }
+
+    func triggerAction(notificationID: UUID, actionID: String) {
+        guard let item = items.first(where: { $0.id == notificationID }),
+              let action = item.actions.first(where: { $0.id == actionID })
+        else { return }
+
+        let selection = NotificationActionSelection(
+            notificationId: notificationID,
+            actionId: action.id,
+            actionTitle: action.title,
+            selectedAt: Date()
+        )
+        actionTriggeredSubject.send(NotificationActionEvent(
+            notification: item,
+            action: action,
+            selection: selection
+        ))
+        remove(id: notificationID, reason: .actionSelected)
     }
 
     func toggleLock() {
         isLocked.toggle()
-        onLockChanged?(isLocked)
+        lockChangedSubject.send(isLocked)
     }
 
     func updateServiceState(_ state: APIServiceState) {

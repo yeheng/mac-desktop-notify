@@ -33,7 +33,7 @@ struct DynamicIslandView: View {
             return 8
         case .opened:
             let maxRadius = min(vm.notchOpenedSize.width, vm.notchOpenedSize.height) / 2
-            return min(DynamicIslandLayout.panelCornerRadius, maxRadius)
+            return DynamicIslandLayout.panelCornerRadius(vm.uiSettings, maxRadius: maxRadius)
         case .popping:
             return 10
         }

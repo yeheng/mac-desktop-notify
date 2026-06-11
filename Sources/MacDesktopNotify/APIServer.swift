@@ -25,6 +25,8 @@ final class APIServer {
     private let config: APIServerConfig
     private var wsSessions: [WebSocketSession] = []
     private let wsQueue = DispatchQueue(label: "mac-desktop-notify.ws-sessions")
+    private var actionWaiters: [UUID: ActionWaiter] = [:]
+    private let actionWaiterQueue = DispatchQueue(label: "mac-desktop-notify.action-waiters")
 
     init(manager: NotifyManager, config: APIServerConfig = .default) {
         self.manager = manager
@@ -63,21 +65,50 @@ final class APIServer {
 
             do {
                 let payload = try JSONDecoder().decode(NotifyCreateRequest.self, from: Data(request.body))
+
+                // 输入校验：标题、正文长度、超时范围
+                if let error = payload.validate() {
+                    return self.badRequest(error.rawValue)
+                }
+
                 let item = NotificationRecord(request: payload)
+                if let validationError = item.validationError {
+                    return self.badRequest(validationError)
+                }
+                if payload.shouldWaitForAction, item.actions.isEmpty {
+                    return self.badRequest("waitForAction requires at least one action")
+                }
+
+                let waiter = payload.shouldWaitForAction ? self.registerWaiter(for: item.id) : nil
 
                 self.addNotification(item)
                 self.broadcast(item: item)
 
+                if let waiter {
+                    let result = waiter.wait(timeout: self.waitTimeout(from: payload))
+                        ?? .timeout(notificationId: item.id)
+                    self.removeWaiter(for: item.id)
+
+                    if result.status == "timeout" {
+                        self.removeNotification(id: item.id, reason: .waitTimeout)
+                    }
+
+                    return self.ok(NotifyCreateResponse(
+                        status: result.status,
+                        id: item.id,
+                        notification: item,
+                        result: result
+                    ))
+                }
+
                 return self.ok(NotifyCreateResponse(
                     status: "ok",
                     id: item.id,
-                    notification: item
+                    notification: item,
+                    result: nil
                 ))
             } catch {
-                return .badRequest(self.encodedBody(ErrorResponse(
-                    status: "error",
-                    message: "Invalid JSON: \(error.localizedDescription)"
-                )))
+                return self.badRequest("Invalid JSON: \(error.localizedDescription)")
             }
         }
 
@@ -117,7 +148,18 @@ final class APIServer {
 
         do {
             let payload = try JSONDecoder().decode(NotifyCreateRequest.self, from: data)
+
+            // 输入校验
+            if let error = payload.validate() {
+                session.writeText("{\"event\":\"error\",\"message\":\"\(error.rawValue)\"}")
+                return
+            }
+
             let item = NotificationRecord(request: payload)
+            if let validationError = item.validationError {
+                session.writeText("{\"event\":\"error\",\"message\":\"\(validationError)\"}")
+                return
+            }
             addNotification(item)
             broadcast(item: item)
             session.writeText("{\"event\":\"received\",\"id\":\"\(item.id.uuidString)\"}")
@@ -130,6 +172,30 @@ final class APIServer {
         Task { @MainActor [weak manager] in
             manager?.add(item)
         }
+    }
+
+    private func removeNotification(id: UUID, reason: NotificationDismissReason) {
+        Task { @MainActor [weak manager] in
+            manager?.remove(id: id, reason: reason)
+        }
+    }
+
+    func handleActionSelection(_ event: NotificationActionEvent) {
+        ActionDispatcher.dispatch(event)
+        completeWaiter(
+            for: event.notification.id,
+            with: .selected(event.selection)
+        )
+    }
+
+    func handleNotificationDismissed(
+        notificationID: UUID,
+        reason: NotificationDismissReason
+    ) {
+        completeWaiter(
+            for: notificationID,
+            with: .dismissed(notificationId: notificationID, reason: reason)
+        )
     }
 
     private func notificationSnapshot() -> [NotificationRecord] {
@@ -163,8 +229,39 @@ final class APIServer {
         return request.headers["authorization"] == "Bearer \(token)"
     }
 
+    private func registerWaiter(for notificationID: UUID) -> ActionWaiter {
+        let waiter = ActionWaiter()
+        actionWaiterQueue.sync {
+            actionWaiters[notificationID] = waiter
+        }
+        return waiter
+    }
+
+    private func completeWaiter(for notificationID: UUID, with result: ActionWaitResult) {
+        actionWaiterQueue.sync {
+            actionWaiters[notificationID]?.complete(result)
+        }
+    }
+
+    private func removeWaiter(for notificationID: UUID) {
+        actionWaiterQueue.sync {
+            _ = actionWaiters.removeValue(forKey: notificationID)
+        }
+    }
+
+    private func waitTimeout(from payload: NotifyCreateRequest) -> TimeInterval {
+        max(1, min(payload.actionTimeout ?? 300, 3600))
+    }
+
     private func ok<T: Encodable>(_ value: T) -> HttpResponse {
         .ok(encodedBody(value))
+    }
+
+    private func badRequest(_ message: String) -> HttpResponse {
+        .badRequest(encodedBody(ErrorResponse(
+            status: "error",
+            message: message
+        )))
     }
 
     private func encodedBody<T: Encodable>(_ value: T) -> HttpResponseBody {
@@ -198,9 +295,78 @@ private struct NotifyCreateResponse: Encodable {
     let status: String
     let id: UUID
     let notification: NotificationRecord
+    let result: ActionWaitResult?
 }
 
 private struct ErrorResponse: Encodable {
     let status: String
     let message: String
+}
+
+private final class ActionWaiter {
+    private let semaphore = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var result: ActionWaitResult?
+
+    func complete(_ result: ActionWaitResult) {
+        lock.lock()
+        guard self.result == nil else {
+            lock.unlock()
+            return
+        }
+        self.result = result
+        lock.unlock()
+        semaphore.signal()
+    }
+
+    func wait(timeout: TimeInterval) -> ActionWaitResult? {
+        guard semaphore.wait(timeout: .now() + timeout) == .success else {
+            return nil
+        }
+
+        lock.lock()
+        defer { lock.unlock() }
+        return result
+    }
+}
+
+private struct ActionWaitResult: Encodable {
+    let status: String
+    let notificationId: UUID
+    let action: NotificationActionSelection?
+    let reason: NotificationDismissReason?
+    let completedAt: Date
+
+    static func selected(_ selection: NotificationActionSelection) -> ActionWaitResult {
+        ActionWaitResult(
+            status: "selected",
+            notificationId: selection.notificationId,
+            action: selection,
+            reason: nil,
+            completedAt: selection.selectedAt
+        )
+    }
+
+    static func dismissed(
+        notificationId: UUID,
+        reason: NotificationDismissReason
+    ) -> ActionWaitResult {
+        ActionWaitResult(
+            status: "dismissed",
+            notificationId: notificationId,
+            action: nil,
+            reason: reason,
+            completedAt: Date()
+        )
+    }
+
+    static func timeout(notificationId: UUID) -> ActionWaitResult {
+        ActionWaitResult(
+            status: "timeout",
+            notificationId: notificationId,
+            action: nil,
+            reason: .waitTimeout,
+            completedAt: Date()
+        )
+    }
 }

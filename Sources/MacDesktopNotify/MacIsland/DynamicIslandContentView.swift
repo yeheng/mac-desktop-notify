@@ -1,11 +1,57 @@
-import AppKit
 import SwiftUI
 
-private func copyTextToPasteboard(_ text: String) {
-    let pasteboard = NSPasteboard.general
-    pasteboard.clearContents()
-    pasteboard.setString(text, forType: .string)
+// MARK: - Design Tokens
+
+private enum Theme {
+    enum Colors {
+        static let primaryText = Color.white.opacity(0.82)
+        static let secondaryText = Color.white.opacity(0.56)
+        static let tertiaryText = Color.white.opacity(0.42)
+        static let faintIcon = Color.white.opacity(0.32)
+        static let labelText = Color.white.opacity(0.62)
+        static let valueText = Color.white.opacity(0.66)
+        static let cardFill = Color.white.opacity(0.05)
+        static let cardFillHover = Color.white.opacity(0.09)
+        static let cardBorder = Color.white.opacity(0.06)
+        static let buttonFill = Color.white.opacity(0.08)
+        static let buttonFillActive = Color.white.opacity(0.14)
+        static let progressTrack = Color.white.opacity(0.06)
+    }
+
+    enum Fonts {
+        static let cardTitle = Font.system(size: 13, weight: .bold)
+        static let cardBody = Font.system(size: 12)
+        static let timestamp = Font.system(size: 10)
+        static let sectionTitle = Font.system(size: 11, weight: .bold)
+        static let rowTitle = Font.system(size: 12, weight: .medium)
+        static let rowValue = Font.system(size: 11, weight: .semibold, design: .monospaced)
+        static let endpointLabel = Font.system(size: 11, weight: .semibold)
+        static let endpointValue = Font.system(size: 11, design: .monospaced)
+    }
 }
+
+// MARK: - Settings Card Modifier
+
+private struct SettingsCardModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(10)
+            .background(Theme.Colors.cardFill)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Theme.Colors.cardBorder, lineWidth: 1)
+            )
+    }
+}
+
+private extension View {
+    func settingsCardStyle() -> some View {
+        modifier(SettingsCardModifier())
+    }
+}
+
+// MARK: - Content View
 
 struct DynamicIslandContentView: View {
     @ObservedObject var vm: DynamicIslandViewModel
@@ -24,13 +70,14 @@ struct DynamicIslandContentView: View {
     }
 
     // MARK: - 消息中心面板
+
     var notificationCenter: some View {
         Group {
             if manager.items.isEmpty {
                 emptyState
             } else {
                 ScrollView(showsIndicators: true) {
-                    LazyVStack(spacing: DynamicIslandLayout.listSpacing) {
+                    LazyVStack(spacing: DynamicIslandLayout.listSpacing(vm.uiSettings)) {
                         ForEach(manager.items) { item in
                             MessageCard(item: item, vm: vm)
                                 .transition(.asymmetric(
@@ -46,25 +93,81 @@ struct DynamicIslandContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-
     var emptyState: some View {
         VStack(spacing: 10) {
             Image(systemName: "bell.slash.fill")
                 .font(.system(size: 32))
-                .foregroundStyle(.white.opacity(0.32))
+                .foregroundStyle(Theme.Colors.faintIcon)
             Text("暂无消息")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.56))
+                .foregroundStyle(Theme.Colors.secondaryText)
             Text("POST \(AppConfig.notifyEndpoint)")
                 .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.42))
+                .foregroundStyle(Theme.Colors.tertiaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    // MARK: - 设置面板
+
     var settingsView: some View {
         ScrollView(showsIndicators: true) {
             VStack(spacing: 12) {
+                SettingsSection(title: "布局") {
+                    SettingsStepperRow(
+                        title: "面板宽度",
+                        value: $vm.uiSettings.panelMaxWidth,
+                        range: 360...920,
+                        step: 20,
+                        unit: "pt"
+                    )
+                    SettingsStepperRow(
+                        title: "面板高度",
+                        value: $vm.uiSettings.panelMaxHeight,
+                        range: 280...380,
+                        step: 20,
+                        unit: "pt"
+                    )
+                    SettingsStepperRow(
+                        title: "面板边距",
+                        value: $vm.uiSettings.panelSpacing,
+                        range: 10...24,
+                        step: 1,
+                        unit: "pt"
+                    )
+                    SettingsSliderRow(
+                        title: "面板圆角",
+                        value: $vm.uiSettings.panelCornerRadius,
+                        range: 0...56,
+                        step: 2,
+                        unit: "pt"
+                    )
+                }
+
+                SettingsSection(title: "消息卡片") {
+                    SettingsSliderRow(
+                        title: "列表间距",
+                        value: $vm.uiSettings.listSpacing,
+                        range: 4...16,
+                        step: 1,
+                        unit: "pt"
+                    )
+                    SettingsSliderRow(
+                        title: "卡片内边距",
+                        value: $vm.uiSettings.cardPadding,
+                        range: 8...16,
+                        step: 1,
+                        unit: "pt"
+                    )
+                    SettingsSliderRow(
+                        title: "卡片圆角",
+                        value: $vm.uiSettings.cardCornerRadius,
+                        range: 4...16,
+                        step: 1,
+                        unit: "pt"
+                    )
+                }
+
                 SettingsSection(title: "行为") {
                     SettingsSliderRow(
                         title: "自动收起面板",
@@ -97,7 +200,7 @@ struct DynamicIslandContentView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
-                        .background(.white.opacity(0.08))
+                        .background(Theme.Colors.buttonFill)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
@@ -111,6 +214,7 @@ struct DynamicIslandContentView: View {
 }
 
 // MARK: - 消息卡片
+
 struct MessageCard: View {
     let item: NotificationRecord
     @ObservedObject var vm: DynamicIslandViewModel
@@ -137,7 +241,7 @@ struct MessageCard: View {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(alignment: .top, spacing: 8) {
                         Text(item.title)
-                            .font(.system(size: 13, weight: .bold))
+                            .font(Theme.Fonts.cardTitle)
                             .foregroundStyle(.white)
                             .lineLimit(isExpanded ? 2 : 1)
                             .truncationMode(.tail)
@@ -146,8 +250,8 @@ struct MessageCard: View {
 
                         if vm.uiSettings.showTimestamps {
                             Text(timeString(from: item.createdAt, relativeTo: now))
-                                .font(.system(size: 10))
-                                .foregroundStyle(.white.opacity(0.62))
+                                .font(Theme.Fonts.timestamp)
+                                .foregroundStyle(Theme.Colors.labelText)
                                 .fixedSize()
                         }
 
@@ -155,9 +259,9 @@ struct MessageCard: View {
                             Button(action: toggleExpanded) {
                                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                                     .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(.white.opacity(0.62))
+                                    .foregroundStyle(Theme.Colors.labelText)
                                     .frame(width: 20, height: 20)
-                                    .background(.white.opacity(0.08))
+                                    .background(Theme.Colors.buttonFill)
                                     .clipShape(Circle())
                             }
                             .buttonStyle(.plain)
@@ -168,9 +272,9 @@ struct MessageCard: View {
                         Button(action: { manager.remove(id: item.id) }) {
                             Image(systemName: "xmark")
                                 .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.56))
+                                .foregroundStyle(Theme.Colors.secondaryText)
                                 .frame(width: 20, height: 20)
-                                .background(.white.opacity(0.08))
+                                .background(Theme.Colors.buttonFill)
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
@@ -179,18 +283,22 @@ struct MessageCard: View {
                     }
 
                     Text(item.body)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.82))
+                        .font(Theme.Fonts.cardBody)
+                        .foregroundStyle(Theme.Colors.primaryText)
                         .lineLimit(isExpanded ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+            }
+
+            if !item.actions.isEmpty {
+                actionBar
             }
 
             if item.timeout > 0 {
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
                         Capsule()
-                            .fill(.white.opacity(0.06))
+                            .fill(Theme.Colors.progressTrack)
                         Capsule()
                             .fill(item.type.iconColor.opacity(0.45))
                             .frame(width: proxy.size.width * timeoutProgress)
@@ -200,30 +308,30 @@ struct MessageCard: View {
                 .accessibilityLabel("消息剩余时间")
             }
         }
-        .padding(DynamicIslandLayout.cardPadding)
-        .background(.white.opacity(isHovered ? 0.09 : 0.05))
-        .clipShape(RoundedRectangle(cornerRadius: DynamicIslandLayout.cardCornerRadius))
+        .padding(DynamicIslandLayout.cardPadding(vm.uiSettings))
+        .background(isHovered ? Theme.Colors.cardFillHover : Theme.Colors.cardFill)
+        .clipShape(RoundedRectangle(cornerRadius: DynamicIslandLayout.cardCornerRadius(vm.uiSettings)))
         .onHover { hovering in isHovered = hovering }
-        .onReceive(Timer.publish(every: item.timeout > 0 ? 1 : 30, on: .main, in: .common).autoconnect()) { time in
+        .onReceive(vm.sharedTimePublisher) { time in
             now = time
         }
         .onTapGesture(count: 2) {
-            copyTextToPasteboard(item.body)
+            NSPasteboard.copy(item.body)
         }
         .contextMenu {
             Button("复制标题", systemImage: "doc.on.doc") {
-                copyTextToPasteboard(item.title)
+                NSPasteboard.copy(item.title)
             }
             Button("复制正文", systemImage: "doc.text") {
-                copyTextToPasteboard(item.body)
+                NSPasteboard.copy(item.body)
             }
             Button("复制全部", systemImage: "doc.on.clipboard") {
-                copyTextToPasteboard("\(item.title)\n\(item.body)")
+                NSPasteboard.copy("\(item.title)\n\(item.body)")
             }
         }
         .overlay(
-            RoundedRectangle(cornerRadius: DynamicIslandLayout.cardCornerRadius)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DynamicIslandLayout.cardCornerRadius(vm.uiSettings))
+                .stroke(Theme.Colors.cardBorder, lineWidth: 1)
         )
         .accessibilityElement(children: .combine)
         .accessibilityHint(isExpandable ? "使用展开按钮查看完整内容，双击复制正文" : "双击复制正文")
@@ -249,12 +357,95 @@ struct MessageCard: View {
         return max(0, min(1, 1 - elapsed / item.timeout))
     }
 
+    private var actionBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(item.actions) { action in
+                    Button(action: { trigger(action) }) {
+                        HStack(spacing: 5) {
+                            if let icon = actionIcon(action) {
+                                Image(systemName: icon)
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+
+                            Text(action.title)
+                                .font(.system(size: 11, weight: .semibold))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(actionForeground(action))
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(actionBackground(action))
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(actionStroke(action), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help(action.title)
+                    .accessibilityLabel(action.title)
+                }
+            }
+        }
+    }
+
     private func toggleExpanded() {
         withAnimation(.easeInOut(duration: 0.18)) {
             isExpanded.toggle()
         }
     }
+
+    private func trigger(_ action: NotificationAction) {
+        manager.triggerAction(notificationID: item.id, actionID: action.id)
+    }
+
+    private func actionIcon(_ action: NotificationAction) -> String? {
+        switch action.callback?.type {
+        case .webhook:
+            return "link"
+        case .command:
+            return "terminal"
+        case .none:
+            return nil
+        }
+    }
+
+    private func actionForeground(_ action: NotificationAction) -> Color {
+        switch action.style {
+        case .primary:
+            return .white
+        case .destructive:
+            return .red.opacity(0.95)
+        case .normal:
+            return Theme.Colors.primaryText
+        }
+    }
+
+    private func actionBackground(_ action: NotificationAction) -> Color {
+        switch action.style {
+        case .primary:
+            return Theme.Colors.buttonFillActive
+        case .destructive:
+            return .red.opacity(0.14)
+        case .normal:
+            return Theme.Colors.buttonFill
+        }
+    }
+
+    private func actionStroke(_ action: NotificationAction) -> Color {
+        switch action.style {
+        case .primary:
+            return .white.opacity(0.24)
+        case .destructive:
+            return .red.opacity(0.26)
+        case .normal:
+            return Theme.Colors.cardBorder
+        }
+    }
 }
+
+// MARK: - Settings Components
 
 private struct SettingsSection<Content: View>: View {
     let title: String
@@ -268,13 +459,48 @@ private struct SettingsSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white.opacity(0.62))
+                .font(Theme.Fonts.sectionTitle)
+                .foregroundStyle(Theme.Colors.labelText)
 
             VStack(spacing: 8) {
                 content
             }
         }
+    }
+}
+
+private struct SettingsStepperRow: View {
+    let title: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let unit: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(Theme.Fonts.rowTitle)
+                    .foregroundStyle(Theme.Colors.primaryText)
+
+                Text(formattedValue)
+                    .font(Theme.Fonts.rowValue)
+                    .foregroundStyle(Theme.Colors.valueText)
+            }
+
+            Spacer(minLength: 10)
+
+            Stepper("", value: $value, in: range, step: step)
+                .labelsHidden()
+        }
+        .settingsCardStyle()
+    }
+
+    private var formattedValue: String {
+        if step < 1 {
+            return "\(String(format: "%.1f", value))\(unit)"
+        }
+        return "\(Int(value.rounded()))\(unit)"
     }
 }
 
@@ -289,25 +515,19 @@ private struct SettingsSliderRow: View {
         VStack(spacing: 6) {
             HStack {
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.82))
+                    .font(Theme.Fonts.rowTitle)
+                    .foregroundStyle(Theme.Colors.primaryText)
 
                 Spacer()
 
                 Text(formattedValue)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.66))
+                    .font(Theme.Fonts.rowValue)
+                    .foregroundStyle(Theme.Colors.valueText)
             }
 
             Slider(value: $value, in: range, step: step)
         }
-        .padding(10)
-        .background(.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
-        )
+        .settingsCardStyle()
     }
 
     private var formattedValue: String {
@@ -325,18 +545,12 @@ private struct SettingsToggleRow: View {
     var body: some View {
         Toggle(isOn: $isOn) {
             Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.82))
+                .font(Theme.Fonts.rowTitle)
+                .foregroundStyle(Theme.Colors.primaryText)
         }
         .toggleStyle(.switch)
         .tint(.white)
-        .padding(10)
-        .background(.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
-        )
+        .settingsCardStyle()
     }
 }
 
@@ -349,29 +563,23 @@ private struct SettingsServiceStateRow: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(state.isRunning ? .green.opacity(0.9) : .orange.opacity(0.9))
                 .frame(width: 28, height: 28)
-                .background(.white.opacity(0.08))
+                .background(Theme.Colors.buttonFill)
                 .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("服务状态")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.62))
+                    .font(Theme.Fonts.endpointLabel)
+                    .foregroundStyle(Theme.Colors.labelText)
                 Text(state.statusText)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.84))
+                    .font(Theme.Fonts.endpointValue)
+                    .foregroundStyle(Theme.Colors.primaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
 
             Spacer(minLength: 10)
         }
-        .padding(10)
-        .background(.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
-        )
+        .settingsCardStyle()
         .accessibilityElement(children: .combine)
     }
 }
@@ -385,11 +593,11 @@ private struct SettingsEndpointRow: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.62))
+                    .font(Theme.Fonts.endpointLabel)
+                    .foregroundStyle(Theme.Colors.labelText)
                 Text(value)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.84))
+                    .font(Theme.Fonts.endpointValue)
+                    .foregroundStyle(Theme.Colors.primaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -399,30 +607,20 @@ private struct SettingsEndpointRow: View {
             Button(action: copyEndpoint) {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(copied ? itemSuccessColor : .white.opacity(0.68))
+                    .foregroundStyle(copied ? .green.opacity(0.9) : Color.white.opacity(0.68))
                     .frame(width: 28, height: 28)
-                    .background(.white.opacity(copied ? 0.14 : 0.08))
+                    .background(copied ? Theme.Colors.buttonFillActive : Theme.Colors.buttonFill)
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
             .help(copied ? "已复制" : "复制\(title)")
             .accessibilityLabel(copied ? "\(title)已复制" : "复制\(title)")
         }
-        .padding(10)
-        .background(.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
-        )
-    }
-
-    private var itemSuccessColor: Color {
-        .green.opacity(0.9)
+        .settingsCardStyle()
     }
 
     private func copyEndpoint() {
-        copyTextToPasteboard(value)
+        NSPasteboard.copy(value)
         withAnimation(.easeInOut(duration: 0.16)) {
             copied = true
         }

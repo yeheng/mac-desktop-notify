@@ -1,4 +1,5 @@
 import Cocoa
+import Combine
 import SwiftUI
 
 @MainActor
@@ -7,6 +8,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var apiServer: APIServer?
     var statusItem: NSStatusItem?
     private let statusMenu = NSMenu()
+    private var cancellables: Set<AnyCancellable> = []
     let manager = NotifyManager()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -21,6 +23,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let server = APIServer(manager: manager)
         apiServer = server
+
+        // 使用 Combine 订阅替代闭包回调，支持多订阅者
+        manager.actionTriggeredSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak server] event in
+                server?.handleActionSelection(event)
+            }
+            .store(in: &cancellables)
+
+        manager.notificationDismissedSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak server] notificationID, reason in
+                server?.handleNotificationDismissed(
+                    notificationID: notificationID,
+                    reason: reason
+                )
+            }
+            .store(in: &cancellables)
+
         do {
             try server.start()
             manager.updateServiceState(.running(

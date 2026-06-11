@@ -1,18 +1,19 @@
 import AppKit
-import Cocoa
+import Combine
 import SwiftUI
 
 class DynamicIslandViewController: NSViewController {
     let vm: DynamicIslandViewModel
     let manager: NotifyManager
     private var autoCloseWorkItem: DispatchWorkItem?
+    private var cancellables: Set<AnyCancellable> = []
     private let hoverPauseInterval: TimeInterval = 1.0
 
     init(vm: DynamicIslandViewModel, manager: NotifyManager) {
         self.vm = vm
         self.manager = manager
         super.init(nibName: nil, bundle: nil)
-        setupCallbacks()
+        setupBindings()
     }
 
     @available(*, unavailable)
@@ -33,16 +34,27 @@ class DynamicIslandViewController: NSViewController {
         self.view = hostingView
     }
 
-    private func setupCallbacks() {
-        manager.onNewNotification = { [weak self] item in
-            self?.handleNewNotification(item)
-        }
-        manager.onLockChanged = { [weak self] isLocked in
-            self?.handleLockChanged(isLocked: isLocked)
-        }
+    // MARK: - Combine Bindings
+
+    private func setupBindings() {
+        manager.newNotificationSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.handleNewNotification()
+            }
+            .store(in: &cancellables)
+
+        manager.lockChangedSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isLocked in
+                self?.handleLockChanged(isLocked: isLocked)
+            }
+            .store(in: &cancellables)
     }
 
-    private func handleNewNotification(_: NotificationRecord) {
+    // MARK: - Event Handlers
+
+    private func handleNewNotification() {
         autoCloseWorkItem?.cancel()
         vm.notchOpen(.click)
         scheduleAutoClose()
@@ -56,6 +68,8 @@ class DynamicIslandViewController: NSViewController {
             scheduleAutoClose()
         }
     }
+
+    // MARK: - Auto Close
 
     private func scheduleAutoClose(after delay: TimeInterval? = nil) {
         autoCloseWorkItem?.cancel()

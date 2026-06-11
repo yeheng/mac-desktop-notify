@@ -1,9 +1,11 @@
 import Cocoa
+import Combine
 
 class DynamicIslandWindowController: NSWindowController {
-    var vm: DynamicIslandViewModel?
+    private(set) var vm: DynamicIslandViewModel?
     weak var screen: NSScreen?
     private let manager: NotifyManager
+    private var cancellables: Set<AnyCancellable> = []
 
     init(
         window: NSWindow,
@@ -33,7 +35,8 @@ class DynamicIslandWindowController: NSWindowController {
             height: notchSize.height
         )
         vm.screenRect = screen.frame
-        window.setFrame(vm.windowFrame, display: false)
+        updateWindowFrame(animated: false)
+        setupWindowFrameUpdates()
         window.orderFrontRegardless()
     }
 
@@ -63,10 +66,33 @@ class DynamicIslandWindowController: NSWindowController {
     }
 
     func destroy() {
+        cancellables.forEach { $0.cancel() }
+        cancellables.removeAll()
         vm?.destroy()
         vm = nil
         window?.close()
         contentViewController = nil
         window = nil
+    }
+
+    private func setupWindowFrameUpdates() {
+        vm?.$uiSettings
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateWindowFrame(animated: true)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func updateWindowFrame(animated: Bool) {
+        guard let vm, let window else { return }
+        let frame = vm.windowFrame
+
+        if animated {
+            window.animator().setFrame(frame, display: true)
+        } else {
+            window.setFrame(frame, display: false)
+        }
     }
 }

@@ -1,9 +1,18 @@
-import Cocoa
 import Combine
+import Cocoa
 import Foundation
 import SwiftUI
 
+// UISettingsState — 手动实现 init(from:) 以支持向前兼容：
+// 新增字段时，旧版 UserDefaults 数据缺少该 key 不会导致解码失败
 struct UISettingsState: Codable, Equatable {
+    var panelMaxWidth: Double = 720
+    var panelMaxHeight: Double = 340
+    var panelSpacing: Double = 16
+    var panelCornerRadius: Double = 32
+    var listSpacing: Double = 8
+    var cardPadding: Double = 10
+    var cardCornerRadius: Double = 8
     var autoCloseSeconds: Double = 4
     var showMessageIcons: Bool = true
     var showTimestamps: Bool = true
@@ -11,6 +20,13 @@ struct UISettingsState: Codable, Equatable {
     static let `default` = UISettingsState()
 
     enum CodingKeys: String, CodingKey {
+        case panelMaxWidth
+        case panelMaxHeight
+        case panelSpacing
+        case panelCornerRadius
+        case listSpacing
+        case cardPadding
+        case cardCornerRadius
         case autoCloseSeconds
         case showMessageIcons
         case showTimestamps
@@ -20,6 +36,13 @@ struct UISettingsState: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        panelMaxWidth = try values.decodeIfPresent(Double.self, forKey: .panelMaxWidth) ?? 720
+        panelMaxHeight = try values.decodeIfPresent(Double.self, forKey: .panelMaxHeight) ?? 340
+        panelSpacing = try values.decodeIfPresent(Double.self, forKey: .panelSpacing) ?? 16
+        panelCornerRadius = try values.decodeIfPresent(Double.self, forKey: .panelCornerRadius) ?? 32
+        listSpacing = try values.decodeIfPresent(Double.self, forKey: .listSpacing) ?? 8
+        cardPadding = try values.decodeIfPresent(Double.self, forKey: .cardPadding) ?? 10
+        cardCornerRadius = try values.decodeIfPresent(Double.self, forKey: .cardCornerRadius) ?? 8
         autoCloseSeconds = try values.decodeIfPresent(Double.self, forKey: .autoCloseSeconds) ?? 4
         showMessageIcons = try values.decodeIfPresent(Bool.self, forKey: .showMessageIcons) ?? true
         showTimestamps = try values.decodeIfPresent(Bool.self, forKey: .showTimestamps) ?? true
@@ -27,23 +50,39 @@ struct UISettingsState: Codable, Equatable {
 }
 
 enum DynamicIslandLayout {
-    static let panelMaxWidth: CGFloat = 720
-    static let panelMaxHeight: CGFloat = 340
-    static let panelSpacing: CGFloat = 16
-    static let panelCornerRadius: CGFloat = 32
-    static let listSpacing: CGFloat = 8
-    static let cardPadding: CGFloat = 10
-    static let cardCornerRadius: CGFloat = 8
     static let windowShadowPadding: CGFloat = 24
 
-    static func openedSize(for screenRect: CGRect) -> CGSize {
+    static func openedSize(for screenRect: CGRect, settings: UISettingsState) -> CGSize {
+        let configuredWidth = CGFloat(settings.panelMaxWidth).clamped(to: 360...920)
+        let configuredHeight = CGFloat(settings.panelMaxHeight).clamped(to: 280...380)
+
         guard screenRect.width > 0, screenRect.height > 0 else {
-            return .init(width: panelMaxWidth, height: panelMaxHeight)
+            return .init(width: configuredWidth, height: configuredHeight)
         }
 
-        let width = min(panelMaxWidth, max(320, screenRect.width - 48))
-        let height = min(panelMaxHeight, max(280, screenRect.height * 0.42))
+        let width = min(configuredWidth, max(320, screenRect.width - 48))
+        let height = min(configuredHeight, max(280, screenRect.height * 0.42))
         return .init(width: width, height: height)
+    }
+
+    static func panelSpacing(_ settings: UISettingsState) -> CGFloat {
+        CGFloat(settings.panelSpacing).clamped(to: 10...24)
+    }
+
+    static func panelCornerRadius(_ settings: UISettingsState, maxRadius: CGFloat) -> CGFloat {
+        CGFloat(settings.panelCornerRadius).clamped(to: 0...min(56, maxRadius))
+    }
+
+    static func listSpacing(_ settings: UISettingsState) -> CGFloat {
+        CGFloat(settings.listSpacing).clamped(to: 4...16)
+    }
+
+    static func cardPadding(_ settings: UISettingsState) -> CGFloat {
+        CGFloat(settings.cardPadding).clamped(to: 8...16)
+    }
+
+    static func cardCornerRadius(_ settings: UISettingsState) -> CGFloat {
+        CGFloat(settings.cardCornerRadius).clamped(to: 4...16)
     }
 }
 
@@ -77,8 +116,11 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         blendDuration: 0.125
     )
 
+    /// 共享时间发布者，所有 MessageCard 共用单个 Timer，避免每张卡片创建独立 Timer
+    let sharedTimePublisher = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
     var notchOpenedSize: CGSize {
-        DynamicIslandLayout.openedSize(for: screenRect)
+        DynamicIslandLayout.openedSize(for: screenRect, settings: uiSettings)
     }
 
     enum Status: String, Codable, Hashable, Equatable {
@@ -162,7 +204,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     @Published var notchVisible: Bool = true
     @Published var closeLocked: Bool = false
 
-    var spacing: CGFloat { DynamicIslandLayout.panelSpacing }
+    var spacing: CGFloat { DynamicIslandLayout.panelSpacing(uiSettings) }
 
     let hapticSender = PassthroughSubject<Void, Never>()
 
@@ -206,5 +248,11 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     private func persistUISettings() {
         guard let data = try? JSONEncoder().encode(uiSettings) else { return }
         UserDefaults.standard.set(data, forKey: Self.uiSettingsStorageKey)
+    }
+}
+
+private extension Comparable {
+    func clamped(to limits: ClosedRange<Self>) -> Self {
+        min(max(self, limits.lowerBound), limits.upperBound)
     }
 }
