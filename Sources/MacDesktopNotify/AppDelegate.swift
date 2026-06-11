@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    var mainWindowController: DynamicIslandWindowController?
+    var panelController: SidePanelWindowController?
     var apiServer: APIServer?
     var statusItem: NSStatusItem?
     private let statusMenu = NSMenu()
@@ -27,13 +27,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         EventMonitors.shared.start()
 
-        rebuildWindow()
+        rebuildPanel()
         setupStatusItem()
 
         let server = APIServer(manager: manager)
         apiServer = server
 
-        // MARK: 使用事件总线订阅替代直接引用 Subject
+        // MARK: 使用事件总线订阅
 
         // Action 被触发 → 执行回调 → 反馈结果
         eventBus.subscribe(for: .actionTriggered) { [weak self] event in
@@ -52,7 +52,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         result: result
                     ))
 
-                    // 在 Dashboard 中创建结果通知
+                    // 在面板中创建结果通知
                     let resultNotification = NotificationRecord(
                         title: result.success
                             ? "✓ \(actionEvent.action.title)"
@@ -97,7 +97,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(rebuildWindow),
+            selector: #selector(rebuildPanel),
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
@@ -108,24 +108,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         EventMonitors.shared.stop()
     }
 
-    @objc func rebuildWindow() {
-        mainWindowController?.destroy()
-        mainWindowController = nil
+    // MARK: - 面板管理
+
+    @objc func rebuildPanel() {
+        panelController?.destroy()
+        panelController = nil
 
         guard let screen = NSScreen.builtIn ?? NSScreen.main else { return }
-        let controller = DynamicIslandWindowController(
+        let controller = SidePanelWindowController(
             screen: screen,
             manager: manager,
             eventBus: eventBus
         )
-        mainWindowController = controller
+        panelController = controller
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
-        guard let vm = mainWindowController?.vm else { return true }
-        vm.notchOpen(.click)
+        panelController?.togglePanel()
         return true
     }
+
+    // MARK: - 状态栏图标
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -138,23 +141,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             )
             button.image?.isTemplate = true
             button.toolTip = "MacDesktopNotify"
+            button.action = #selector(statusBarClicked)
+            button.target = self
         }
 
+        // 右键菜单保留
         statusMenu.delegate = self
-        item.menu = statusMenu
     }
 
+    @objc private func statusBarClicked() {
+        panelController?.togglePanel()
+    }
+
+    // 右键菜单（保留快捷操作入口）
     func menuNeedsUpdate(_ menu: NSMenu) {
-        rebuildStatusMenu(menu)
-    }
-
-    private func rebuildStatusMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
         menu.addItem(makeMenuItem(
-            title: "打开消息中心",
-            systemImage: "bell.badge",
-            action: #selector(openNotificationCenterFromMenu)
+            title: "切换面板",
+            systemImage: "menubar.rectangle",
+            action: #selector(togglePanelFromMenu)
         ))
         menu.addItem(makeMenuItem(
             title: "设置",
@@ -198,16 +204,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-    @objc private func openNotificationCenterFromMenu() {
-        guard let vm = mainWindowController?.vm else { return }
-        vm.notchOpen(.click)
-        vm.showNotificationCenter()
+    // MARK: - 菜单动作
+
+    @objc private func togglePanelFromMenu() {
+        panelController?.togglePanel()
     }
 
     @objc private func openSettingsFromMenu() {
-        guard let vm = mainWindowController?.vm else { return }
-        vm.notchOpen(.click)
-        vm.showSettings()
+        panelController?.vm?.showSettings()
     }
 
     @objc private func toggleAutoCloseFromMenu() {

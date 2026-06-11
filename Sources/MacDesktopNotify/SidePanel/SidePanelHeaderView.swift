@@ -1,7 +1,9 @@
 import SwiftUI
 
-struct DynamicIslandHeaderView: View {
-    @ObservedObject var vm: DynamicIslandViewModel
+/// 侧边面板标题栏
+/// 包含标题、消息数量、锁定按钮和菜单
+struct SidePanelHeaderView: View {
+    @ObservedObject var vm: SidePanelViewModel
     @Environment(NotifyManager.self) var manager
 
     var body: some View {
@@ -88,7 +90,8 @@ struct DynamicIslandHeaderView: View {
             .help("更多操作")
             .accessibilityLabel("更多操作")
         }
-        .animation(vm.animation, value: vm.contentType)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .foregroundStyle(.white)
     }
 }

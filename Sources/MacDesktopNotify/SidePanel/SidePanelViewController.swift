@@ -2,15 +2,21 @@ import AppKit
 import Combine
 import SwiftUI
 
-class DynamicIslandViewController: NSViewController {
-    let vm: DynamicIslandViewModel
+/// 侧边面板的 ViewController
+/// 负责托管 SwiftUI 内容、订阅 EventBus、调度自动关闭
+class SidePanelViewController: NSViewController {
+    let vm: SidePanelViewModel
     let manager: NotifyManager
     let eventBus: NotificationEventBus
     private var autoCloseWorkItem: DispatchWorkItem?
     private var cancellables: Set<AnyCancellable> = []
     private let hoverPauseInterval: TimeInterval = 1.0
 
-    init(vm: DynamicIslandViewModel, manager: NotifyManager, eventBus: NotificationEventBus) {
+    init(
+        vm: SidePanelViewModel,
+        manager: NotifyManager,
+        eventBus: NotificationEventBus
+    ) {
         self.vm = vm
         self.manager = manager
         self.eventBus = eventBus
@@ -19,33 +25,28 @@ class DynamicIslandViewController: NSViewController {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError()
-    }
+    required init?(coder _: NSCoder) { fatalError() }
 
     override func loadView() {
-        let contentView = DynamicIslandView(vm: vm)
+        let contentView = SidePanelView(vm: vm)
             .environment(manager)
 
-        let hostingView = DynamicIslandHostingView(rootView: contentView)
-        hostingView.shouldHandleScreenPoint = { [weak vm] screenPoint in
-            vm?.activeHitTestRect.contains(screenPoint) == true
-        }
+        let hostingView = NSHostingView(rootView: contentView)
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         self.view = hostingView
     }
 
-    // MARK: - Event Bus Bindings
+    // MARK: - EventBus 订阅
 
     private func setupBindings() {
-        // 新通知到达 → 打开面板
+        // 新通知到达 → 可选自动展开面板
         eventBus.subscribe(for: .notificationAdded) { [weak self] _ in
             self?.handleNewNotification()
         }
         .store(in: &cancellables)
 
-        // 锁定状态变化 → 控制自动收起
+        // 锁定状态变化 → 控制自动关闭
         eventBus.subscribe(for: .lockChanged) { [weak self] event in
             guard case .lockChanged(let isLocked) = event else { return }
             self?.handleLockChanged(isLocked: isLocked)
@@ -53,59 +54,59 @@ class DynamicIslandViewController: NSViewController {
         .store(in: &cancellables)
     }
 
-    // MARK: - Event Handlers
+    // MARK: - 事件处理
 
     private func handleNewNotification() {
-        autoCloseWorkItem?.cancel()
-        vm.notchOpen(.click)
+        guard vm.uiSettings.showOnNewNotification else { return }
+
+        if !vm.isPanelVisible {
+            vm.showPanel()
+        }
+
+        // 如果有自动关闭时间，重新调度
         scheduleAutoClose()
     }
 
     private func handleLockChanged(isLocked: Bool) {
-        vm.closeLocked = isLocked
         if isLocked {
             autoCloseWorkItem?.cancel()
-        } else if vm.status == .opened {
+        } else if vm.isPanelVisible {
             scheduleAutoClose()
         }
     }
 
-    // MARK: - Auto Close
+    // MARK: - 自动关闭
 
     private func scheduleAutoClose(after delay: TimeInterval? = nil) {
         autoCloseWorkItem?.cancel()
-        guard !manager.isLocked else { return }
 
         let closeDelay = delay ?? vm.uiSettings.autoCloseSeconds
+        guard closeDelay > 0 else { return } // 0 = 不自动关闭
+        guard !manager.isLocked else { return }
+
         let workItem = DispatchWorkItem { [weak self] in
             guard let self, !self.manager.isLocked else { return }
 
-            if self.vm.status == .opened, self.vm.notchOpenedRect.contains(NSEvent.mouseLocation) {
+            // 如果鼠标在面板内，延迟关闭
+            if self.currentPanelFrame.contains(NSEvent.mouseLocation) {
                 self.scheduleAutoClose(after: self.hoverPauseInterval)
                 return
             }
 
-            self.vm.notchClose()
+            self.vm.hidePanel()
         }
         autoCloseWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + closeDelay, execute: workItem)
     }
 
+    /// 获取当前面板在屏幕上的 frame
+    private var currentPanelFrame: CGRect {
+        guard let windowController = view.window?.windowController as? SidePanelWindowController
+        else { return .zero }
+        return windowController.currentPanelFrame
+    }
+
     deinit {
         autoCloseWorkItem?.cancel()
-    }
-}
-
-private final class DynamicIslandHostingView<Content: View>: NSHostingView<Content> {
-    var shouldHandleScreenPoint: ((NSPoint) -> Bool)?
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let window else { return nil }
-
-        let windowPoint = convert(point, to: nil)
-        let screenPoint = window.convertPoint(toScreen: windowPoint)
-        guard shouldHandleScreenPoint?(screenPoint) == true else { return nil }
-
-        return super.hitTest(point)
     }
 }

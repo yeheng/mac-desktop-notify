@@ -12,7 +12,7 @@ struct MarkdownBodyView: View {
         if isExpanded {
             // 展开时使用完整 Markdown 渲染
             Markdown(content)
-                .markdownTheme(.dynamicIsland)
+                .markdownTheme(.sidePanel)
                 .fixedSize(horizontal: false, vertical: true)
         } else {
             // 折叠时使用原生 Text（支持基本 Markdown + 行数限制）
