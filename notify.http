@@ -1,0 +1,53 @@
+### 发送一条成功通知 (REST API)
+POST http://127.0.0.1:18080/notify
+Content-Type: application/json
+# X-Mac-Desktop-Notify-Token: set MAC_DESKTOP_NOTIFY_TOKEN to require this header
+
+{
+  "title": "构建完成",
+  "body": "项目 MacDesktopNotify 编译成功",
+  "type": "success",
+  "icon": "checkmark.seal.fill",
+  "timeout": 10
+}
+
+### 发送警告通知
+POST http://127.0.0.1:18080/notify
+Content-Type: application/json
+
+{
+  "title": "CPU 使用率过高",
+  "body": "当前 CPU 使用率已达 85%，请注意散热",
+  "type": "warning",
+  "icon": "cpu",
+  "timeout": 0
+}
+
+### 发送错误通知 (不自动消失)
+POST http://127.0.0.1:18080/notify
+Content-Type: application/json
+
+{
+  "title": "部署失败",
+  "body": "生产环境部署脚本返回非零状态码",
+  "type": "error",
+  "timeout": 0
+}
+
+### 发送信息通知
+POST http://127.0.0.1:18080/notify
+Content-Type: application/json
+
+{
+  "title": "新消息",
+  "body": "来自 WebSocket 的实时推送测试",
+  "type": "info",
+  "icon": "bell.badge.fill",
+  "timeout": 6
+}
+
+### 获取当前通知列表
+GET http://127.0.0.1:18080/notifications
+
+### 健康检查
+GET http://127.0.0.1:18080/health
