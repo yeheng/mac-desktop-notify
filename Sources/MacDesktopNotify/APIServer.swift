@@ -180,14 +180,30 @@ final class APIServer {
         }
     }
 
-    func handleActionSelection(_ event: NotificationActionEvent) {
-        ActionDispatcher.dispatch(event)
+    // MARK: - Action Handling（异步，带回调结果）
+
+    /// 处理用户选择的 action — 执行回调并返回结果
+    func handleActionSelection(_ event: NotificationActionEvent) async -> CallbackResult? {
+        let result = await ActionDispatcher.dispatch(event)
+
         completeWaiter(
             for: event.notification.id,
-            with: .selected(event.selection)
+            with: .selected(event.selection, callbackResult: result)
         )
+
+        // 通过 WebSocket 广播回调结果
+        if let result {
+            broadcastCallbackResult(
+                notificationId: event.notification.id,
+                actionId: event.action.id,
+                result: result
+            )
+        }
+
+        return result
     }
 
+    /// 处理通知被关闭（非 action 选择）
     func handleNotificationDismissed(
         notificationID: UUID,
         reason: NotificationDismissReason
@@ -197,6 +213,8 @@ final class APIServer {
             with: .dismissed(notificationId: notificationID, reason: reason)
         )
     }
+
+    // MARK: - Notification Snapshot
 
     private func notificationSnapshot() -> [NotificationRecord] {
         if Thread.isMainThread {
@@ -212,6 +230,8 @@ final class APIServer {
         }
     }
 
+    // MARK: - WebSocket Broadcast
+
     private func broadcast(item: NotificationRecord) {
         wsQueue.async {
             guard let text = self.encodedString(item) else { return }
@@ -221,6 +241,27 @@ final class APIServer {
         }
     }
 
+    /// 广播回调执行结果给所有 WebSocket 客户端
+    private func broadcastCallbackResult(
+        notificationId: UUID,
+        actionId: String,
+        result: CallbackResult
+    ) {
+        let message = WSCallbackResultMessage(
+            notificationId: notificationId,
+            actionId: actionId,
+            callbackResult: result
+        )
+        wsQueue.async {
+            guard let text = self.encodedString(message) else { return }
+            for session in self.wsSessions {
+                session.writeText(text)
+            }
+        }
+    }
+
+    // MARK: - Auth
+
     private func isAuthorized(_ request: HttpRequest) -> Bool {
         guard let token = config.token else { return true }
         if request.headers[Self.tokenHeader] == token {
@@ -228,6 +269,8 @@ final class APIServer {
         }
         return request.headers["authorization"] == "Bearer \(token)"
     }
+
+    // MARK: - Action Waiter
 
     private func registerWaiter(for notificationID: UUID) -> ActionWaiter {
         let waiter = ActionWaiter()
@@ -252,6 +295,8 @@ final class APIServer {
     private func waitTimeout(from payload: NotifyCreateRequest) -> TimeInterval {
         max(1, min(payload.actionTimeout ?? 300, 3600))
     }
+
+    // MARK: - Response Helpers
 
     private func ok<T: Encodable>(_ value: T) -> HttpResponse {
         .ok(encodedBody(value))
@@ -283,6 +328,8 @@ final class APIServer {
     }
 }
 
+// MARK: - Response Models
+
 private struct HealthResponse: Encodable {
     let status: String
     let service: String
@@ -302,6 +349,16 @@ private struct ErrorResponse: Encodable {
     let status: String
     let message: String
 }
+
+/// WebSocket 回调结果广播消息
+private struct WSCallbackResultMessage: Encodable {
+    let event = "action_result"
+    let notificationId: UUID
+    let actionId: String
+    let callbackResult: CallbackResult
+}
+
+// MARK: - Action Waiter
 
 private final class ActionWaiter {
     private let semaphore = DispatchSemaphore(value: 0)
@@ -330,20 +387,26 @@ private final class ActionWaiter {
     }
 }
 
-private struct ActionWaitResult: Encodable {
+/// Action 等待结果（扩展支持 callbackResult）
+struct ActionWaitResult: Encodable {
     let status: String
     let notificationId: UUID
     let action: NotificationActionSelection?
     let reason: NotificationDismissReason?
     let completedAt: Date
+    let callbackResult: CallbackResult?
 
-    static func selected(_ selection: NotificationActionSelection) -> ActionWaitResult {
+    static func selected(
+        _ selection: NotificationActionSelection,
+        callbackResult: CallbackResult?
+    ) -> ActionWaitResult {
         ActionWaitResult(
             status: "selected",
             notificationId: selection.notificationId,
             action: selection,
             reason: nil,
-            completedAt: selection.selectedAt
+            completedAt: selection.selectedAt,
+            callbackResult: callbackResult
         )
     }
 
@@ -356,7 +419,8 @@ private struct ActionWaitResult: Encodable {
             notificationId: notificationId,
             action: nil,
             reason: reason,
-            completedAt: Date()
+            completedAt: Date(),
+            callbackResult: nil
         )
     }
 
@@ -366,7 +430,8 @@ private struct ActionWaitResult: Encodable {
             notificationId: notificationId,
             action: nil,
             reason: .waitTimeout,
-            completedAt: Date()
+            completedAt: Date(),
+            callbackResult: nil
         )
     }
 }

@@ -5,13 +5,15 @@ import SwiftUI
 class DynamicIslandViewController: NSViewController {
     let vm: DynamicIslandViewModel
     let manager: NotifyManager
+    let eventBus: NotificationEventBus
     private var autoCloseWorkItem: DispatchWorkItem?
     private var cancellables: Set<AnyCancellable> = []
     private let hoverPauseInterval: TimeInterval = 1.0
 
-    init(vm: DynamicIslandViewModel, manager: NotifyManager) {
+    init(vm: DynamicIslandViewModel, manager: NotifyManager, eventBus: NotificationEventBus) {
         self.vm = vm
         self.manager = manager
+        self.eventBus = eventBus
         super.init(nibName: nil, bundle: nil)
         setupBindings()
     }
@@ -34,22 +36,21 @@ class DynamicIslandViewController: NSViewController {
         self.view = hostingView
     }
 
-    // MARK: - Combine Bindings
+    // MARK: - Event Bus Bindings
 
     private func setupBindings() {
-        manager.newNotificationSubject
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.handleNewNotification()
-            }
-            .store(in: &cancellables)
+        // 新通知到达 → 打开面板
+        eventBus.subscribe(for: .notificationAdded) { [weak self] _ in
+            self?.handleNewNotification()
+        }
+        .store(in: &cancellables)
 
-        manager.lockChangedSubject
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] isLocked in
-                self?.handleLockChanged(isLocked: isLocked)
-            }
-            .store(in: &cancellables)
+        // 锁定状态变化 → 控制自动收起
+        eventBus.subscribe(for: .lockChanged) { [weak self] event in
+            guard case .lockChanged(let isLocked) = event else { return }
+            self?.handleLockChanged(isLocked: isLocked)
+        }
+        .store(in: &cancellables)
     }
 
     // MARK: - Event Handlers

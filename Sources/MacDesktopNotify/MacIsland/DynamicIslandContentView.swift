@@ -1,3 +1,4 @@
+import MarkdownUI
 import SwiftUI
 
 // MARK: - Design Tokens
@@ -282,11 +283,8 @@ struct MessageCard: View {
                         .accessibilityLabel("移除此消息")
                     }
 
-                    Text(item.body)
-                        .font(Theme.Fonts.cardBody)
-                        .foregroundStyle(Theme.Colors.primaryText)
-                        .lineLimit(isExpanded ? nil : 2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // MARK: Markdown 正文渲染
+                    MarkdownBodyView(content: item.body, isExpanded: isExpanded)
                 }
             }
 
@@ -400,14 +398,16 @@ struct MessageCard: View {
         manager.triggerAction(notificationID: item.id, actionID: action.id)
     }
 
+    // MARK: - Action Icon（支持所有回调类型）
+
     private func actionIcon(_ action: NotificationAction) -> String? {
         switch action.callback?.type {
-        case .webhook:
-            return "link"
-        case .command:
-            return "terminal"
-        case .none:
-            return nil
+        case .webhook: return "link"
+        case .command: return "terminal"
+        case .urlScheme: return "safari"
+        case .file: return "folder"
+        case .appleScript: return "script"
+        case .none: return nil
         }
     }
 

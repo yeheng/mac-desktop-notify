@@ -5,15 +5,18 @@ class DynamicIslandWindowController: NSWindowController {
     private(set) var vm: DynamicIslandViewModel?
     weak var screen: NSScreen?
     private let manager: NotifyManager
+    private let eventBus: NotificationEventBus
     private var cancellables: Set<AnyCancellable> = []
 
     init(
         window: NSWindow,
         screen: NSScreen,
-        manager: NotifyManager
+        manager: NotifyManager,
+        eventBus: NotificationEventBus
     ) {
         self.screen = screen
         self.manager = manager
+        self.eventBus = eventBus
         super.init(window: window)
 
         var notchSize = screen.notchSize
@@ -22,7 +25,8 @@ class DynamicIslandWindowController: NSWindowController {
         self.vm = vm
         contentViewController = DynamicIslandViewController(
             vm: vm,
-            manager: manager
+            manager: manager,
+            eventBus: eventBus
         )
 
         if notchSize == .zero {
@@ -45,7 +49,8 @@ class DynamicIslandWindowController: NSWindowController {
 
     convenience init(
         screen: NSScreen,
-        manager: NotifyManager
+        manager: NotifyManager,
+        eventBus: NotificationEventBus
     ) {
         let window = DynamicIslandWindow(
             contentRect: .zero,
@@ -57,7 +62,8 @@ class DynamicIslandWindowController: NSWindowController {
         self.init(
             window: window,
             screen: screen,
-            manager: manager
+            manager: manager,
+            eventBus: eventBus
         )
     }
 

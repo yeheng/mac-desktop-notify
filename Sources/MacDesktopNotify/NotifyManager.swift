@@ -2,6 +2,8 @@ import Combine
 import Foundation
 import SwiftUI
 
+// MARK: - Notify Type
+
 enum NotifyType: String, Codable, CaseIterable {
     case info, success, warning, error
 
@@ -27,6 +29,8 @@ enum NotifyType: String, Codable, CaseIterable {
         }
     }
 }
+
+// MARK: - Request / Response Models
 
 struct NotifyCreateRequest: Codable {
     let title: String
@@ -75,22 +79,53 @@ enum NotificationActionStyle: String, Codable, Equatable {
     case destructive
 }
 
-enum NotificationActionCallbackType: String, Codable, Equatable {
+// MARK: - Callback Types
+
+enum NotificationActionCallbackType: String, Codable, Equatable, CaseIterable {
     case webhook
     case command
+    case urlScheme
+    case file
+    case appleScript
+}
+
+/// 文件操作类型
+enum FileAction: String, Codable, Equatable {
+    case open
+    case revealInFinder
 }
 
 struct NotificationActionCallback: Codable, Equatable {
     let type: NotificationActionCallbackType
+
+    // Webhook
     let url: String?
     let method: String?
     let headers: [String: String]?
     let body: String?
+
+    // Command
     let command: String?
     let arguments: [String]?
     let shell: Bool?
+
+    // URL Scheme
+    let urlScheme: String?
+
+    // File
+    let filePath: String?
+    let fileAction: FileAction?
+
+    // AppleScript
+    let appleScript: String?
+    let appleScriptFile: String?
+
+    // Shared
     let timeout: TimeInterval?
+    let environment: [String: String]?
 }
+
+// MARK: - Action Models
 
 struct NotificationAction: Identifiable, Codable, Equatable {
     let id: String
@@ -106,7 +141,7 @@ struct NotificationActionSelection: Codable, Equatable {
     let selectedAt: Date
 }
 
-struct NotificationActionEvent {
+struct NotificationActionEvent: Sendable {
     let notification: NotificationRecord
     let action: NotificationAction
     let selection: NotificationActionSelection
@@ -119,6 +154,8 @@ enum NotificationDismissReason: String, Codable, Equatable {
     case actionSelected
     case waitTimeout
 }
+
+// MARK: - Notification Record
 
 struct NotificationRecord: Identifiable, Codable, Equatable {
     let id: UUID
@@ -177,6 +214,24 @@ struct NotificationRecord: Identifiable, Codable, Equatable {
                 guard callback.command?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
                     return "Action '\(action.id)' has an empty command"
                 }
+            case .urlScheme:
+                guard let scheme = callback.urlScheme?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !scheme.isEmpty
+                else {
+                    return "Action '\(action.id)' has an empty URL scheme"
+                }
+            case .file:
+                guard let path = callback.filePath?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !path.isEmpty
+                else {
+                    return "Action '\(action.id)' has an empty file path"
+                }
+            case .appleScript:
+                let hasInline = callback.appleScript?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                let hasFile = callback.appleScriptFile?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                guard hasInline || hasFile else {
+                    return "Action '\(action.id)' must specify appleScript or appleScriptFile"
+                }
             }
         }
         return nil
@@ -205,6 +260,8 @@ struct NotificationRecord: Identifiable, Codable, Equatable {
     }
 }
 
+// MARK: - API Service State
+
 enum APIServiceState: Equatable {
     case stopped
     case running(host: String, port: UInt16, authRequired: Bool)
@@ -231,26 +288,24 @@ enum APIServiceState: Equatable {
     }
 }
 
+// MARK: - NotifyManager
+
 @MainActor
 @Observable
 final class NotifyManager {
     private let maxItems = 100
     private var timeoutTasks: [UUID: Task<Void, Never>] = [:]
 
+    /// 统一事件总线
+    let eventBus: NotificationEventBus
+
     private(set) var items: [NotificationRecord] = []
     var isLocked = false
     var serviceState: APIServiceState = .stopped
 
-    // MARK: - Combine Publishers（支持多订阅者）
-
-    /// 新通知到达时发送事件
-    let newNotificationSubject = PassthroughSubject<NotificationRecord, Never>()
-    /// 锁定状态变化时发送事件
-    let lockChangedSubject = PassthroughSubject<Bool, Never>()
-    /// Action 被触发时发送事件
-    let actionTriggeredSubject = PassthroughSubject<NotificationActionEvent, Never>()
-    /// 通知被移除时发送事件
-    let notificationDismissedSubject = PassthroughSubject<(UUID, NotificationDismissReason), Never>()
+    init(eventBus: NotificationEventBus) {
+        self.eventBus = eventBus
+    }
 
     // MARK: - Mutation Methods
 
@@ -261,7 +316,7 @@ final class NotifyManager {
                 items.removeLast(items.count - maxItems)
             }
         }
-        newNotificationSubject.send(item)
+        eventBus.publish(.notificationAdded(item))
 
         // 清理因溢出被移除的项对应的 timeout 任务
         let activeIDs = Set(items.map(\.id))
@@ -290,7 +345,7 @@ final class NotifyManager {
         }
 
         if reason != .actionSelected {
-            notificationDismissedSubject.send((id, reason))
+            eventBus.publish(.notificationDismissed(id: id, reason: reason))
         }
     }
 
@@ -304,7 +359,7 @@ final class NotifyManager {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
             items.removeAll()
         }
-        removedIDs.forEach { notificationDismissedSubject.send(($0, .cleared)) }
+        removedIDs.forEach { eventBus.publish(.notificationDismissed(id: $0, reason: .cleared)) }
     }
 
     func triggerAction(notificationID: UUID, actionID: String) {
@@ -318,21 +373,22 @@ final class NotifyManager {
             actionTitle: action.title,
             selectedAt: Date()
         )
-        actionTriggeredSubject.send(NotificationActionEvent(
+        eventBus.publish(.actionTriggered(NotificationActionEvent(
             notification: item,
             action: action,
             selection: selection
-        ))
+        )))
         remove(id: notificationID, reason: .actionSelected)
     }
 
     func toggleLock() {
         isLocked.toggle()
-        lockChangedSubject.send(isLocked)
+        eventBus.publish(.lockChanged(isLocked: isLocked))
     }
 
     func updateServiceState(_ state: APIServiceState) {
         serviceState = state
+        eventBus.publish(.serviceStateChanged(state))
     }
 
     func snapshot() -> [NotificationRecord] {

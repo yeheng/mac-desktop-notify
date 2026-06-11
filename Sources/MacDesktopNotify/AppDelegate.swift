@@ -9,7 +9,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem?
     private let statusMenu = NSMenu()
     private var cancellables: Set<AnyCancellable> = []
-    let manager = NotifyManager()
+
+    /// 统一事件总线
+    private let eventBus = NotificationEventBus()
+    /// 通知管理器（依赖事件总线）
+    private(set) var manager: NotifyManager!
+
+    override init() {
+        self.manager = NotifyManager(eventBus: eventBus)
+        super.init()
+    }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -24,23 +33,50 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let server = APIServer(manager: manager)
         apiServer = server
 
-        // 使用 Combine 订阅替代闭包回调，支持多订阅者
-        manager.actionTriggeredSubject
-            .receive(on: DispatchQueue.main)
-            .sink { [weak server] event in
-                server?.handleActionSelection(event)
-            }
-            .store(in: &cancellables)
+        // MARK: 使用事件总线订阅替代直接引用 Subject
 
-        manager.notificationDismissedSubject
-            .receive(on: DispatchQueue.main)
-            .sink { [weak server] notificationID, reason in
-                server?.handleNotificationDismissed(
-                    notificationID: notificationID,
-                    reason: reason
-                )
+        // Action 被触发 → 执行回调 → 反馈结果
+        eventBus.subscribe(for: .actionTriggered) { [weak self] event in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard case .actionTriggered(let actionEvent) = event else { return }
+
+                let result = await self.apiServer?.handleActionSelection(actionEvent)
+
+                // 发布回调结果事件
+                if let result {
+                    self.eventBus.publish(.callbackResult(
+                        notificationId: actionEvent.notification.id,
+                        actionId: actionEvent.action.id,
+                        result: result
+                    ))
+
+                    // 在 Dashboard 中创建结果通知
+                    let resultNotification = NotificationRecord(
+                        title: result.success
+                            ? "✓ \(actionEvent.action.title)"
+                            : "✗ \(actionEvent.action.title)",
+                        body: result.output ?? result.error ?? (result.success ? "Completed" : "Failed"),
+                        type: result.success ? .success : .error,
+                        timeout: 5
+                    )
+                    self.manager.add(resultNotification)
+                }
             }
-            .store(in: &cancellables)
+        }
+        .store(in: &cancellables)
+
+        // 通知被关闭 → 完成 waiter
+        eventBus.subscribe(for: .notificationDismissed) { [weak self] event in
+            guard let self else { return }
+            guard case .notificationDismissed(let id, let reason) = event else { return }
+            self.apiServer?.handleNotificationDismissed(
+                notificationID: id,
+                reason: reason
+            )
+        }
+        .store(in: &cancellables)
 
         do {
             try server.start()
@@ -79,7 +115,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let screen = NSScreen.builtIn ?? NSScreen.main else { return }
         let controller = DynamicIslandWindowController(
             screen: screen,
-            manager: manager
+            manager: manager,
+            eventBus: eventBus
         )
         mainWindowController = controller
     }
