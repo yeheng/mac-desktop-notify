@@ -3,72 +3,70 @@ import SwiftUI
 
 /// 横幅通知视图
 /// 支持分组：折叠显示最新通知 + 数量徽章，展开显示组内所有通知
+///
+/// UI 分层：
+/// - 横幅外壳：浮动面板，macOS 26 使用 Liquid Glass，旧系统使用 .ultraThinMaterial
+/// - 通知卡片：内容层，使用实色/半透背景，不叠加 glass
+/// - 操作按钮：macOS 26 使用 GlassButtonStyle / GlassProminentButtonStyle
 struct BannerView: View {
     @Bindable var bannerVM: BannerViewModel
     @Environment(NotifyManager.self) var manager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if bannerVM.isExpanded && bannerVM.isGrouped {
-                // MARK: - 展开状态（分组）
-                expandedGroupView
-            } else {
-                // MARK: - 折叠状态 / 单条通知
-                collapsedView
+        // 通知被全部移除后可能短暂进入空状态，此时渲染占位避免 Index out of range
+        guard let currentItem = bannerVM.currentDisplayItem else {
+            return AnyView(
+                Color.clear
+                    .frame(width: BannerLayout.bannerWidth, height: BannerLayout.collapsedHeight)
+                    .bannerBackground(cornerRadius: BannerLayout.cornerRadius)
+            )
+        }
+
+        return AnyView(
+            VStack(alignment: .leading, spacing: 0) {
+                if bannerVM.isExpanded && bannerVM.isGrouped {
+                    // MARK: - 展开状态（分组）
+                    expandedGroupView(currentItem: currentItem)
+                } else if bannerVM.isExpanded {
+                    // MARK: - 展开状态（单条）
+                    expandedSingleView(item: currentItem)
+                } else {
+                    // MARK: - 折叠状态
+                    collapsedView(item: currentItem)
+                }
             }
-        }
-        .padding(BannerLayout.contentPadding)
-        .background(
-            RoundedRectangle(cornerRadius: BannerLayout.cornerRadius)
-                .fill(.ultraThinMaterial)
+            .padding(BannerLayout.contentPadding)
+            .bannerBackground(cornerRadius: BannerLayout.cornerRadius)
+            .onTapGesture {
+                bannerVM.toggleExpanded()
+            }
         )
-        .clipShape(RoundedRectangle(cornerRadius: BannerLayout.cornerRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: BannerLayout.cornerRadius)
-                .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.3), radius: 15, x: 0, y: 4)
-        .onTapGesture {
-            bannerVM.toggleExpanded()
-        }
-        .preferredColorScheme(.dark)
     }
 
     // MARK: - 折叠视图
 
-    private var collapsedView: some View {
+    private func collapsedView(item: NotificationRecord) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             // 头部行
             HStack(alignment: .top, spacing: 10) {
-                // 类型图标
-                typeIcon(bannerVM.currentDisplayItem)
+                typeIcon(item)
 
                 // 标题 + 正文
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Text(bannerVM.currentDisplayItem.title)
+                        Text(item.title)
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(AppTheme.Colors.primaryText)
                             .lineLimit(1)
                             .truncationMode(.tail)
 
                         // 数量徽章
                         if bannerVM.isGrouped {
-                            Text("\(bannerVM.groupCount)")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.7))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(AppTheme.Colors.buttonFillActive)
-                                .clipShape(Capsule())
+                            groupBadge(count: bannerVM.groupCount)
                         }
                     }
 
-                    Text(bannerVM.currentDisplayItem.body)
-                        .font(.system(size: 12))
-                        .foregroundStyle(AppTheme.Colors.primaryText)
-                        .lineLimit(2)
-                        .truncationMode(.tail)
+                    MarkdownBodyView(content: item.body, isExpanded: false)
                 }
 
                 Spacer(minLength: 4)
@@ -77,26 +75,66 @@ struct BannerView: View {
                 closeButton
             }
 
+            // 操作按钮（折叠状态也显示，方便用户直接操作）
+            if !item.actions.isEmpty {
+                actionsView(for: item)
+                    .padding(.top, 4)
+            }
+
             // 超时进度条
-            progressBar(for: bannerVM.currentDisplayItem)
+            progressBar(for: item)
+        }
+    }
+
+    // MARK: - 单条展开视图
+
+    private func expandedSingleView(item: NotificationRecord) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // 头部行
+            HStack(spacing: 10) {
+                typeIcon(item)
+
+                Text(item.title)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(AppTheme.Colors.primaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Spacer(minLength: 4)
+
+                closeButton
+            }
+
+            // 完整 Markdown 正文
+            MarkdownBodyView(content: item.body, isExpanded: true)
+                .padding(.top, 2)
+
+            // 操作按钮
+            if !item.actions.isEmpty {
+                actionsView(for: item)
+                    .padding(.top, 6)
+            }
+
+            // 超时进度条
+            progressBar(for: item)
         }
     }
 
     // MARK: - 展开分组视图
 
-    private var expandedGroupView: some View {
+    private func expandedGroupView(currentItem: NotificationRecord) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             // 组标题行
             HStack(spacing: 8) {
-                typeIcon(bannerVM.currentDisplayItem)
+                typeIcon(currentItem)
 
                 Text(bannerVM.groupDisplayName)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AppTheme.Colors.primaryText)
 
                 Text("\(bannerVM.groupCount) 条通知")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(AppTheme.Colors.secondaryText)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(AppTheme.Colors.buttonFillActive)
@@ -116,7 +154,7 @@ struct BannerView: View {
             .padding(.top, 8)
 
             // 超时进度条
-            progressBar(for: bannerVM.currentDisplayItem)
+            progressBar(for: currentItem)
         }
     }
 
@@ -128,7 +166,7 @@ struct BannerView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.title)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(AppTheme.Colors.primaryText)
                         .lineLimit(1)
                         .truncationMode(.tail)
 
@@ -138,49 +176,38 @@ struct BannerView: View {
                 Spacer(minLength: 4)
 
                 // 单条关闭按钮
-                Button(action: { removeItem(item) }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(AppTheme.Colors.tertiaryText)
-                        .frame(width: 16, height: 16)
-                        .background(AppTheme.Colors.buttonFill)
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
+                iconCloseButton(action: { removeItem(item) })
             }
 
             // 操作按钮
             if !item.actions.isEmpty {
-                HStack(spacing: 5) {
-                    ForEach(item.actions) { action in
-                        Button(action: { triggerAction(action, for: item) }) {
-                            HStack(spacing: 4) {
-                                if let icon = actionIcon(action) {
-                                    Image(systemName: icon)
-                                        .font(.system(size: 9, weight: .semibold))
-                                }
-                                Text(action.title)
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .lineLimit(1)
-                            }
-                            .foregroundStyle(actionForeground(action))
-                            .padding(.horizontal, 8)
-                            .frame(height: 22)
-                            .background(actionBackground(action))
-                            .clipShape(Capsule())
-                            .overlay(
-                                Capsule()
-                                    .stroke(actionStroke(action), lineWidth: 0.5)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                actionsView(for: item)
             }
         }
         .padding(BannerLayout.groupItemPadding)
         .background(AppTheme.Colors.cardFill)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: BannerLayout.groupItemCornerRadius))
+    }
+
+    // MARK: - 操作按钮
+
+    private func actionsView(for item: NotificationRecord) -> some View {
+        HStack(spacing: 5) {
+            ForEach(item.actions) { action in
+                Button(action: { triggerAction(action, for: item) }) {
+                    HStack(spacing: 4) {
+                        if let icon = actionIcon(action) {
+                            Image(systemName: icon)
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        Text(action.title)
+                            .font(.system(size: 10, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                }
+                .notificationActionStyle(action.style)
+            }
+        }
     }
 
     // MARK: - 共享组件
@@ -196,18 +223,31 @@ struct BannerView: View {
         }
     }
 
+    private func groupBadge(count: Int) -> some View {
+        Text("\(count)")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(AppTheme.Colors.buttonFillActive)
+            .clipShape(Capsule())
+    }
+
     private var closeButton: some View {
-        Button(action: { bannerVM.dismiss() }) {
+        iconCloseButton(action: { bannerVM.dismiss() })
+            .help("关闭")
+            .accessibilityLabel("关闭通知")
+    }
+
+    /// 圆形图标关闭按钮：macOS 26 使用 glass，旧系统使用自定义填充
+    private func iconCloseButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             Image(systemName: "xmark")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(AppTheme.Colors.secondaryText)
                 .frame(width: 20, height: 20)
-                .background(AppTheme.Colors.buttonFill)
-                .clipShape(Circle())
         }
-        .buttonStyle(.plain)
-        .help("关闭")
-        .accessibilityLabel("关闭通知")
+        .iconCloseButtonStyle()
     }
 
     @ViewBuilder
@@ -237,7 +277,7 @@ struct BannerView: View {
         manager.triggerAction(notificationID: item.id, actionID: action.id)
     }
 
-    // MARK: - Action 样式
+    // MARK: - Action 图标
 
     private func actionIcon(_ action: NotificationAction) -> String? {
         switch action.callback?.type {
@@ -247,30 +287,6 @@ struct BannerView: View {
         case .file: return "folder"
         case .appleScript: return "script"
         case .none: return nil
-        }
-    }
-
-    private func actionForeground(_ action: NotificationAction) -> Color {
-        switch action.style {
-        case .primary: return .white
-        case .destructive: return .red.opacity(0.95)
-        case .normal: return AppTheme.Colors.primaryText
-        }
-    }
-
-    private func actionBackground(_ action: NotificationAction) -> Color {
-        switch action.style {
-        case .primary: return AppTheme.Colors.buttonFillActive
-        case .destructive: return .red.opacity(0.14)
-        case .normal: return AppTheme.Colors.buttonFill
-        }
-    }
-
-    private func actionStroke(_ action: NotificationAction) -> Color {
-        switch action.style {
-        case .primary: return .white.opacity(0.24)
-        case .destructive: return .red.opacity(0.26)
-        case .normal: return AppTheme.Colors.cardBorder
         }
     }
 }

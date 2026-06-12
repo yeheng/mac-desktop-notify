@@ -1,24 +1,26 @@
 import MarkdownUI
 import SwiftUI
 
-// MARK: - Side Panel Markdown 主题（深色系）
+// MARK: - 通知面板 Markdown 主题
+//
+// 使用系统语义颜色，自动跟随浅色/深色模式与辅助功能设置。
 
 extension Theme {
     static let sidePanel: Theme = {
         let base = Theme()
             .text {
-                ForegroundColor(.white.opacity(0.82))
+                ForegroundColor(AppTheme.Colors.primaryText)
                 FontSize(12)
             }
             .code {
                 FontFamilyVariant(.monospaced)
                 FontSize(11)
-                BackgroundColor(.white.opacity(0.08))
+                BackgroundColor(AppTheme.Colors.buttonFill)
             }
             .codeBlock { configuration in
                 configuration.label
                     .padding(8)
-                    .background(Color.white.opacity(0.06))
+                    .background(AppTheme.Colors.cardFill)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .markdownMargin(top: 6, bottom: 6)
             }
@@ -30,7 +32,7 @@ extension Theme {
                     .markdownTextStyle {
                         FontSize(16)
                         FontWeight(.bold)
-                        ForegroundColor(.white)
+                        ForegroundColor(AppTheme.Colors.primaryText)
                     }
             }
             .heading2 { configuration in
@@ -39,7 +41,7 @@ extension Theme {
                     .markdownTextStyle {
                         FontSize(14)
                         FontWeight(.bold)
-                        ForegroundColor(Color.white.opacity(0.95))
+                        ForegroundColor(AppTheme.Colors.primaryText)
                     }
             }
             .heading3 { configuration in
@@ -48,7 +50,7 @@ extension Theme {
                     .markdownTextStyle {
                         FontSize(13)
                         FontWeight(.semibold)
-                        ForegroundColor(Color.white.opacity(0.9))
+                        ForegroundColor(AppTheme.Colors.primaryText)
                     }
             }
 
@@ -59,7 +61,7 @@ extension Theme {
                     .markdownTextStyle {
                         FontSize(12)
                         FontWeight(.semibold)
-                        ForegroundColor(Color.white.opacity(0.85))
+                        ForegroundColor(AppTheme.Colors.primaryText)
                     }
             }
             .heading5 { configuration in
@@ -67,7 +69,7 @@ extension Theme {
                     .markdownTextStyle {
                         FontSize(12)
                         FontWeight(.medium)
-                        ForegroundColor(Color.white.opacity(0.8))
+                        ForegroundColor(AppTheme.Colors.primaryText)
                     }
             }
             .heading6 { configuration in
@@ -75,7 +77,7 @@ extension Theme {
                     .markdownTextStyle {
                         FontSize(12)
                         FontWeight(.medium)
-                        ForegroundColor(Color.white.opacity(0.75))
+                        ForegroundColor(AppTheme.Colors.secondaryText)
                     }
             }
 
@@ -91,12 +93,12 @@ extension Theme {
             .table { configuration in
                 configuration.label
                     .markdownTableBorderStyle(
-                        .init(color: Color.white.opacity(0.12))
+                        .init(color: AppTheme.Colors.cardBorder)
                     )
                     .markdownTableBackgroundStyle(
                         .alternatingRows(
-                            Color.white.opacity(0.04),
-                            Color.white.opacity(0.02)
+                            AppTheme.Colors.buttonFill,
+                            AppTheme.Colors.cardFill
                         )
                     )
                     .markdownMargin(top: 6, bottom: 6)
@@ -106,7 +108,7 @@ extension Theme {
                     .padding(.leading, 8)
                     .overlay(
                         Rectangle()
-                            .fill(Color.white.opacity(0.16))
+                            .fill(AppTheme.Colors.cardBorder)
                             .frame(width: 2),
                         alignment: .leading
                     )
@@ -114,7 +116,7 @@ extension Theme {
             }
             .thematicBreak {
                 Divider()
-                    .overlay(Color.white.opacity(0.12))
+                    .overlay(AppTheme.Colors.cardBorder)
             }
             .image { configuration in
                 configuration.label
@@ -124,15 +126,15 @@ extension Theme {
 
         return blocks
             .link {
-                ForegroundColor(.cyan)
+                ForegroundColor(.accentColor)
             }
             .strong {
                 FontWeight(.bold)
-                ForegroundColor(.white)
+                ForegroundColor(AppTheme.Colors.primaryText)
             }
             .emphasis {
                 FontStyle(.italic)
-                ForegroundColor(Color.white.opacity(0.88))
+                ForegroundColor(AppTheme.Colors.primaryText)
             }
             .strikethrough {
                 StrikethroughStyle(.single)

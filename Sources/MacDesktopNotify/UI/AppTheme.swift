@@ -3,20 +3,31 @@ import SwiftUI
 // MARK: - Design Tokens
 
 /// 应用设计 Token（命名 AppTheme 避免与 MarkdownUI.Theme 冲突）
+///
+/// 颜色优先使用系统语义颜色（NSColor.label 等），以便自动跟随浅色/深色模式、
+/// 增强对比度等辅助功能设置。macOS 26 上配合 Liquid Glass 使用；
+/// macOS 14/15 回退到 .ultraThinMaterial 时也能正确渲染。
 enum AppTheme {
     enum Colors {
-        static let primaryText = Color.white.opacity(0.82)
-        static let secondaryText = Color.white.opacity(0.56)
-        static let tertiaryText = Color.white.opacity(0.42)
-        static let faintIcon = Color.white.opacity(0.32)
-        static let labelText = Color.white.opacity(0.62)
-        static let valueText = Color.white.opacity(0.66)
-        static let cardFill = Color.white.opacity(0.05)
-        static let cardFillHover = Color.white.opacity(0.09)
-        static let cardBorder = Color.white.opacity(0.06)
-        static let buttonFill = Color.white.opacity(0.08)
-        static let buttonFillActive = Color.white.opacity(0.14)
-        static let progressTrack = Color.white.opacity(0.06)
+        // MARK: Text
+        static let primaryText = Color(nsColor: .labelColor)
+        static let secondaryText = Color(nsColor: .secondaryLabelColor)
+        static let tertiaryText = Color(nsColor: .tertiaryLabelColor)
+        static let faintIcon = Color(nsColor: .tertiaryLabelColor)
+        static let labelText = Color(nsColor: .secondaryLabelColor)
+        static let valueText = Color(nsColor: .secondaryLabelColor)
+
+        // MARK: Surfaces
+        /// 内容卡片背景（通知组内的单条消息卡片）
+        static let cardFill = Color(nsColor: .controlBackgroundColor).opacity(0.4)
+        static let cardFillHover = Color(nsColor: .controlBackgroundColor).opacity(0.6)
+        /// 细边框 / 分隔线
+        static let cardBorder = Color(nsColor: .separatorColor)
+
+        // MARK: Controls
+        static let buttonFill = Color(nsColor: .controlColor).opacity(0.2)
+        static let buttonFillActive = Color(nsColor: .controlAccentColor)
+        static let progressTrack = Color(nsColor: .separatorColor)
     }
 
     enum Fonts {

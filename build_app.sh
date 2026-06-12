@@ -18,9 +18,32 @@ echo "🔨 编译 Release 版本..."
 cd "${SCRIPT_DIR}"
 swift build -c release --build-path "${BUILD_DIR}"
 
+echo "🎨 编译 Asset Catalog..."
+ASSETS_CAR="${BUILD_DIR}/Assets.car"
+if [[ -d "${SCRIPT_DIR}/Assets/Assets.xcassets" ]]; then
+    xcrun actool \
+        --output-format human-readable-text \
+        --notices \
+        --warnings \
+        --platform macosx \
+        --minimum-deployment-target "${MIN_MACOS_VERSION}" \
+        --target-device mac \
+        --app-icon AppIcon \
+        --output-partial-info-plist "${BUILD_DIR}/assetcatalog_generated_info.plist" \
+        --compile "${BUILD_DIR}" \
+        "${SCRIPT_DIR}/Assets/Assets.xcassets"
+else
+    echo "   未找到 Assets.xcassets，跳过图标编译"
+fi
+
 echo "📦 创建 App Bundle..."
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 mkdir -p "${APP_BUNDLE}/Contents/Resources"
+
+# 复制编译后的 Assets.car（如果存在）
+if [[ -f "${ASSETS_CAR}" ]]; then
+    cp "${ASSETS_CAR}" "${APP_BUNDLE}/Contents/Resources/Assets.car"
+fi
 
 # 查找可执行文件 (SPM 在自定义 build-path 下会放在 arch-specific 目录中)
 EXE_PATH=$(find "${BUILD_DIR}" -maxdepth 3 -type f -name "${APP_NAME}" | grep -E "release/[^/]+$|release/${APP_NAME}$" | head -n 1)
@@ -50,6 +73,8 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<PLIST
     <string>${BUNDLE_ID}</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleName</key>
     <string>${APP_NAME}</string>
     <key>CFBundlePackageType</key>

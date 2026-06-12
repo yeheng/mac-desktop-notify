@@ -188,9 +188,9 @@ class BannerStackManager {
         if groupEmpty {
             // 组空了，移除整个横幅
             dismissGroup(key: entry.groupKey, animated: animated)
-        } else {
+        } else if let newCurrentID = entry.viewModel.currentDisplayItem?.id {
             // 组内还有通知，更新视图
-            entry.window.notificationID = entry.viewModel.currentDisplayItem.id
+            entry.window.notificationID = newCurrentID
             // 不需要重新创建窗口，ViewModel 变化会自动刷新 SwiftUI
         }
     }

@@ -19,9 +19,9 @@ class BannerViewModel {
 
     // MARK: - 便捷属性
 
-    /// 当前展示的通知（组内最新一条）
-    var currentDisplayItem: NotificationRecord {
-        notifications.last ?? notifications[0]
+    /// 当前展示的通知（组内最新一条）。通知被移除后可能短暂为空，返回 nil。
+    var currentDisplayItem: NotificationRecord? {
+        notifications.last
     }
 
     /// 组内通知数量
@@ -31,7 +31,12 @@ class BannerViewModel {
 
     /// 分组键
     var groupKey: String {
-        currentDisplayItem.groupKey
+        currentDisplayItem?.groupKey ?? ""
+    }
+
+    /// 是否为空组（移除最后一条后的短暂状态）
+    var isEmpty: Bool {
+        notifications.isEmpty
     }
 
     /// 是否为多通知组
@@ -41,11 +46,12 @@ class BannerViewModel {
 
     /// 组显示名称
     var groupDisplayName: String {
-        if let group = currentDisplayItem.group {
+        guard let item = currentDisplayItem else { return "" }
+        if let group = item.group {
             return group
         }
-        return currentDisplayItem.type.rawValue.prefix(1).uppercased()
-            + currentDisplayItem.type.rawValue.dropFirst()
+        return item.type.rawValue.prefix(1).uppercased()
+            + item.type.rawValue.dropFirst()
     }
 
     init(notifications: [NotificationRecord]) {
@@ -85,8 +91,7 @@ class BannerViewModel {
     // MARK: - 超时管理
 
     func startTimeout() {
-        let timeout = currentDisplayItem.timeout
-        guard timeout > 0 else { return }
+        guard let timeout = currentDisplayItem?.timeout, timeout > 0 else { return }
         startTime = Date()
         progressTimer = Timer.scheduledTimer(
             withTimeInterval: BannerLayout.progressUpdateInterval,
@@ -114,9 +119,9 @@ class BannerViewModel {
     // stopTimeout() 在横幅消失前总是会被调用。
 
     private func updateProgress() {
-        guard let startTime else { return }
-        let timeout = currentDisplayItem.timeout
-        guard timeout > 0 else { return }
+        guard let startTime,
+              let timeout = currentDisplayItem?.timeout,
+              timeout > 0 else { return }
         let elapsed = Date().timeIntervalSince(startTime)
         let remaining = max(0, 1.0 - elapsed / timeout)
         progress = remaining
