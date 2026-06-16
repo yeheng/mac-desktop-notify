@@ -77,7 +77,7 @@ class BannerViewModel {
     // MARK: - 展开/折叠
 
     func toggleExpanded() {
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withAnimation(AppTheme.Motion.quick) {
             isExpanded.toggle()
         }
     }
@@ -86,6 +86,22 @@ class BannerViewModel {
     func dismiss() {
         stopTimeout()
         onTimeout?()
+    }
+
+    /// 原地展示操作结果：用结果内容替换组内通知，并重启较短超时。
+    ///
+    /// 替代「关闭原横幅 + 新建结果横幅」的双卡片晃眼方案。
+    func presentResult(_ result: CallbackResult, actionTitle: String) {
+        let record = NotificationRecord(
+            title: result.success ? "✓ \(actionTitle)" : "✗ \(actionTitle)",
+            body: result.output ?? result.error ?? (result.success ? L10n.completed : L10n.failed),
+            type: result.success ? .success : .error,
+            timeout: 5
+        )
+        notifications = [record]
+        isExpanded = false
+        // 重启超时进度（5s，从新 record.timeout 读取）
+        restartTimeout()
     }
 
     // MARK: - 超时管理

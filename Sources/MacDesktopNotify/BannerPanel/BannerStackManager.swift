@@ -64,6 +64,11 @@ class BannerStackManager {
     // MARK: - 显示横幅（分组感知）
 
     func showBanner(for item: NotificationRecord) {
+        // 锁定屏幕策略：仅当前屏幕丢失或已断开时才重新解析，
+        // 避免已存在的整栈横幅因鼠标移到副屏而跨屏跳动。
+        if screen == nil || !NSScreen.screens.contains(where: { $0 == screen }) {
+            screen = NSScreen.preferredNotificationScreen
+        }
         guard let screen, let manager, let eventBus else { return }
         let key = item.groupKey
 
@@ -176,6 +181,36 @@ class BannerStackManager {
         removeNotification(id: id, animated: animated)
     }
 
+    /// 原地展示操作结果：优先在原横幅窗口内替换内容，避免新建横幅晃眼。
+    /// 若原横幅已不存在则回退到新建结果横幅。
+    func presentResult(for notificationID: UUID, result: CallbackResult, actionTitle: String) {
+        if let index = entries.firstIndex(where: { entry in
+            entry.viewModel.notifications.contains { $0.id == notificationID }
+        }) {
+            // 原横幅仍在 → 原地替换
+            let entry = entries[index]
+            entry.viewModel.presentResult(result, actionTitle: actionTitle)
+            if let newID = entry.viewModel.currentDisplayItem?.id {
+                entry.window.notificationID = newID
+            }
+            // 移到顶部
+            if index > 0 {
+                entries.remove(at: index)
+                entries.insert(entry, at: 0)
+                repositionAllBanners(animated: true)
+            }
+        } else {
+            // 原横幅已关闭 → 回退：新建结果横幅
+            let record = NotificationRecord(
+                title: result.success ? "✓ \(actionTitle)" : "✗ \(actionTitle)",
+                body: result.output ?? result.error ?? (result.success ? L10n.completed : L10n.failed),
+                type: result.success ? .success : .error,
+                timeout: 5
+            )
+            manager?.add(record)
+        }
+    }
+
     /// 从组内移除指定通知
     private func removeNotification(id: UUID, animated: Bool) {
         guard let entryIndex = entries.firstIndex(where: { entry in
@@ -275,12 +310,29 @@ class BannerStackManager {
         guard !entries.isEmpty else { return }
         let last = entries.removeLast()
         last.viewModel.stopTimeout()
-        last.window.close()
+
+        // 淡出 + 右滑，而非瞬间关闭，避免用户看到横幅突兀消失。
+        let window = last.window
+        let offscreen = CGRect(
+            x: (screen?.visibleFrame.maxX ?? window.frame.maxX) + BannerLayout.bannerWidth,
+            y: window.frame.origin.y,
+            width: window.frame.width,
+            height: window.frame.height
+        )
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = BannerLayout.slideAnimationDuration
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            window.animator().alphaValue = 0
+            window.animator().setFrame(offscreen, display: true)
+        }, completionHandler: {
+            window.close()
+        })
     }
 
     private func handleScreenChange() {
-        if let builtIn = NSScreen.builtIn {
-            screen = builtIn
+        // 当前屏幕仍在，保持锁定；仅当断开时才迁移到新屏幕。
+        if screen == nil || !NSScreen.screens.contains(where: { $0 == screen }) {
+            screen = NSScreen.preferredNotificationScreen
         }
         repositionAllBanners(animated: false)
     }

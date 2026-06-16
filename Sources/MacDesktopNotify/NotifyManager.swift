@@ -28,6 +28,16 @@ enum NotifyType: String, Codable, CaseIterable {
         case .error: return "xmark.circle.fill"
         }
     }
+
+    /// 用户可见的类型名称（用于无障碍标签、过滤 chip 等）
+    var displayName: String {
+        switch self {
+        case .info: return L10n.NotifyTypeLabel.info
+        case .success: return L10n.NotifyTypeLabel.success
+        case .warning: return L10n.NotifyTypeLabel.warning
+        case .error: return L10n.NotifyTypeLabel.error
+        }
+    }
 }
 
 // MARK: - Request / Response Models
@@ -318,7 +328,7 @@ final class NotifyManager {
     // MARK: - Mutation Methods
 
     func add(_ item: NotificationRecord) {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+        withAnimation(AppTheme.Motion.listSpring) {
             items.insert(item, at: 0)
             if items.count > maxItems {
                 items.removeLast(items.count - maxItems)
@@ -348,12 +358,30 @@ final class NotifyManager {
 
         timeoutTasks.removeValue(forKey: id)?.cancel()
 
-        withAnimation(.easeInOut(duration: 0.3)) {
+        withAnimation(AppTheme.Motion.ease) {
             items.removeAll { $0.id == id }
         }
 
         if reason != .actionSelected {
             eventBus.publish(.notificationDismissed(id: id, reason: reason))
+        }
+    }
+
+    /// 恢复一条被删除的通知（撤销删除）。重新启动其超时任务。
+    func restore(_ item: NotificationRecord) {
+        guard !items.contains(where: { $0.id == item.id }) else { return }
+        withAnimation(AppTheme.Motion.listSpring) {
+            items.insert(item, at: 0)
+        }
+        eventBus.publish(.notificationAdded(item))
+
+        guard item.timeout > 0 else { return }
+        let id = item.id
+        let timeout = item.timeout
+        timeoutTasks[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
+            guard !Task.isCancelled else { return }
+            self?.remove(id: id, reason: .timeout)
         }
     }
 
@@ -364,7 +392,7 @@ final class NotifyManager {
         let removedIDs = items.map(\.id)
         guard !removedIDs.isEmpty else { return }
 
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+        withAnimation(AppTheme.Motion.listSpring) {
             items.removeAll()
         }
         removedIDs.forEach { eventBus.publish(.notificationDismissed(id: $0, reason: .cleared)) }
