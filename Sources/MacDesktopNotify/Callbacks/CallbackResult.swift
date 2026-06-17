@@ -45,4 +45,17 @@ struct CallbackResult: Codable, Equatable, Sendable {
             completedAt: Date()
         )
     }
+
+    /// 生成用于原地展示（横幅结果替换）的短超时通知 record。
+    ///
+    /// 唯一构造点，供 BannerStackManager 与 BannerViewModel 共用，
+    /// 避免两处各拼一遍 "✓/✗ title" + 5s 超时。
+    func toDisplayRecord(actionTitle: String) -> NotificationRecord {
+        NotificationRecord(
+            title: success ? "✓ \(actionTitle)" : "✗ \(actionTitle)",
+            body: output ?? error ?? (success ? L10n.completed : L10n.failed),
+            type: success ? .success : .error,
+            timeout: 5
+        )
+    }
 }

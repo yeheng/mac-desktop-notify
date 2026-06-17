@@ -6,11 +6,19 @@ struct APIServerConfig {
     let port: UInt16
     let token: String?
 
+    /// 启动时的默认配置（来自环境变量 AppConfig）。
     static let `default` = APIServerConfig(
         host: AppConfig.apiHost,
         port: AppConfig.apiPort,
         token: AppConfig.apiToken
     )
+
+    /// 当前用户设置（来自 SettingsStore / UserDefaults）。
+    /// 供 AppDelegate 在启动和「立即应用」重启时读取。
+    @MainActor
+    static var current: APIServerConfig {
+        SettingsStore.shared.serverConfig
+    }
 
     var authRequired: Bool {
         token != nil

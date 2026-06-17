@@ -205,7 +205,8 @@ struct NotificationRecord: Identifiable, Codable, Equatable {
     }
 
     init(request: NotifyCreateRequest) {
-        let fallbackTimeout: TimeInterval = request.shouldWaitForAction ? 0 : 8
+        // 未指定超时时，用 SettingsStore 的默认超时（默认 8s）；阻塞等待则不超时
+        let fallbackTimeout: TimeInterval = request.shouldWaitForAction ? 0 : DefaultTimeout.current
         self.init(
             title: request.title,
             body: request.body,
@@ -311,7 +312,8 @@ enum APIServiceState: Equatable {
 @MainActor
 @Observable
 final class NotifyManager {
-    private let maxItems = 100
+    /// 最大历史保留数（可配置，初始值来自 SettingsStore）
+    private var maxItems: Int
     private var timeoutTasks: [UUID: Task<Void, Never>] = [:]
 
     /// 统一事件总线
@@ -323,6 +325,7 @@ final class NotifyManager {
 
     init(eventBus: NotificationEventBus) {
         self.eventBus = eventBus
+        self.maxItems = SettingsStore.shared.maxHistoryItems
     }
 
     // MARK: - Mutation Methods
@@ -429,5 +432,15 @@ final class NotifyManager {
 
     func snapshot() -> [NotificationRecord] {
         items
+    }
+
+    /// 更新最大历史保留数（设置面板调用），超出时裁剪旧项。
+    func updateMaxItems(_ newMax: Int) {
+        maxItems = max(10, newMax)
+        guard items.count > maxItems else { return }
+        let overflow = items.count - maxItems
+        withAnimation(AppTheme.Motion.listSpring) {
+            items.removeLast(overflow)
+        }
     }
 }

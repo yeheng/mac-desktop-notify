@@ -34,6 +34,10 @@ class BannerViewController: NSViewController {
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         hostingView.sizingOptions = [.minSize, .maxSize]
         self.view = hostingView
+
+        Task { @MainActor [weak self] in
+            self?.reportHeightChange()
+        }
     }
 
     // MARK: - 高度变化观察
@@ -43,6 +47,10 @@ class BannerViewController: NSViewController {
         withObservationTracking {
             _ = bannerVM.isExpanded
             _ = bannerVM.notifications.count
+            _ = bannerVM.currentDisplayItem?.id
+            _ = bannerVM.currentDisplayItem?.body
+            _ = bannerVM.currentDisplayItem?.actions.count
+            _ = bannerVM.preferredHeight
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.reportHeightChange()
@@ -52,9 +60,7 @@ class BannerViewController: NSViewController {
 
     /// 向上报告高度变化
     private func reportHeightChange() {
-        guard let hostingView = view as? NSHostingView<BannerView> else { return }
-        let fittingSize = hostingView.fittingSize
-        let newHeight = max(BannerLayout.collapsedHeight, fittingSize.height)
+        let newHeight = max(BannerLayout.collapsedHeight, bannerVM.preferredHeight)
 
         guard abs(newHeight - lastReportedHeight) > 1 else {
             setupHeightObserver()

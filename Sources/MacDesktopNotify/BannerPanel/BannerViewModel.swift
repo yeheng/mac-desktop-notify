@@ -44,6 +44,53 @@ class BannerViewModel {
         notifications.count > 1
     }
 
+    /// 横幅窗口的确定性高度。
+    ///
+    /// NSHostingView.fittingSize 在无边框浮动 NSPanel 内可能返回接近最大高度，
+    /// 导致展开组只有顶部内容、下方大面积空白。这里按横幅状态估算高度，
+    /// 让窗口跟随内容，而不是跟随 SwiftUI 的最大布局提议。
+    var preferredHeight: CGFloat {
+        guard let item = currentDisplayItem else {
+            return BannerLayout.collapsedHeight
+        }
+
+        if isExpanded && isGrouped {
+            let rows = notifications.reduce(CGFloat(0)) { partial, item in
+                partial + groupItemHeight(for: item)
+            }
+            let gaps = CGFloat(max(notifications.count - 1, 0)) * BannerLayout.groupItemSpacing
+            return min(
+                BannerLayout.maxExpandedHeight,
+                BannerLayout.contentPadding * 2
+                    + AppTheme.Layout.iconSize
+                    + AppTheme.Spacing.s
+                    + rows
+                    + gaps
+                    + progressHeight(for: item)
+            )
+        }
+
+        if isExpanded {
+            return min(
+                BannerLayout.maxExpandedHeight,
+                BannerLayout.contentPadding * 2
+                    + AppTheme.Layout.iconSize
+                    + expandedBodyHeight(for: item)
+                    + actionHeight(for: item)
+                    + progressHeight(for: item)
+                    + 14
+            )
+        }
+
+        return min(
+            BannerLayout.maxExpandedHeight,
+            BannerLayout.contentPadding * 2
+                + collapsedContentHeight(for: item)
+                + actionHeight(for: item)
+                + progressHeight(for: item)
+        )
+    }
+
     /// 组显示名称
     var groupDisplayName: String {
         guard let item = currentDisplayItem else { return "" }
@@ -92,13 +139,7 @@ class BannerViewModel {
     ///
     /// 替代「关闭原横幅 + 新建结果横幅」的双卡片晃眼方案。
     func presentResult(_ result: CallbackResult, actionTitle: String) {
-        let record = NotificationRecord(
-            title: result.success ? "✓ \(actionTitle)" : "✗ \(actionTitle)",
-            body: result.output ?? result.error ?? (result.success ? L10n.completed : L10n.failed),
-            type: result.success ? .success : .error,
-            timeout: 5
-        )
-        notifications = [record]
+        notifications = [result.toDisplayRecord(actionTitle: actionTitle)]
         isExpanded = false
         // 重启超时进度（5s，从新 record.timeout 读取）
         restartTimeout()
@@ -146,5 +187,32 @@ class BannerViewModel {
             stopTimeout()
             onTimeout?()
         }
+    }
+
+    // MARK: - 高度估算
+
+    private func collapsedContentHeight(for item: NotificationRecord) -> CGFloat {
+        let textHeight = CGFloat(item.body.count > 34 ? 48 : 38)
+        return max(AppTheme.Layout.iconSize, 18 + AppTheme.Spacing.xs + textHeight)
+    }
+
+    private func expandedBodyHeight(for item: NotificationRecord) -> CGFloat {
+        CGFloat(min(max(item.body.count / 24, 2), 7)) * 18
+    }
+
+    private func groupItemHeight(for item: NotificationRecord) -> CGFloat {
+        BannerLayout.groupItemPadding * 2
+            + 16
+            + AppTheme.Spacing.xs
+            + CGFloat(item.body.count > 34 ? 34 : 18)
+            + actionHeight(for: item)
+    }
+
+    private func actionHeight(for item: NotificationRecord) -> CGFloat {
+        item.actions.isEmpty ? 0 : 30
+    }
+
+    private func progressHeight(for item: NotificationRecord) -> CGFloat {
+        item.timeout > 0 ? 8 : 0
     }
 }

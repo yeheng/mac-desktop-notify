@@ -47,8 +47,13 @@ struct SearchField: View {
             }
         }
         .padding(.horizontal, AppTheme.Spacing.s + 2)
-        .padding(.vertical, AppTheme.Spacing.xs + 2)
-        .background(AppTheme.Colors.buttonFill)
-        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+        .padding(.vertical, AppTheme.Spacing.s)
+        .background {
+            RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+                .fill(.thinMaterial)
+            RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+                .fill(AppTheme.Colors.buttonFill)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous))
     }
 }

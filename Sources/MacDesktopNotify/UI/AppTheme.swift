@@ -23,12 +23,15 @@ enum AppTheme {
         static let onAccentText = Color.white
 
         // MARK: Surfaces
+        /// 通知中心外壳背景。保持透明感，避免呈现为普通应用窗口。
+        static let panelFill = Color(nsColor: .windowBackgroundColor).opacity(0.34)
         /// 内容卡片背景（通知组内的单条消息卡片）
-        static let cardFill = Color(nsColor: .controlBackgroundColor).opacity(0.4)
-        static let cardFillHover = Color(nsColor: .controlBackgroundColor).opacity(0.6)
-        static let cardFillSelected = Color(nsColor: .controlAccentColor).opacity(0.12)
+        static let cardFill = Color(nsColor: .controlBackgroundColor).opacity(0.72)
+        static let cardFillHover = Color(nsColor: .controlBackgroundColor).opacity(0.86)
+        static let cardFillSelected = Color(nsColor: .controlAccentColor).opacity(0.18)
+        static let cardHighlight = Color.white.opacity(0.12)
         /// 细边框 / 分隔线
-        static let cardBorder = Color(nsColor: .separatorColor)
+        static let cardBorder = Color(nsColor: .separatorColor).opacity(0.72)
         /// 半透明覆盖层（撤销 toast 等）
         static let overlay = Color.black.opacity(0.55)
 
@@ -50,6 +53,9 @@ enum AppTheme {
         static let cardTitleCompact = Font.system(size: 12, weight: .semibold)
         static let cardBody = Font.system(size: 12)
         static let timestamp = Font.system(size: 10)
+        static let notificationTitle = Font.system(size: 15, weight: .semibold)
+        static let notificationBody = Font.system(size: 14, weight: .semibold)
+        static let notificationTimestamp = Font.system(size: 14, weight: .semibold)
 
         // 区段 / 分组
         static let sectionTitle = Font.system(size: 11, weight: .bold)
@@ -125,5 +131,6 @@ enum AppTheme {
         static let iconSizeCompact: CGFloat = 22
         static let closeButtonSize: CGFloat = 20
         static let closeButtonSizeLarge: CGFloat = 22
+        static let notificationIconSize: CGFloat = 42
     }
 }

@@ -64,6 +64,8 @@ class BannerStackManager {
     // MARK: - 显示横幅（分组感知）
 
     func showBanner(for item: NotificationRecord) {
+        // 用户禁用了 banner → 不显示（通知仍进入 dashboard 历史列表）
+        guard SettingsStore.shared.bannerEnabled else { return }
         // 锁定屏幕策略：仅当前屏幕丢失或已断开时才重新解析，
         // 避免已存在的整栈横幅因鼠标移到副屏而跨屏跳动。
         if screen == nil || !NSScreen.screens.contains(where: { $0 == screen }) {
@@ -201,13 +203,7 @@ class BannerStackManager {
             }
         } else {
             // 原横幅已关闭 → 回退：新建结果横幅
-            let record = NotificationRecord(
-                title: result.success ? "✓ \(actionTitle)" : "✗ \(actionTitle)",
-                body: result.output ?? result.error ?? (result.success ? L10n.completed : L10n.failed),
-                type: result.success ? .success : .error,
-                timeout: 5
-            )
-            manager?.add(record)
+            manager?.add(result.toDisplayRecord(actionTitle: actionTitle))
         }
     }
 
@@ -260,12 +256,23 @@ class BannerStackManager {
     private func frameForBanner(at index: Int, height: CGFloat) -> CGRect {
         guard let screen else { return .zero }
         let vf = screen.visibleFrame
+        let position = SettingsStore.shared.bannerPosition
 
-        var y = vf.maxY - BannerLayout.topMargin
-        for i in 0..<index {
-            y -= entries[i].window.frame.height + BannerLayout.spacing
+        // y 计算取决于显示位置：topRight 从顶部向下堆叠，bottomRight 从底部向上堆叠
+        var y: CGFloat
+        switch position {
+        case .topRight:
+            y = vf.maxY - BannerLayout.topMargin
+            for i in 0..<index {
+                y -= entries[i].window.frame.height + BannerLayout.spacing
+            }
+            y -= height
+        case .bottomRight:
+            y = vf.minY + BannerLayout.topMargin
+            for i in 0..<index {
+                y += entries[i].window.frame.height + BannerLayout.spacing
+            }
         }
-        y -= height
 
         return CGRect(
             x: vf.maxX - BannerLayout.bannerWidth - BannerLayout.sideMargin,

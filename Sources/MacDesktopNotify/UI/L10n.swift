@@ -15,8 +15,10 @@ enum L10n {
     static let clear = "清空"
     static let clearAll = "清空全部"
     static let undo = "撤销"
+    static let back = "返回"
 
     // MARK: - 通知中心（Dashboard）
+    static let notificationCenter = "通知中心"
     static let appName = "MacDesktopNotify"
     static let emptyTitle = "暂无通知"
     static let emptyMessageRunning = "新通知会出现在这里"
@@ -25,7 +27,9 @@ enum L10n {
     static let noResultsMessage = "尝试调整搜索词或类型过滤"
     static let clearFilters = "清除过滤"
     static let deletedNotice = "已删除通知"
+    static let copiedTitle = "已复制标题"
     static let copiedBody = "已复制正文"
+    static let copiedAll = "已复制全部"
 
     /// 清空确认文案：「这将删除所有 N 条通知，此操作无法撤销。」
     static func clearConfirmation(count: Int) -> String {
@@ -62,6 +66,26 @@ enum L10n {
     static let deleteNotification = "删除通知"
 
     // MARK: - 状态文案（回调结果）
-    static let completed = "Completed"
-    static let failed = "Failed"
+    static let completed = "已完成"
+    static let failed = "执行失败"
+
+    // MARK: - 设置面板
+    static let settings = "设置"
+    static let settingsService = "服务"
+    static let settingsBanner = "Banner"
+    static let settingsNotifications = "通知"
+    static let settingsAppearance = "外观"
+    static let port = "端口"
+    static let token = "Token"
+    static let noAuthRequired = "无需认证"
+    static let serverRestartNotice = "服务配置已更改，需重启生效"
+    static let applyNow = "立即应用"
+    static let enableBanner = "启用 Banner"
+    static let defaultTimeout = "默认超时"
+    static let seconds = "秒"
+    static let maxVisibleCount = "最大显示数"
+    static let position = "位置"
+    static let historyLimit = "历史保留数"
+    static let width = "宽度"
+    static let cornerRadius = "圆角"
 }

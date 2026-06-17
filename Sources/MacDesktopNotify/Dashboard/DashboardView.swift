@@ -1,5 +1,16 @@
 import SwiftUI
 
+enum DashboardPanelPage {
+    case notifications
+    case settings
+}
+
+@MainActor
+@Observable
+final class DashboardPanelState {
+    var page: DashboardPanelPage = .notifications
+}
+
 /// 统一通知中心（Phase 2 重做）。
 ///
 /// 从「扁平列表 + 清空/退出 footer」升级为：
@@ -11,10 +22,13 @@ import SwiftUI
 /// - 危险操作防护（清空二次确认、退出移回菜单栏）
 struct DashboardView: View {
     @Bindable var manager: NotifyManager
+    @Bindable var panelState: DashboardPanelState
 
     let clearAll: () -> Void
     let removeNotification: (UUID) -> Void
     let triggerAction: (UUID, String) -> Void
+    let settingsStore: SettingsStore
+    let applyServerRestart: () -> Void
     let close: () -> Void
 
     // MARK: - 视图本地状态
@@ -79,40 +93,27 @@ struct DashboardView: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-
-            if hasAnyNotifications {
-                Divider()
-                toolbar  // 搜索 + 过滤 chips
+        Group {
+            switch panelState.page {
+            case .notifications:
+                notificationsPage
+            case .settings:
+                settingsPage
             }
-
-            Divider()
-
-            if !hasAnyNotifications {
-                emptyState
-            } else if filteredItems.isEmpty {
-                noResultsState
-            } else {
-                notificationList
-            }
-
-            Divider()
-            footer
         }
-        .frame(minWidth: 380, minHeight: 320)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.lg))
-        .overlay(alignment: .bottom) { copyFeedbackOverlay }
-        .overlay(alignment: .bottom) { undoOverlay }
-        .focusable()
-        .focused($isRootFocused)
-        .onAppear { isRootFocused = true }
-        .onKeyPress(.upArrow) { moveSelection(by: -1); return .handled }
-        .onKeyPress(.downArrow) { moveSelection(by: 1); return .handled }
-        .onKeyPress(.return) { activateSelected(); return .handled }
-        .onKeyPress(.delete) { deleteSelected(); return .handled }
-        .onKeyPress(.escape) { close(); return .handled }
+        .frame(minWidth: 400, minHeight: 340)
+        .background(panelBackground)
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.xl + 8, style: .continuous))
+        .overlay(alignment: .bottom) {
+            if panelState.page == .notifications {
+                copyFeedbackOverlay
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if panelState.page == .notifications {
+                undoOverlay
+            }
+        }
         .confirmationDialog(
             "\(L10n.clearAll)？",
             isPresented: $showClearConfirmation,
@@ -127,44 +128,104 @@ struct DashboardView: View {
         }
     }
 
+    private var notificationsPage: some View {
+        VStack(spacing: AppTheme.Spacing.s) {
+            header
+
+            if hasAnyNotifications {
+                toolbar  // 搜索 + 过滤 chips
+            }
+
+            if !hasAnyNotifications {
+                emptyState
+            } else if filteredItems.isEmpty {
+                noResultsState
+            } else {
+                notificationList
+            }
+
+            footer
+        }
+        .padding(AppTheme.Spacing.s)
+        .focusable()
+        .focused($isRootFocused)
+        .onAppear { isRootFocused = true }
+        .onChange(of: panelState.page) { _, page in
+            if page == .notifications {
+                isRootFocused = true
+            }
+        }
+        .onKeyPress(.upArrow) { moveSelection(by: -1); return .handled }
+        .onKeyPress(.downArrow) { moveSelection(by: 1); return .handled }
+        .onKeyPress(.return) { activateSelected(); return .handled }
+        .onKeyPress(.delete) { deleteSelected(); return .handled }
+        .onKeyPress(.escape) { close(); return .handled }
+    }
+
+    private var settingsPage: some View {
+        SettingsView(
+            store: settingsStore,
+            applyServerRestart: applyServerRestart,
+            close: close,
+            back: {
+                withAnimation(AppTheme.Motion.ease) {
+                    panelState.page = .notifications
+                }
+            }
+        )
+        .padding(AppTheme.Spacing.s)
+    }
+
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.s + 2) {
-            HStack(spacing: AppTheme.Spacing.s + 2) {
-                Image(systemName: "bell.badge.fill")
-                    .font(AppTheme.Fonts.iconLarge)
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: AppTheme.Layout.iconSize, height: AppTheme.Layout.iconSize)
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L10n.appName)
-                        .font(AppTheme.Fonts.panelTitle)
-                        .foregroundStyle(AppTheme.Colors.primaryText)
-
-                    HStack(spacing: AppTheme.Spacing.xs + 2) {
-                        Image(systemName: manager.serviceState.statusImageName)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(manager.serviceState.isRunning ? AppTheme.Colors.success : AppTheme.Colors.warning)
-                            .accessibilityHidden(true)
-                        Text(manager.serviceState.statusText)
-                            .font(AppTheme.Fonts.endpointValue)
-                            .foregroundStyle(AppTheme.Colors.secondaryText)
-                            .lineLimit(1)
-                            .accessibilityLabel(manager.serviceState.isRunning ? "服务运行中" : "服务未运行")
-                    }
-                }
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.s) {
+            HStack(alignment: .center, spacing: AppTheme.Spacing.s) {
+                Text(L10n.notificationCenter)
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(AppTheme.Colors.primaryText)
+                    .lineLimit(1)
 
                 Spacer()
 
                 HStack(spacing: AppTheme.Spacing.s) {
                     CountBadge(count: manager.items.count)
+                    Button {
+                        withAnimation(AppTheme.Motion.ease) {
+                            panelState.page = .settings
+                        }
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(AppTheme.Colors.secondaryText)
+                            .frame(width: AppTheme.Layout.closeButtonSizeLarge, height: AppTheme.Layout.closeButtonSizeLarge)
+                    }
+                    .buttonStyle(.plain)
+                    .background(AppTheme.Colors.buttonFill)
+                    .clipShape(Circle())
+                    .help(L10n.settings)
+                    .accessibilityLabel(L10n.settings)
                     CloseButton(action: close, size: AppTheme.Layout.closeButtonSizeLarge)
                 }
             }
+
+            HStack(spacing: AppTheme.Spacing.xs + 2) {
+                Image(systemName: manager.serviceState.statusImageName)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(manager.serviceState.isRunning ? AppTheme.Colors.success : AppTheme.Colors.warning)
+                    .accessibilityHidden(true)
+                Text(manager.serviceState.statusText)
+                    .font(AppTheme.Fonts.endpointValue)
+                    .foregroundStyle(AppTheme.Colors.tertiaryText)
+                    .lineLimit(1)
+                    // 失败态（端口冲突等）的 message 可能很长被截断，hover 显示全文
+                    .help(manager.serviceState.statusText)
+                    .accessibilityLabel(manager.serviceState.isRunning ? "服务运行中" : "服务未运行")
+            }
         }
-        .padding(AppTheme.Spacing.l + 2)
+        .padding(.horizontal, AppTheme.Spacing.s)
+        .padding(.top, AppTheme.Spacing.l)
+        .padding(.bottom, AppTheme.Spacing.xs)
     }
 
     // MARK: - Toolbar（搜索 + 过滤 chips）
@@ -189,9 +250,9 @@ struct DashboardView: View {
                 }
             }
         }
-        .padding(.horizontal, AppTheme.Spacing.l + 2)
-        .padding(.top, AppTheme.Spacing.s)
-        .padding(.bottom, AppTheme.Spacing.s)
+        .padding(.horizontal, AppTheme.Spacing.s)
+        .padding(.top, AppTheme.Spacing.xs)
+        .padding(.bottom, AppTheme.Spacing.xs)
     }
 
     private func toggleTypeFilter(_ type: NotifyType) {
@@ -210,12 +271,13 @@ struct DashboardView: View {
     private var notificationList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.s) {
+                LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.m) {
                     ForEach(groupedSections, id: \.bucket) { section in
                         sectionView(bucket: section.bucket, items: section.items)
                     }
                 }
-                .padding(AppTheme.Spacing.m)
+                .padding(.horizontal, AppTheme.Spacing.s)
+                .padding(.vertical, AppTheme.Spacing.xs)
             }
             .onChange(of: selectedID) { _, newID in
                 if let newID { proxy.scrollTo(newID, anchor: .center) }
@@ -242,7 +304,7 @@ struct DashboardView: View {
         }
 
         if !isCollapsed {
-            VStack(spacing: AppTheme.Spacing.s) {
+            VStack(spacing: AppTheme.Spacing.m) {
                 ForEach(items) { item in
                     NotificationCard(
                         item: item,
@@ -253,20 +315,19 @@ struct DashboardView: View {
                         onClose: {
                             deleteWithUndo(item)
                         },
+                        onCopy: { feedback in
+                            showCopyFeedback(feedback)
+                        },
                         isSelected: selectedID == item.id
                     )
                     .id(item.id)
-                    // 双击复制正文（放在单击之前，SwiftUI 会优先尝试匹配双击）
-                    .onTapGesture(count: 2) {
-                        NSPasteboard.copy(item.body)
-                        showCopyFeedback(L10n.copiedBody)
-                    }
+                    // 单击切换选中。复制统一走右键上下文菜单（带 toast 反馈），
+                    // 不再用双击复制——双击无视觉提示且让单击选中产生 ~250ms 延迟。
                     .onTapGesture {
                         selectedID = (selectedID == item.id) ? nil : item.id
                     }
                 }
             }
-            .padding(.leading, AppTheme.Spacing.xs)
             .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
@@ -315,7 +376,13 @@ struct DashboardView: View {
             } label: {
                 Label(L10n.clear, systemImage: "trash")
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(AppTheme.Colors.secondaryText)
+            .padding(.horizontal, AppTheme.Spacing.s + 2)
+            .padding(.vertical, AppTheme.Spacing.xs + 2)
+            .background(AppTheme.Colors.buttonFill)
+            .clipShape(Capsule())
             .disabled(manager.items.isEmpty)
 
             Spacer()
@@ -326,7 +393,19 @@ struct DashboardView: View {
                     .foregroundStyle(AppTheme.Colors.tertiaryText)
             }
         }
-        .padding(AppTheme.Spacing.m)
+        .padding(.horizontal, AppTheme.Spacing.s)
+        .padding(.top, AppTheme.Spacing.xs)
+        .padding(.bottom, AppTheme.Spacing.s)
+    }
+
+    @ViewBuilder
+    private var panelBackground: some View {
+        RoundedRectangle(cornerRadius: AppTheme.Radius.xl + 8, style: .continuous)
+            .fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AppTheme.Radius.xl + 8, style: .continuous)
+            .fill(AppTheme.Colors.panelFill)
+        RoundedRectangle(cornerRadius: AppTheme.Radius.xl + 8, style: .continuous)
+            .stroke(AppTheme.Colors.cardBorder, lineWidth: 0.8)
     }
 
     // MARK: - 键盘导航
@@ -354,12 +433,15 @@ struct DashboardView: View {
     }
 
     private func deleteSelected() {
-        guard let id = selectedID else { return }
-        let idx = flatItems.firstIndex { $0.id == id }
-        removeNotification(id)
-        selectedID = nil
-        // 删除后自动选中相邻项，保持连续操作
-        guard let idx, !flatItems.isEmpty else { return }
+        guard let id = selectedID,
+              let idx = flatItems.firstIndex(where: { $0.id == id })
+        else { return }
+        let item = flatItems[idx]
+        // 键盘删除与鼠标删除走同一条带撤销的路径，避免「键盘删不可逆、鼠标删可撤销」的语义分裂
+        deleteWithUndo(item)
+        // deleteWithUndo 已清空 selectedID；重选相邻项以支持连续键盘操作
+        // （此时 flatItems 已反映删除后的列表）
+        guard !flatItems.isEmpty else { return }
         let nextIdx = min(idx, flatItems.count - 1)
         if flatItems.indices.contains(nextIdx) {
             selectedID = flatItems[nextIdx].id

@@ -15,6 +15,7 @@ struct BannerView: View {
     // 滑动关闭手势状态
     @State private var dragOffset: CGFloat = 0
     @State private var isHovered = false
+    @State private var isCloseHotspotHovered = false
 
     var body: some View {
         // 通知被全部移除后可能短暂进入空状态，此时渲染占位避免 Index out of range
@@ -41,6 +42,9 @@ struct BannerView: View {
             }
             .padding(BannerLayout.contentPadding)
             .bannerBackground(cornerRadius: BannerLayout.cornerRadius)
+            .overlay(alignment: .topLeading) {
+                topLeftCloseHotspot
+            }
             .opacity(dragOpacity)
             .offset(x: dragOffset)
             .contentShape(Rectangle())
@@ -119,9 +123,6 @@ struct BannerView: View {
                 }
 
                 Spacer(minLength: AppTheme.Spacing.xs)
-
-                // 关闭按钮
-                closeButton
             }
 
             // 操作按钮（折叠状态也显示，方便用户直接操作）
@@ -150,8 +151,6 @@ struct BannerView: View {
                     .truncationMode(.tail)
 
                 Spacer(minLength: AppTheme.Spacing.xs)
-
-                closeButton
             }
 
             // 完整 Markdown 正文
@@ -184,8 +183,6 @@ struct BannerView: View {
                 CountBadge(count: bannerVM.groupCount)
 
                 Spacer(minLength: AppTheme.Spacing.xs)
-
-                closeButton
             }
 
             // 组内通知列表
@@ -250,8 +247,28 @@ struct BannerView: View {
         CountBadge(count: count)
     }
 
-    private var closeButton: some View {
-        CloseButton(action: { bannerVM.dismiss() }, accessibilityName: "\(L10n.close)通知")
+    private var topLeftCloseHotspot: some View {
+        ZStack {
+            Color.clear
+
+            if isCloseHotspotHovered {
+                CloseButton(
+                    action: { bannerVM.dismiss() },
+                    size: AppTheme.Layout.closeButtonSizeLarge,
+                    accessibilityName: "\(L10n.close)通知"
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            }
+        }
+        .frame(width: 34, height: 34)
+        .contentShape(Circle())
+        .padding(.top, AppTheme.Spacing.xs)
+        .padding(.leading, AppTheme.Spacing.xs)
+        .onHover { hovering in
+            withAnimation(AppTheme.Motion.quick) {
+                isCloseHotspotHovered = hovering
+            }
+        }
     }
 
     /// 组内单条的关闭按钮

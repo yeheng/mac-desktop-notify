@@ -9,10 +9,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusMenu = NSMenu()
     private let dashboardSize = NSSize(width: 420, height: 520)
     private var dashboardWindow: DashboardPanelWindow?
+    private let dashboardPanelState = DashboardPanelState()
+    /// 用户设置存储（UserDefaults 封装）
+    private let settingsStore = SettingsStore.shared
     private var lastDashboardToggleAt = Date.distantPast
     private var cancellables: Set<AnyCancellable> = []
-    /// 面板显示时的本地事件监控（Esc 关闭 + 点击外部收起）
-    private var panelDismissMonitor: Any?
+    /// 面板显示时的事件监控（点击外部/失焦收起）
+    private var localPanelDismissMonitor: Any?
+    private var globalPanelDismissMonitor: Any?
     /// 退出面板时复用的标志，防止 monitor 与 toggle 互相重复触发
     private var isClosingPanel = false
 
@@ -35,8 +39,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setupStatusItem()
         setupDashboardPanel()
 
-        let server = APIServer(manager: manager)
-        apiServer = server
+        // 配置变更回调：历史保留数变化 → 通知 manager 裁剪
+        settingsStore.onMaxHistoryItemsChanged = { [weak self] newMax in
+            self?.manager.updateMaxItems(newMax)
+        }
+
+        // 启动 API 服务（用 SettingsStore 的当前配置）
+        startAPIServer(config: .current)
 
         // MARK: 配置横幅通知
 
@@ -95,23 +104,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         .store(in: &cancellables)
 
-        do {
-            try server.start()
-            manager.updateServiceState(.running(
-                host: AppConfig.apiHost,
-                port: AppConfig.apiPort,
-                authRequired: AppConfig.apiToken != nil
-            ))
-        } catch {
-            let message = String(describing: error)
-            manager.updateServiceState(.failed(
-                host: AppConfig.apiHost,
-                port: AppConfig.apiPort,
-                message: message
-            ))
-            print("Failed to start API server: \(message)")
-        }
-
         // 屏幕参数变化 → 重新定位横幅
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
@@ -129,6 +121,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         apiServer?.stop()
         EventMonitors.shared.stop()
+        stopPanelDismissMonitor()
         BannerStackManager.shared.dismissAll()
     }
 
@@ -160,6 +153,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func setupDashboardPanel() {
         let contentView = DashboardView(
             manager: manager,
+            panelState: dashboardPanelState,
             clearAll: { [weak self] in
                 Task { @MainActor [weak self] in
                     self?.clearAllNotifications()
@@ -173,6 +167,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             triggerAction: { [weak self] notificationID, actionID in
                 Task { @MainActor [weak self] in
                     self?.manager.triggerAction(notificationID: notificationID, actionID: actionID)
+                }
+            },
+            settingsStore: settingsStore,
+            applyServerRestart: { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.restartAPIServer()
                 }
             },
             close: { [weak self] in
@@ -206,6 +206,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         menu.addItem(makeMenuItem(
+            title: L10n.settings + "…",
+            systemImage: "gearshape",
+            action: #selector(openSettingsFromMenu)
+        ))
+
+        menu.addItem(makeMenuItem(
             title: "退出 MacDesktopNotify",
             systemImage: "power",
             action: #selector(quitFromMenu)
@@ -229,6 +235,59 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         clearAllNotifications()
     }
 
+    @objc private func openSettingsFromMenu() {
+        openSettings()
+    }
+
+    // MARK: - API 服务启动/重启
+
+    /// 用指定配置创建并启动 API 服务。
+    private func startAPIServer(config: APIServerConfig) {
+        let server = APIServer(manager: manager, config: config)
+        apiServer = server
+        do {
+            try server.start()
+            manager.updateServiceState(.running(
+                host: config.host,
+                port: config.port,
+                authRequired: config.authRequired
+            ))
+        } catch {
+            let message = String(describing: error)
+            manager.updateServiceState(.failed(
+                host: config.host,
+                port: config.port,
+                message: message
+            ))
+            print("Failed to start API server: \(message)")
+        }
+    }
+
+    /// 服务配置变更后重建并重启 API 服务（设置面板「立即应用」调用）。
+    func restartAPIServer() {
+        apiServer?.stop()
+        startAPIServer(config: .current)
+        settingsStore.needsServerRestart = false
+    }
+
+    // MARK: - 设置页
+
+    /// 在 dashboard 面板内打开设置页。
+    func openSettings() {
+        dashboardPanelState.page = .settings
+
+        guard let window = dashboardWindow else { return }
+        if !window.isVisible {
+            if let button = statusItem?.button {
+                positionDashboardWindow(relativeTo: button)
+            } else {
+                positionDashboardWindowCentered(window)
+            }
+        }
+        window.orderFrontRegardless()
+        startPanelDismissMonitor()
+    }
+
     @objc private func toggleDashboardFromStatusItem() {
         let now = Date()
         guard now.timeIntervalSince(lastDashboardToggleAt) > 0.25 else { return }
@@ -241,13 +300,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if window.isVisible {
             closeDashboardPanel()
         } else {
+            dashboardPanelState.page = .notifications
             positionDashboardWindow(relativeTo: button)
             window.orderFrontRegardless()
             startPanelDismissMonitor()
         }
     }
 
-    // MARK: - 面板自动收起（Esc + 点击外部）
+    // MARK: - 面板自动收起（Esc + 点击外部/失焦）
 
     private func closeDashboardPanel() {
         guard !isClosingPanel else { return }
@@ -257,40 +317,53 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         isClosingPanel = false
     }
 
-    /// 启动本地事件监控：Esc 关闭面板、点击面板外部收起。
+    /// 启动事件监控：Esc 关闭交给 SwiftUI 焦点链，点击面板外部则收起。
     private func startPanelDismissMonitor() {
         stopPanelDismissMonitor()
-        // 仅监听点击（Esc 关闭交给 DashboardView 的 onKeyPress，它遵循焦点链，
-        // 能让 SearchField 优先消耗 Esc 来清空搜索词）。
         let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
-        panelDismissMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
-            guard let self, let window = self.dashboardWindow, window.isVisible else { return event }
 
-            switch event.type {
-            case .leftMouseDown, .rightMouseDown:
-                // 点击发生在面板内 → 保留；否则收起
-                let clickLocation = NSEvent.mouseLocation
-                if window.frame.contains(clickLocation) { return event }
-                // 点击状态栏铃铛 → 交给 toggle 处理，不在此收起（否则双重切换）
-                if let button = self.statusItem?.button,
-                   let buttonWindow = button.window
-                {
-                    let buttonFrame = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
-                    if buttonFrame.contains(clickLocation) { return event }
-                }
-                self.closeDashboardPanel()
-                return event
-            default:
-                return event
+        // 本应用内点击：需要保留 event，让目标控件继续收到点击。
+        localPanelDismissMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            self?.handlePanelDismissClick(at: NSEvent.mouseLocation)
+            return event
+        }
+
+        // 其他应用/桌面点击：global monitor 不会收到本应用内事件，补齐失焦场景。
+        globalPanelDismissMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] _ in
+            let clickLocation = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in
+                self?.handlePanelDismissClick(at: clickLocation)
             }
         }
     }
 
     private func stopPanelDismissMonitor() {
-        if let panelDismissMonitor {
-            NSEvent.removeMonitor(panelDismissMonitor)
-            self.panelDismissMonitor = nil
+        if let localPanelDismissMonitor {
+            NSEvent.removeMonitor(localPanelDismissMonitor)
+            self.localPanelDismissMonitor = nil
         }
+        if let globalPanelDismissMonitor {
+            NSEvent.removeMonitor(globalPanelDismissMonitor)
+            self.globalPanelDismissMonitor = nil
+        }
+    }
+
+    private func handlePanelDismissClick(at clickLocation: NSPoint) {
+        guard let window = dashboardWindow, window.isVisible else { return }
+
+        if window.frame.contains(clickLocation) { return }
+        if statusItemButtonFrame()?.contains(clickLocation) == true { return }
+
+        closeDashboardPanel()
+    }
+
+    private func statusItemButtonFrame() -> NSRect? {
+        guard let button = statusItem?.button,
+              let buttonWindow = button.window
+        else {
+            return nil
+        }
+        return buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
     }
 
     private func positionDashboardWindow(relativeTo button: NSStatusBarButton) {
@@ -321,6 +394,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             visibleFrame.minY + margin
         )
 
+        window.setFrame(NSRect(origin: CGPoint(x: x, y: y), size: size), display: true)
+    }
+
+    private func positionDashboardWindowCentered(_ window: DashboardPanelWindow) {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        let visibleFrame = screen.visibleFrame
+        let size = window.frame.size
+        let x = visibleFrame.midX - size.width / 2
+        let y = visibleFrame.midY - size.height / 2
         window.setFrame(NSRect(origin: CGPoint(x: x, y: y), size: size), display: true)
     }
 

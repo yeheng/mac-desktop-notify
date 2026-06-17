@@ -17,6 +17,8 @@ struct NotificationCard: View {
     // 交互 hook（由调用方注入，视图不直接持有 manager）
     var onTriggerAction: ((NotificationAction) -> Void)? = nil
     var onClose: (() -> Void)? = nil
+    /// 复制成功后的反馈回调（由调用方注入，触发 toast）。nil 时复制静默。
+    var onCopy: ((_ feedback: String) -> Void)? = nil
 
     // 状态（键盘选择由外部驱动；hover 自管理）
     var isSelected: Bool = false
@@ -32,29 +34,38 @@ struct NotificationCard: View {
 
     var body: some View {
         content
-            .padding(density == .regular ? AppTheme.Spacing.m : AppTheme.Spacing.m - 2)
-            .background(background)
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .padding(cardPadding)
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(AppTheme.Colors.cardBorder, lineWidth: 0.5)
                     .opacity(isSelected ? 0 : 1)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(AppTheme.Colors.buttonFillActive, lineWidth: 1.5)
                     .opacity(isSelected ? 1 : 0)
+            )
+            .shadow(
+                color: .black.opacity(density == .regular ? 0.20 : 0.12),
+                radius: density == .regular ? 14 : 8,
+                x: 0,
+                y: density == .regular ? 5 : 2
             )
             // 右键上下文菜单（复制标题/正文/全部、删除）
             .contextMenu {
                 Button(L10n.copyTitle) {
                     NSPasteboard.copy(item.title)
+                    onCopy?(L10n.copiedTitle)
                 }
                 Button(L10n.copyBody) {
                     NSPasteboard.copy(item.body)
+                    onCopy?(L10n.copiedBody)
                 }
                 Button(L10n.copyAll) {
                     NSPasteboard.copy("\(item.title)\n\n\(item.body)")
+                    onCopy?(L10n.copiedAll)
                 }
                 Divider()
                 Button(L10n.deleteNotification, role: .destructive) {
@@ -71,7 +82,23 @@ struct NotificationCard: View {
     }
 
     private var cornerRadius: CGFloat {
-        AppTheme.Radius.md
+        density == .regular ? AppTheme.Radius.xl : AppTheme.Radius.lg
+    }
+
+    private var cardPadding: EdgeInsets {
+        density == .regular
+            ? EdgeInsets(
+                top: AppTheme.Spacing.m + 2,
+                leading: AppTheme.Spacing.l,
+                bottom: AppTheme.Spacing.m + 2,
+                trailing: AppTheme.Spacing.m
+            )
+            : EdgeInsets(
+                top: AppTheme.Spacing.m - 2,
+                leading: AppTheme.Spacing.m - 2,
+                bottom: AppTheme.Spacing.m - 2,
+                trailing: AppTheme.Spacing.m - 2
+            )
     }
 
     private var background: Color {
@@ -80,51 +107,76 @@ struct NotificationCard: View {
         return AppTheme.Colors.cardFill
     }
 
+    private var iconSize: CGFloat {
+        density == .regular ? AppTheme.Layout.notificationIconSize : AppTheme.Layout.iconSize
+    }
+
+    private var cardSpacing: CGFloat {
+        density == .regular ? AppTheme.Spacing.m + 2 : AppTheme.Spacing.s
+    }
+
+    private var textSpacing: CGFloat {
+        density == .regular ? AppTheme.Spacing.xs + 1 : AppTheme.Spacing.xs
+    }
+
+    private var bodyLineLimit: Int {
+        density == .regular ? 3 : 2
+    }
+
+    @ViewBuilder
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(.thinMaterial)
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(background)
+    }
+
     // MARK: - 内容
 
     @ViewBuilder
     private var content: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs + 2) {
-            headerRow
+        HStack(alignment: .top, spacing: cardSpacing) {
+            TypeIconView(type: item.type, icon: item.icon, size: iconSize)
 
-            // 正文
-            if density == .regular {
-                previewBody
-            } else {
-                MarkdownBodyView(content: item.body, isExpanded: false)
-            }
+            VStack(alignment: .leading, spacing: textSpacing) {
+                headerRow
 
-            if !item.actions.isEmpty {
-                actionRow
+                // 正文
+                if density == .regular {
+                    previewBody
+                } else {
+                    MarkdownBodyView(content: item.body, isExpanded: false)
+                }
+
+                if !item.actions.isEmpty {
+                    actionRow
+                        .padding(.top, AppTheme.Spacing.xs)
+                }
             }
         }
     }
 
     private var headerRow: some View {
-        HStack(alignment: .top, spacing: AppTheme.Spacing.s) {
-            TypeIconView(type: item.type, icon: item.icon)
+        HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.s) {
+            Text(item.title)
+                .font(titleFont)
+                .foregroundStyle(AppTheme.Colors.primaryText)
+                .lineLimit(1)
+                .truncationMode(.tail)
 
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.xs + 2) {
-                    Text(item.title)
-                        .font(titleFont)
-                        .foregroundStyle(AppTheme.Colors.primaryText)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+            Spacer(minLength: AppTheme.Spacing.xs + 2)
 
-                    Spacer(minLength: AppTheme.Spacing.xs + 2)
-
-                    // regular 显示时间戳；compact 不显示
-                    if density == .regular {
-                        Text(item.createdAt, style: .time)
-                            .font(AppTheme.Fonts.timestamp)
-                            .foregroundStyle(AppTheme.Colors.tertiaryText)
-                    }
-                }
+            // regular 显示时间戳；compact 不显示
+            if density == .regular {
+                Text(item.createdAt, style: .time)
+                    .font(AppTheme.Fonts.notificationTimestamp)
+                    .foregroundStyle(AppTheme.Colors.tertiaryText)
+                    .lineLimit(1)
             }
 
             if let onClose {
-                CloseButton(action: onClose)
+                CloseButton(action: onClose, size: density == .regular ? 18 : AppTheme.Layout.closeButtonSize)
+                    .offset(y: density == .regular ? -2 : 0)
             }
         }
     }
@@ -138,15 +190,15 @@ struct NotificationCard: View {
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) {
             Text(attributed)
-                .font(AppTheme.Fonts.cardBody)
+                .font(bodyFont)
                 .foregroundStyle(AppTheme.Colors.secondaryText)
-                .lineLimit(3)
+                .lineLimit(bodyLineLimit)
                 .truncationMode(.tail)
         } else {
             Text(item.body)
-                .font(AppTheme.Fonts.cardBody)
+                .font(bodyFont)
                 .foregroundStyle(AppTheme.Colors.secondaryText)
-                .lineLimit(3)
+                .lineLimit(bodyLineLimit)
                 .truncationMode(.tail)
         }
     }
@@ -184,6 +236,10 @@ struct NotificationCard: View {
     // MARK: 密度相关
 
     private var titleFont: Font {
-        density == .regular ? .system(size: 13, weight: .semibold) : AppTheme.Fonts.cardTitle
+        density == .regular ? AppTheme.Fonts.notificationTitle : AppTheme.Fonts.cardTitle
+    }
+
+    private var bodyFont: Font {
+        density == .regular ? AppTheme.Fonts.notificationBody : AppTheme.Fonts.cardBody
     }
 }
