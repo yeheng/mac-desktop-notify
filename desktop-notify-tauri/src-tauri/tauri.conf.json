@@ -1,0 +1,81 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Desktop Notify",
+  "version": "0.1.0",
+  "identifier": "com.desktopnotify.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "dashboard",
+        "title": "通知中心",
+        "url": "/dashboard",
+        "width": 380,
+        "height": 640,
+        "minWidth": 320,
+        "minHeight": 400,
+        "resizable": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "decorations": true,
+        "transparent": false,
+        "shadow": true
+      },
+      {
+        "label": "banner",
+        "title": "Banner",
+        "url": "/banner",
+        "width": 360,
+        "height": 320,
+        "resizable": false,
+        "visible": false,
+        "skipTaskbar": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "shadow": false,
+        "focus": false
+      },
+      {
+        "label": "settings",
+        "title": "设置",
+        "url": "/settings",
+        "width": 420,
+        "height": 600,
+        "minWidth": 360,
+        "minHeight": 480,
+        "resizable": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "decorations": true,
+        "transparent": false,
+        "shadow": true
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "macOSPrivateApi": true,
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true,
+      "tooltip": "Desktop Notify"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
