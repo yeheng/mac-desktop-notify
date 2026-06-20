@@ -3,6 +3,7 @@
 //! 装配：状态 → axum 服务 → 托盘 → Tauri commands → 事件桥接。
 
 mod callback;
+mod glass;
 mod models;
 mod server;
 mod state;
@@ -119,6 +120,21 @@ async fn send_test_notification(
     Ok(item)
 }
 
+/// 给指定窗口补上原生玻璃材质（供前端动态创建的窗口调用，比如被关闭后重建的 settings）。
+#[tauri::command]
+fn apply_glass_to_window(app: tauri::AppHandle, label: String) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window(&label) {
+        let target = if label == "banner" {
+            glass::GlassTarget::Banner
+        } else {
+            glass::GlassTarget::Panel
+        };
+        glass::apply_glass(&w, target);
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 初始化日志
@@ -182,14 +198,16 @@ pub fn run() {
             });
 
             // 8. 启动时隐藏所有窗口（靠托盘 / 通知触发显示）
-            if let Some(w) = app.get_webview_window("banner") {
-                let _ = w.hide();
-            }
-            if let Some(w) = app.get_webview_window("dashboard") {
-                let _ = w.hide();
-            }
-            if let Some(w) = app.get_webview_window("settings") {
-                let _ = w.hide();
+            //    并应用 macOS 26 Liquid Glass 原生材质（见 glass.rs / DESIGN.md）。
+            for label in ["banner", "dashboard", "settings"] {
+                if let Some(w) = app.get_webview_window(label) {
+                    let target = match label {
+                        "banner" => glass::GlassTarget::Banner,
+                        _ => glass::GlassTarget::Panel,
+                    };
+                    glass::apply_glass(&w, target);
+                    let _ = w.hide();
+                }
             }
 
             Ok(())
@@ -200,6 +218,7 @@ pub fn run() {
             dismiss_notification,
             clear_notifications,
             send_test_notification,
+            apply_glass_to_window,
             settings::get_settings,
             settings::update_settings,
             restart_server,

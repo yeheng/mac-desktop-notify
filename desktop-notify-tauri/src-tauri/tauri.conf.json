@@ -23,7 +23,7 @@
         "visible": false,
         "skipTaskbar": true,
         "decorations": true,
-        "transparent": false,
+        "transparent": true,
         "shadow": true
       },
       {
@@ -38,7 +38,7 @@
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
-        "shadow": false,
+        "shadow": true,
         "focus": false
       },
       {
@@ -53,7 +53,7 @@
         "visible": false,
         "skipTaskbar": true,
         "decorations": true,
-        "transparent": false,
+        "transparent": true,
         "shadow": true
       }
     ],

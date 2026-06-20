@@ -67,10 +67,10 @@ function dismissCard() {
         v-for="item in group.items.slice(1)"
         :key="item.id"
         class="sub-card"
-        :style="{ '--sub-type-color': meta.color }"
+        :style="{ '--sub-type-color': meta.color, '--sub-type-bg': meta.bg }"
       >
         <div class="sub-header">
-          <span class="sub-icon" :style="{ background: meta.color }" aria-hidden="true" />
+          <span class="sub-dot" aria-hidden="true" />
           <span class="sub-title">{{ item.title }}</span>
           <span class="sub-time">{{ new Date(item.createdAt).toLocaleTimeString() }}</span>
           <button
@@ -81,10 +81,25 @@ function dismissCard() {
             ×
           </button>
         </div>
-        <div class="sub-body"><MarkdownBody :content="item.body" /></div>
+        <div v-if="item.body.trim()" class="sub-body"><MarkdownBody :content="item.body" /></div>
 
-        <!-- 子通知的操作按钮（之前缺失的功能） -->
-        <div v-if="item.actions.length" class="sub-actions">
+        <!-- 子通知的回调结果（之前缺失的渲染） -->
+        <div
+          v-if="item.callbackResult"
+          class="sub-result"
+          :class="item.callbackResult.success ? 'ok' : 'err'"
+        >
+          <span aria-hidden="true">{{ item.callbackResult.success ? '✓' : 'ⓧ' }}</span>
+          <span class="sub-result-text">
+            {{ item.callbackResult.output || item.callbackResult.error || (item.callbackResult.success ? '成功' : '失败') }}
+            <span v-if="item.callbackResult.statusCode !== null" class="sub-status">
+              ({{ item.callbackResult.statusCode }})
+            </span>
+          </span>
+        </div>
+
+        <!-- 子通知的操作按钮 -->
+        <div v-else-if="item.actions.length" class="sub-actions">
           <button
             v-for="action in item.actions"
             :key="action.id"
@@ -107,16 +122,31 @@ function dismissCard() {
   gap: 6px;
 }
 
-/* 展开态的子条目 */
+/* 展开态的子条目：更薄的玻璃 */
 .sub-card {
-  --sub-type-color: var(--accent-blue);
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-left: 4px solid var(--sub-type-color);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  --sub-type-color: var(--type-info);
+  --sub-type-bg: var(--type-info-bg);
+  position: relative;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  padding: 10px 12px 10px 16px;
   color: var(--text-primary);
   margin-left: 14px;
+  box-shadow:
+    inset 0 0 0 0.5px var(--glass-border),
+    inset 0 1px 0 var(--glass-highlight);
+}
+
+.sub-card::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--sub-type-color);
+  opacity: 0.7;
 }
 
 .sub-header {
@@ -125,17 +155,18 @@ function dismissCard() {
   gap: 6px;
 }
 
-.sub-icon {
-  width: 8px;
-  height: 8px;
+.sub-dot {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
+  background: var(--sub-type-color);
   flex-shrink: 0;
 }
 
 .sub-title {
   flex: 1;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -145,24 +176,26 @@ function dismissCard() {
   font-size: 10px;
   color: var(--text-tertiary);
   flex-shrink: 0;
-  margin-right: 4px;
+  margin-right: 2px;
 }
 
 .sub-close {
   width: 22px;
   height: 22px;
   background: transparent;
-  border: 1px solid transparent;
+  border: none;
   color: var(--text-tertiary);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 15px;
   padding: 0;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-pill);
   line-height: 1;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 .sub-close:hover {
   background: var(--btn-hover-bg);
-  border-color: var(--border-color);
   color: var(--text-primary);
 }
 
@@ -170,8 +203,35 @@ function dismissCard() {
   font-size: 12px;
   color: var(--text-secondary);
   margin-top: 4px;
-  white-space: pre-wrap;
+}
+
+/* 子通知回调结果 */
+.sub-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 1.4;
+  margin-top: 8px;
+}
+.sub-result.ok {
+  background: var(--result-ok-bg);
+  color: var(--type-success);
+  box-shadow: inset 0 0 0 0.5px var(--type-success);
+}
+.sub-result.err {
+  background: var(--result-err-bg);
+  color: var(--type-error);
+  box-shadow: inset 0 0 0 0.5px var(--type-error);
+}
+.sub-result-text {
+  flex: 1;
   word-break: break-word;
+}
+.sub-status {
+  opacity: 0.6;
 }
 
 .sub-actions {
@@ -183,40 +243,41 @@ function dismissCard() {
 
 .sub-action-btn {
   flex: 1;
-  min-width: 50px;
+  min-width: 52px;
   min-height: 28px;
-  padding: 5px 10px;
-  border-radius: var(--radius-xs);
-  border: 1px solid var(--border-color);
+  padding: 5px 11px;
+  border: none;
+  border-radius: var(--radius-pill);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   background: var(--bg-input);
   color: var(--text-primary);
+  box-shadow: inset 0 0 0 0.5px var(--border-color), inset 0 1px 0 var(--glass-highlight);
   transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
+    background 0.15s ease,
+    transform 0.1s ease;
 }
 .sub-action-btn:hover {
-  background: var(--btn-hover-bg);
-  border-color: var(--text-secondary);
+  background: var(--bg-card-hover);
+}
+.sub-action-btn:active {
+  transform: scale(0.97);
 }
 .sub-action-btn.primary {
-  background: var(--text-primary);
-  border-color: var(--text-primary);
-  color: var(--bg-primary);
+  background: var(--sub-type-color);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 .sub-action-btn.primary:hover {
-  background: var(--accent-blue);
-  border-color: var(--accent-blue);
+  background: color-mix(in srgb, var(--sub-type-color) 88%, white);
 }
 .sub-action-btn.destructive {
   background: var(--bg-input);
-  border-color: var(--accent-red);
-  color: var(--accent-red);
+  color: var(--type-error);
+  box-shadow: inset 0 0 0 0.5px var(--type-error), inset 0 1px 0 var(--glass-highlight);
 }
 .sub-action-btn.destructive:hover {
-  background: var(--accent-red);
-  color: #fff;
+  background: var(--type-error-bg);
 }
 </style>

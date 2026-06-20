@@ -35,7 +35,7 @@ async function dismissGroup(group: NotificationGroup) {
   await Promise.all(group.items.map((item) => dismiss(item.id)))
 }
 
-// 关闭整个 banner 窗口（不移除通知，只隐藏）
+// 收起整个 banner 窗口（不移除通知，只隐藏 —— 通知仍在通知中心可见）
 async function closeBanner() {
   const win = getCurrentWindow()
   expanded.value.clear()
@@ -66,7 +66,9 @@ async function resizeWindow() {
     const root = document.querySelector('.banner-root') as HTMLElement | null
     if (!root) return
     const h = root.scrollHeight
-    await win.setSize(new LogicalSize(360, Math.max(h + 8, 60)))
+    // 高度上限：避免单条超长通知把窗口顶出屏幕
+    const maxH = Math.max(60, window.screen.availHeight - 80)
+    await win.setSize(new LogicalSize(360, Math.min(Math.max(h + 8, 60), maxH)))
   } catch {
     // 非 Tauri 环境忽略
   }
@@ -76,11 +78,15 @@ async function resizeWindow() {
 <template>
   <Transition name="banner-fade">
     <div v-if="visibleGroups.length > 0" class="banner-root">
-      <!-- 顶部关闭栏 -->
+      <!-- 顶部浮动玻璃条 -->
       <div class="banner-top-bar">
         <span class="banner-label">通知</span>
-        <button class="banner-close-all" title="关闭全部通知横幅" @click="closeBanner">
-          全部关闭
+        <button
+          class="banner-close-all"
+          title="收起横幅（通知仍在通知中心可见）"
+          @click="closeBanner"
+        >
+          收起
         </button>
       </div>
 
@@ -117,33 +123,33 @@ async function resizeWindow() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 0 8px;
+  padding: 4px 6px 8px;
 }
 
 .banner-label {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0;
+  letter-spacing: 0.02em;
 }
 
 .banner-close-all {
-  background: var(--bg-input);
-  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  border: none;
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 11px;
-  min-height: 24px;
-  padding: 3px 9px;
-  border-radius: var(--radius-xs);
+  font-weight: 600;
+  min-height: 22px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  box-shadow: inset 0 0 0 0.5px var(--border-color), inset 0 1px 0 var(--glass-highlight);
   transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
+    background 0.15s ease,
+    color 0.15s ease;
 }
 .banner-close-all:hover {
-  background: var(--btn-hover-bg);
-  border-color: var(--text-secondary);
+  background: var(--bg-card-hover);
   color: var(--text-primary);
 }
 
@@ -155,10 +161,10 @@ async function resizeWindow() {
 
 /* 入场 / 出场动画 */
 .banner-fade-enter-active {
-  transition: opacity 0.2s ease-out;
+  transition: opacity 0.22s ease-out;
 }
 .banner-fade-leave-active {
-  transition: opacity 0.15s ease-in;
+  transition: opacity 0.16s ease-in;
 }
 .banner-fade-enter-from,
 .banner-fade-leave-to {
@@ -166,17 +172,20 @@ async function resizeWindow() {
 }
 
 .stack-item-enter-active {
-  transition: all 0.25s ease-out;
+  transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .stack-item-leave-active {
-  transition: all 0.2s ease-in;
+  transition: all 0.22s ease-in;
 }
 .stack-item-enter-from {
   opacity: 0;
-  transform: translateX(20px);
+  transform: translateY(-8px) scale(0.98);
 }
 .stack-item-leave-to {
   opacity: 0;
-  transform: translateX(-20px);
+  transform: translateX(-16px) scale(0.98);
+}
+.stack-item-move {
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 </style>

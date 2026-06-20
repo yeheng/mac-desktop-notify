@@ -39,8 +39,7 @@ async function handleClick(e: MouseEvent) {
 .markdown-body {
   font-size: 13px;
   line-height: 1.55;
-  color: var(--text-primary);
-  opacity: 0.9;
+  color: var(--text-secondary);
   word-break: break-word;
 }
 
@@ -73,7 +72,7 @@ async function handleClick(e: MouseEvent) {
 
 /* 链接 */
 .markdown-body :deep(a) {
-  color: var(--accent-blue);
+  color: var(--type-info);
   text-decoration: none;
 }
 .markdown-body :deep(a:hover) { text-decoration: underline; }
@@ -81,23 +80,26 @@ async function handleClick(e: MouseEvent) {
 /* 行内代码 */
 .markdown-body :deep(code) {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  font-size: 0.88em;
+  font-size: 0.86em;
   background: var(--code-bg);
-  padding: 0.1em 0.35em;
+  color: var(--text-primary);
+  padding: 0.1em 0.4em;
   border-radius: var(--radius-xs);
 }
 
 /* 代码块 */
 .markdown-body :deep(pre) {
   background: var(--pre-bg);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xs);
+  color: var(--pre-text);
+  border-radius: var(--radius-sm);
   padding: 10px 12px;
   overflow-x: auto;
   margin: 0.5em 0;
+  box-shadow: inset 0 0 0 0.5px var(--glass-border);
 }
 .markdown-body :deep(pre code) {
   background: none;
+  color: inherit;
   padding: 0;
   font-size: 0.85em;
   line-height: 1.45;
@@ -108,7 +110,7 @@ async function handleClick(e: MouseEvent) {
   margin: 0.5em 0;
   padding: 0.2em 0 0.2em 12px;
   border-left: 3px solid var(--border-color);
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
 }
 
 /* 列表 */
@@ -123,7 +125,7 @@ async function handleClick(e: MouseEvent) {
 /* 任务列表 */
 .markdown-body :deep(input[type='checkbox']) {
   margin-right: 0.4em;
-  accent-color: var(--accent-green);
+  accent-color: var(--type-success);
 }
 
 /* 表格 */
@@ -132,28 +134,30 @@ async function handleClick(e: MouseEvent) {
   width: 100%;
   margin: 0.5em 0;
   font-size: 0.92em;
+  border-radius: var(--radius-xs);
+  overflow: hidden;
 }
 .markdown-body :deep(th),
 .markdown-body :deep(td) {
-  border: 1px solid var(--border-color);
+  border: 0.5px solid var(--border-color);
   padding: 4px 8px;
   text-align: left;
 }
 .markdown-body :deep(th) {
-  background: var(--bg-input);
+  background: var(--bg-secondary);
   font-weight: 600;
 }
 
 /* 分隔线 */
 .markdown-body :deep(hr) {
   border: none;
-  border-top: 1px solid var(--border-color);
+  border-top: 0.5px solid var(--border-color);
   margin: 0.6em 0;
 }
 
 /* 图片 */
 .markdown-body :deep(img) {
   max-width: 100%;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
 }
 </style>
