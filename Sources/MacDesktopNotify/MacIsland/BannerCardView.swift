@@ -39,7 +39,7 @@ struct BannerCardView: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.white.opacity(0.5))
-                        .frame(width: 18, height: 18)
+                        .frame(width: 26, height: 26)
                         .background(Color.white.opacity(0.08))
                         .clipShape(Circle())
                 }

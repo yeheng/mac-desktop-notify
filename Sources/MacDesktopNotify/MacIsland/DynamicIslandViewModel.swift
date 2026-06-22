@@ -50,8 +50,6 @@ struct UISettingsState: Codable, Equatable {
 }
 
 enum DynamicIslandLayout {
-    static let windowShadowPadding: CGFloat = 24
-
     static func openedSize(for screenRect: CGRect, settings: UISettingsState) -> CGSize {
         let configuredWidth = CGFloat(settings.panelMaxWidth).clamped(to: 360...920)
         let configuredHeight = CGFloat(settings.panelMaxHeight).clamped(to: 280...380)
@@ -158,15 +156,13 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
 
     enum ContentType: Int, Codable, Hashable, Equatable {
         case normal
-        case menu
         case settings
     }
 
     @Published private(set) var status: Status = .idle
     @Published var contentType: ContentType = .normal
-    @Published var optionKeyPressed: Bool = false
     @Published var bannerIDs: [UUID] = []           // 最新在前
-    @Published var measuredBannerHeight: CGFloat = 0
+    @Published var measuredBannerHeight: CGFloat = DynamicIslandLayout.bannerCardHeight
 
     var bellRect: CGRect = .zero
     var screenRect: CGRect = .zero

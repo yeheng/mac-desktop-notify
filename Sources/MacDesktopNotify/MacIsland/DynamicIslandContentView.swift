@@ -61,7 +61,7 @@ struct DynamicIslandContentView: View {
     var body: some View {
         ZStack {
             switch vm.contentType {
-            case .normal, .menu:
+            case .normal:
                 notificationCenter
             case .settings:
                 settingsView
