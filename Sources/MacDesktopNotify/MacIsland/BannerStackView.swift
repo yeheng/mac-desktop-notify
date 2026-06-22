@@ -4,6 +4,7 @@ import SwiftUI
 struct BannerStackView: View {
     @ObservedObject var vm: DynamicIslandViewModel
     @Environment(NotifyManager.self) var manager
+    @State private var hasMeasured = false
 
     private var banners: [NotificationRecord] {
         let byID = Dictionary(uniqueKeysWithValues: manager.items.map { ($0.id, $0) })
@@ -15,6 +16,10 @@ struct BannerStackView: View {
         VStack(spacing: DynamicIslandLayout.bannerSpacing) {
             ForEach(banners) { item in
                 BannerCardView(item: item, vm: vm)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .opacity
+                    ))
             }
 
             if overflow > 0 {
@@ -35,6 +40,10 @@ struct BannerStackView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("还有 \(overflow) 条新消息，点击查看")
+                .transition(.asymmetric(
+                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                    removal: .opacity
+                ))
             }
         }
         .frame(width: DynamicIslandLayout.bannerWidth, alignment: .top)
@@ -44,7 +53,12 @@ struct BannerStackView: View {
             }
         )
         .onPreferenceChange(ViewHeightKey.self) { height in
-            if vm.measuredBannerHeight != height {
+            guard vm.measuredBannerHeight != height else { return }
+            // 首帧瞬切（避免初值 92 → 实测值动画引入首帧抖动，回归 83a1c4e）；后续用 banner ease 平滑过渡。
+            if hasMeasured {
+                withAnimation(AnimationTokens.banner) { vm.measuredBannerHeight = height }
+            } else {
+                hasMeasured = true
                 vm.measuredBannerHeight = height
             }
         }

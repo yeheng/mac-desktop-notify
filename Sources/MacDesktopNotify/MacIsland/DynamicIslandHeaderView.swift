@@ -88,7 +88,7 @@ struct DynamicIslandHeaderView: View {
             .help("更多操作")
             .accessibilityLabel("更多操作")
         }
-        .animation(vm.animation, value: vm.contentType)
+        .animation(vm.reduceMotion ? nil : AnimationTokens.crossfade, value: vm.contentType)
         .foregroundStyle(.white)
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DynamicIslandView: View {
     @StateObject var vm: DynamicIslandViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(vm: DynamicIslandViewModel) {
         _vm = StateObject(wrappedValue: vm)
@@ -35,6 +36,7 @@ struct DynamicIslandView: View {
             case .bannerStack:
                 BannerStackView(vm: vm)
                     .padding(vm.spacing)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             case .panel:
                 VStack(spacing: vm.spacing) {
                     DynamicIslandHeaderView(vm: vm)
@@ -51,7 +53,8 @@ struct DynamicIslandView: View {
             panelShape.fill(Color.black)
         )
         .shadow(color: .black.opacity(vm.status == .idle ? 0 : 0.5), radius: vm.status == .panel ? 16 : 10)
-        .animation(vm.animation, value: vm.status)
         .preferredColorScheme(.dark)
+        .onAppear { vm.reduceMotion = reduceMotion }
+        .onChange(of: reduceMotion) { _, newValue in vm.reduceMotion = newValue }
     }
 }

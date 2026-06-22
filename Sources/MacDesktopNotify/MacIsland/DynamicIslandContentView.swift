@@ -67,7 +67,7 @@ struct DynamicIslandContentView: View {
                 settingsView
             }
         }
-        .animation(vm.animation, value: vm.contentType)
+        .animation(vm.reduceMotion ? nil : AnimationTokens.crossfade, value: vm.contentType)
     }
 
     // MARK: - 消息中心面板
@@ -300,6 +300,7 @@ struct MessageCard: View {
                         Capsule()
                             .fill(item.type.iconColor.opacity(0.45))
                             .frame(width: proxy.size.width * timeoutProgress)
+                            .animation(vm.reduceMotion ? nil : AnimationTokens.progressLinear, value: timeoutProgress)
                     }
                 }
                 .frame(height: 2)

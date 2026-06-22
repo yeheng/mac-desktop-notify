@@ -49,6 +49,26 @@ struct UISettingsState: Codable, Equatable {
     }
 }
 
+/// 全局动画 token：集中定义所有时长/曲线，方便统一调参与 reduceMotion 降级。
+enum AnimationTokens {
+    /// 状态切换（idle↔bannerStack↔panel）与尺寸过渡的主弹簧。
+    static let standard = Animation.spring(response: 0.34, dampingFraction: 0.78)
+    /// 横幅出现/消失/增删/高度变化：平滑 ease（无 bounce），配合 .move(.trailing) 从右滑入，贴近 macOS 原生通知。
+    static let banner = Animation.easeOut(duration: 0.32)
+    /// banner ease 的时长，供 AppKit 侧 NSAnimationContext 同步窗口 frame（与内容 ease 对齐）。
+    static let bannerDuration: TimeInterval = 0.32
+    /// 面板内消息卡片插入。
+    static let cardInsert = Animation.spring(response: 0.4, dampingFraction: 0.7)
+    /// 面板内消息卡片移除。
+    static let cardRemove = Animation.easeInOut(duration: 0.3)
+    /// 视图整体替换（如 contentType 切换）的淡入淡出。
+    static let crossfade = Animation.easeInOut(duration: 0.2)
+    /// 微交互（复制图标、pin 按钮等）。
+    static let micro = Animation.easeInOut(duration: 0.16)
+    /// 超时进度条线性递减。
+    static let progressLinear = Animation.linear(duration: 1)
+}
+
 enum DynamicIslandLayout {
     static func openedSize(for screenRect: CGRect, settings: UISettingsState) -> CGSize {
         let configuredWidth = CGFloat(settings.panelMaxWidth).clamped(to: 360...920)
@@ -89,8 +109,8 @@ enum DynamicIslandLayout {
     static let bannerSpacing: CGFloat = 6
     static let collapseRowHeight: CGFloat = 30
 
-    /// 根据铃铛屏幕坐标算面板/横幅窗口的屏幕 frame。
-    /// 右对齐铃铛、顶边贴铃铛下沿；铃铛未知时回退到屏幕右上角。
+    /// 面板（Dashboard / 消息中心）窗口的屏幕 frame。
+    /// 右对齐状态栏铃铛、顶边贴铃铛下沿；铃铛未知时回退到屏幕右上角。
     static func bellAnchoredFrame(
         bellRect: CGRect,
         contentSize: CGSize,
@@ -110,6 +130,28 @@ enum DynamicIslandLayout {
             originX = screen.minX + margin
         }
         let originY = bellRect.minY - contentSize.height   // 窗口顶边贴铃铛底边
+        return CGRect(
+            origin: CGPoint(x: originX, y: originY),
+            size: contentSize
+        )
+    }
+
+    /// 横幅通知窗口的屏幕 frame，行为与 macOS 原生横幅一致：
+    /// 紧贴屏幕右上角、菜单栏下方，不依附于状态栏铃铛。
+    static func bannerFrame(
+        contentSize: CGSize,
+        screen: CGRect,
+        horizontalMargin: CGFloat = 12,
+        topOffset: CGFloat = 8
+    ) -> CGRect {
+        guard screen.width > 0, screen.height > 0 else {
+            return .zero
+        }
+
+        let menuBarHeight = NSStatusBar.system.thickness
+        let originX = screen.maxX - contentSize.width - horizontalMargin
+        let originY = screen.maxY - contentSize.height - menuBarHeight - topOffset
+
         return CGRect(
             origin: CGPoint(x: originX, y: originY),
             size: contentSize
@@ -139,11 +181,12 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         }
     }
 
-    let animation: Animation = .interactiveSpring(
-        duration: 0.5,
-        extraBounce: 0.25,
-        blendDuration: 0.125
-    )
+    /// 系统开启「减少动态效果」时，状态切换/尺寸过渡退化为瞬切。
+    @Published var reduceMotion = false
+
+    /// 状态切换与尺寸过渡的主弹簧。reduceMotion 时返回 nil（禁用动画，瞬切）。
+    /// 注：interactiveSpring 用于离散状态切换会过冲且 blendDuration 无效，故改用 spring。
+    var animation: Animation? { reduceMotion ? nil : AnimationTokens.standard }
 
     /// 共享时间发布者，所有 MessageCard 共用单个 Timer，避免每张卡片创建独立 Timer
     let sharedTimePublisher = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -186,11 +229,21 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     }
 
     var windowFrame: CGRect {
-        DynamicIslandLayout.bellAnchoredFrame(
-            bellRect: bellRect,
-            contentSize: contentSize,
-            screen: screenRect
-        )
+        switch status {
+        case .idle:
+            return .zero
+        case .bannerStack:
+            return DynamicIslandLayout.bannerFrame(
+                contentSize: bannerStackSize,
+                screen: screenRect
+            )
+        case .panel:
+            return DynamicIslandLayout.bellAnchoredFrame(
+                bellRect: bellRect,
+                contentSize: panelSize,
+                screen: screenRect
+            )
+        }
     }
 
     /// 当前可见内容的屏幕 rect（命中测试/点外部关闭用）
@@ -200,28 +253,51 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
 
     // MARK: - 状态切换
     func showPanel() {
-        contentType = .normal
-        status = .panel
+        // 从横幅切换到面板时禁用动画，避免横幅在面板位置重绘/重弹一次
+        let animationToUse: Animation? = status == .bannerStack ? nil : animation
+        withAnimation(animationToUse) {
+            contentType = .normal
+            status = .panel
+        }
     }
-    func showBannerStack() { status = .bannerStack }
-    func hide() { status = .idle }
+    func showBannerStack() {
+        withAnimation(AnimationTokens.banner) { status = .bannerStack }
+    }
+    func hide() {
+        // measuredBannerHeight 的重置移至 WindowController 真正 orderOut 之后，
+        // 避免与收起动画竞争（status 已 idle，contentSize 走 .zero 分支）。
+        withAnimation(AnimationTokens.banner) { status = .idle }
+    }
     func togglePanel() {
         status == .panel ? hide() : showPanel()
     }
-    func showSettings() { contentType = .settings; status = .panel }
+    func showSettings() {
+        let animationToUse: Animation? = status == .bannerStack ? nil : animation
+        withAnimation(animationToUse) {
+            contentType = .settings
+            status = .panel
+        }
+    }
     func showNotificationCenter() { contentType = .normal }
 
     // MARK: - 横幅队列
     func pushBanner(id: UUID) {
-        bannerIDs.removeAll { $0 == id }
-        bannerIDs.insert(id, at: 0)   // 最新在前
+        withAnimation(AnimationTokens.banner) {
+            bannerIDs.removeAll { $0 == id }
+            bannerIDs.insert(id, at: 0)   // 最新在前
+        }
     }
     func removeBanner(id: UUID) {
-        bannerIDs.removeAll { $0 == id }
-        if bannerIDs.isEmpty { hide() }
+        withAnimation(AnimationTokens.banner) {
+            bannerIDs.removeAll { $0 == id }
+        }
+        if bannerIDs.isEmpty { hide() }   // 移到 withAnimation 块外，避免与 hide 的事务嵌套
     }
     func clearBanners() {
-        bannerIDs.removeAll()
+        withAnimation(AnimationTokens.banner) {
+            bannerIDs.removeAll()
+        }
+        measuredBannerHeight = DynamicIslandLayout.bannerCardHeight
     }
 
     func resetUISettings() {

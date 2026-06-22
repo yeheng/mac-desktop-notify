@@ -4,7 +4,7 @@
 
 **Goal:** 将通知 UI 从「灵动岛」（顶部居中黑色药丸）改为「菜单栏面板」——面板从菜单栏铃铛图标向下展开，新通知先弹横幅（带内联操作按钮），多条堆叠 ≤3，超出折叠；点击铃铛/横幅展开完整消息中心。
 
-**Architecture:** 单一无边框 `NSWindow` + 三显示模式状态机（`idle` / `bannerStack` / `panel`）。窗口锚点从「刘海居中」迁移到「铃铛屏幕坐标」（右对齐、向下）。复用现有 `NotifyManager` / 事件总线 / 回调执行器 / Markdown 组件，仅改造 `MacIsland/` 外壳与 `AppDelegate` 的状态栏交互。纯逻辑（窗口定位、横幅队列）走 TDD；UI/AppKit 接线走「编译 + 手动验证」。
+**Architecture:** 单一无边框 `NSWindow` + 三显示模式状态机（`idle` / `bannerStack` / `panel`）。完整面板锚点从「刘海居中」迁移到「铃铛屏幕坐标」（右对齐、向下展开）；横幅通知锚定于屏幕右上角（与 macOS 原生横幅一致）。复用现有 `NotifyManager` / 事件总线 / 回调执行器 / Markdown 组件，仅改造 `MacIsland/` 外壳与 `AppDelegate` 的状态栏交互。纯逻辑（窗口定位、横幅队列）走 TDD；UI/AppKit 接线走「编译 + 手动验证」。
 
 **Tech Stack:** Swift 5.9 / SwiftUI / AppKit (Cocoa)，macOS 14+，SPM，依赖 Swifter + swift-markdown-ui，测试用 XCTest。
 

@@ -310,7 +310,7 @@ final class NotifyManager {
     // MARK: - Mutation Methods
 
     func add(_ item: NotificationRecord) {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+        withAnimation(AnimationTokens.cardInsert) {
             items.insert(item, at: 0)
             if items.count > maxItems {
                 items.removeLast(items.count - maxItems)
@@ -340,7 +340,7 @@ final class NotifyManager {
 
         timeoutTasks.removeValue(forKey: id)?.cancel()
 
-        withAnimation(.easeInOut(duration: 0.3)) {
+        withAnimation(AnimationTokens.cardRemove) {
             items.removeAll { $0.id == id }
         }
 
@@ -356,7 +356,7 @@ final class NotifyManager {
         let removedIDs = items.map(\.id)
         guard !removedIDs.isEmpty else { return }
 
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+        withAnimation(AnimationTokens.cardInsert) {
             items.removeAll()
         }
         removedIDs.forEach { eventBus.publish(.notificationDismissed(id: $0, reason: .cleared)) }
