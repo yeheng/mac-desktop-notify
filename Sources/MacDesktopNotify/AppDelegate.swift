@@ -3,11 +3,10 @@ import Combine
 import SwiftUI
 
 @MainActor
-class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate {
     var mainWindowController: DynamicIslandWindowController?
     var apiServer: APIServer?
     var statusItem: NSStatusItem?
-    private let statusMenu = NSMenu()
     private var cancellables: Set<AnyCancellable> = []
 
     /// 统一事件总线
@@ -27,8 +26,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         EventMonitors.shared.start()
 
-        rebuildWindow()
         setupStatusItem()
+        rebuildWindow()
 
         let server = APIServer(manager: manager)
         apiServer = server
@@ -116,7 +115,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let controller = DynamicIslandWindowController(
             screen: screen,
             manager: manager,
-            eventBus: eventBus
+            eventBus: eventBus,
+            statusItem: statusItem
         )
         mainWindowController = controller
     }
@@ -138,86 +138,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             )
             button.image?.isTemplate = true
             button.toolTip = "MacDesktopNotify"
+            button.target = self
+            button.action = #selector(statusItemClicked)
+            button.sendAction(on: .leftMouseDown)
         }
-
-        statusMenu.delegate = self
-        item.menu = statusMenu
     }
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        rebuildStatusMenu(menu)
-    }
-
-    private func rebuildStatusMenu(_ menu: NSMenu) {
-        menu.removeAllItems()
-
-        menu.addItem(makeMenuItem(
-            title: "打开消息中心",
-            systemImage: "bell.badge",
-            action: #selector(openNotificationCenterFromMenu)
-        ))
-        menu.addItem(makeMenuItem(
-            title: "设置",
-            systemImage: "gearshape",
-            action: #selector(openSettingsFromMenu)
-        ))
-
-        menu.addItem(.separator())
-
-        menu.addItem(makeMenuItem(
-            title: manager.isLocked ? "恢复自动收起" : "保持展开",
-            systemImage: manager.isLocked ? "pin.slash" : "pin",
-            action: #selector(toggleAutoCloseFromMenu)
-        ))
-
-        let clearItem = makeMenuItem(
-            title: "清空全部",
-            systemImage: "trash",
-            action: #selector(clearAllFromMenu)
-        )
-        clearItem.isEnabled = !manager.items.isEmpty
-        menu.addItem(clearItem)
-
-        menu.addItem(.separator())
-
-        menu.addItem(makeMenuItem(
-            title: "退出 MacDesktopNotify",
-            systemImage: "power",
-            action: #selector(quitFromMenu)
-        ))
-    }
-
-    private func makeMenuItem(
-        title: String,
-        systemImage: String,
-        action: Selector
-    ) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.target = self
-        item.image = NSImage(systemSymbolName: systemImage, accessibilityDescription: nil)
-        return item
-    }
-
-    @objc private func openNotificationCenterFromMenu() {
-        guard let vm = mainWindowController?.vm else { return }
-        vm.showPanel()
-        vm.showNotificationCenter()
-    }
-
-    @objc private func openSettingsFromMenu() {
-        guard let vm = mainWindowController?.vm else { return }
-        vm.showSettings()
-    }
-
-    @objc private func toggleAutoCloseFromMenu() {
-        manager.toggleLock()
-    }
-
-    @objc private func clearAllFromMenu() {
-        manager.clear()
-    }
-
-    @objc private func quitFromMenu() {
-        NSApplication.shared.terminate(nil)
+    @objc private func statusItemClicked() {
+        mainWindowController?.vm?.togglePanel()
     }
 }

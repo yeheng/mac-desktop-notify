@@ -3,7 +3,8 @@ import Combine
 
 class DynamicIslandWindowController: NSWindowController {
     private(set) var vm: DynamicIslandViewModel?
-    weak var screen: NSScreen?
+    private weak var screen: NSScreen?
+    private let statusItem: NSStatusItem?
     private let manager: NotifyManager
     private let eventBus: NotificationEventBus
     private var cancellables: Set<AnyCancellable> = []
@@ -12,11 +13,13 @@ class DynamicIslandWindowController: NSWindowController {
         window: NSWindow,
         screen: NSScreen,
         manager: NotifyManager,
-        eventBus: NotificationEventBus
+        eventBus: NotificationEventBus,
+        statusItem: NSStatusItem?
     ) {
         self.screen = screen
         self.manager = manager
         self.eventBus = eventBus
+        self.statusItem = statusItem
         super.init(window: window)
 
         let vm = DynamicIslandViewModel()
@@ -28,9 +31,11 @@ class DynamicIslandWindowController: NSWindowController {
         )
 
         vm.screenRect = screen.frame
-        updateWindowFrame(animated: false)
-        setupWindowFrameUpdates()
+        refreshBellRect()
+        updateWindowFrame()
+        setupBindings()
         window.orderFrontRegardless()
+        applyVisibility()
     }
 
     @available(*, unavailable)
@@ -39,7 +44,8 @@ class DynamicIslandWindowController: NSWindowController {
     convenience init(
         screen: NSScreen,
         manager: NotifyManager,
-        eventBus: NotificationEventBus
+        eventBus: NotificationEventBus,
+        statusItem: NSStatusItem?
     ) {
         let window = DynamicIslandWindow(
             contentRect: .zero,
@@ -52,13 +58,12 @@ class DynamicIslandWindowController: NSWindowController {
             window: window,
             screen: screen,
             manager: manager,
-            eventBus: eventBus
+            eventBus: eventBus,
+            statusItem: statusItem
         )
     }
 
-    deinit {
-        destroy()
-    }
+    deinit { destroy() }
 
     func destroy() {
         cancellables.forEach { $0.cancel() }
@@ -70,24 +75,49 @@ class DynamicIslandWindowController: NSWindowController {
         window = nil
     }
 
-    private func setupWindowFrameUpdates() {
-        vm?.$uiSettings
-            .dropFirst()
+    private func setupBindings() {
+        guard let vm else { return }
+        // 状态/尺寸变化 → 重定位 + 显隐
+        vm.$status
+            .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.updateWindowFrame(animated: true)
+                self?.refreshBellRect()
+                self?.updateWindowFrame()
+                self?.applyVisibility()
             }
+            .store(in: &cancellables)
+
+        vm.$measuredBannerHeight
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateWindowFrame()
+            }
+            .store(in: &cancellables)
+
+        vm.$uiSettings
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateWindowFrame() }
             .store(in: &cancellables)
     }
 
-    private func updateWindowFrame(animated: Bool) {
-        guard let vm, let window else { return }
-        let frame = vm.windowFrame
+    private func refreshBellRect() {
+        vm?.bellRect = statusItem?.bellScreenFrame ?? .zero
+    }
 
-        if animated {
-            window.animator().setFrame(frame, display: true)
+    private func updateWindowFrame() {
+        guard let vm, let window else { return }
+        window.setFrame(vm.windowFrame, display: true)
+    }
+
+    private func applyVisibility() {
+        guard let vm, let window else { return }
+        if vm.status == .idle {
+            window.orderOut(nil)
         } else {
-            window.setFrame(frame, display: false)
+            window.orderFrontRegardless()
         }
     }
 }
