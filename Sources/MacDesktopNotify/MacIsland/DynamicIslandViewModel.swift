@@ -84,6 +84,39 @@ enum DynamicIslandLayout {
     static func cardCornerRadius(_ settings: UISettingsState) -> CGFloat {
         CGFloat(settings.cardCornerRadius).clamped(to: 4...16)
     }
+
+    /// 横幅模式常量
+    static let bannerWidth: CGFloat = 360
+    static let bannerCardHeight: CGFloat = 92
+    static let bannerSpacing: CGFloat = 6
+    static let collapseRowHeight: CGFloat = 30
+
+    /// 根据铃铛屏幕坐标算面板/横幅窗口的屏幕 frame。
+    /// 右对齐铃铛、顶边贴铃铛下沿；铃铛未知时回退到屏幕右上角。
+    static func bellAnchoredFrame(
+        bellRect: CGRect,
+        contentSize: CGSize,
+        screen: CGRect,
+        margin: CGFloat = 8
+    ) -> CGRect {
+        guard bellRect.width > 0, bellRect.height > 0,
+              screen.width > 0, screen.height > 0
+        else {
+            let x = screen.maxX - contentSize.width
+            let y = screen.maxY - contentSize.height
+            return CGRect(origin: CGPoint(x: x, y: y), size: contentSize)
+        }
+
+        var originX = bellRect.maxX - contentSize.width
+        if originX < screen.minX + margin {
+            originX = screen.minX + margin
+        }
+        let originY = bellRect.minY - contentSize.height   // 窗口顶边贴铃铛底边
+        return CGRect(
+            origin: CGPoint(x: originX, y: originY),
+            size: contentSize
+        )
+    }
 }
 
 class DynamicIslandViewModel: NSObject, ObservableObject {
