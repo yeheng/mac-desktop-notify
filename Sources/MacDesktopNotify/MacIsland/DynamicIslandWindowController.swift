@@ -19,9 +19,7 @@ class DynamicIslandWindowController: NSWindowController {
         self.eventBus = eventBus
         super.init(window: window)
 
-        var notchSize = screen.notchSize
-
-        let vm = DynamicIslandViewModel(inset: notchSize == .zero ? 0 : -4)
+        let vm = DynamicIslandViewModel()
         self.vm = vm
         contentViewController = DynamicIslandViewController(
             vm: vm,
@@ -29,15 +27,6 @@ class DynamicIslandWindowController: NSWindowController {
             eventBus: eventBus
         )
 
-        if notchSize == .zero {
-            notchSize = .init(width: 150, height: 28)
-        }
-        vm.deviceNotchRect = CGRect(
-            x: screen.frame.origin.x + (screen.frame.width - notchSize.width) / 2,
-            y: screen.frame.origin.y + screen.frame.height - notchSize.height,
-            width: notchSize.width,
-            height: notchSize.height
-        )
         vm.screenRect = screen.frame
         updateWindowFrame(animated: false)
         setupWindowFrameUpdates()

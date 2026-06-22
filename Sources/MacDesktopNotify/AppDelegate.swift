@@ -123,7 +123,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
         guard let vm = mainWindowController?.vm else { return true }
-        vm.notchOpen(.click)
+        vm.showPanel()
         return true
     }
 
@@ -200,13 +200,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openNotificationCenterFromMenu() {
         guard let vm = mainWindowController?.vm else { return }
-        vm.notchOpen(.click)
+        vm.showPanel()
         vm.showNotificationCenter()
     }
 
     @objc private func openSettingsFromMenu() {
         guard let vm = mainWindowController?.vm else { return }
-        vm.notchOpen(.click)
         vm.showSettings()
     }
 

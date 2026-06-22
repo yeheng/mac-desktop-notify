@@ -123,10 +123,8 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     private static let uiSettingsStorageKey = "MacDesktopNotify.UISettings"
 
     var cancellables: Set<AnyCancellable> = []
-    let inset: CGFloat
 
-    init(inset: CGFloat = -4) {
-        self.inset = inset
+    override init() {
         super.init()
         restoreUISettings()
         setupCancellables()
@@ -152,21 +150,10 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     /// 共享时间发布者，所有 MessageCard 共用单个 Timer，避免每张卡片创建独立 Timer
     let sharedTimePublisher = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    var notchOpenedSize: CGSize {
-        DynamicIslandLayout.openedSize(for: screenRect, settings: uiSettings)
-    }
-
     enum Status: String, Codable, Hashable, Equatable {
-        case closed
-        case opened
-        case popping
-    }
-
-    enum OpenReason: String, Codable, Hashable, Equatable {
-        case click
-        case drag
-        case boot
-        case unknown
+        case idle          // 无浮层（只剩菜单栏铃铛）
+        case bannerStack   // 铃铛下方：≤3 条横幅 + 折叠行
+        case panel         // 铃铛下方：完整消息中心
     }
 
     enum ContentType: Int, Codable, Hashable, Equatable {
@@ -175,95 +162,72 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         case settings
     }
 
-    var notchOpenedRect: CGRect {
-        .init(
-            x: screenRect.origin.x + (screenRect.width - notchOpenedSize.width) / 2,
-            y: screenRect.origin.y + screenRect.height - notchOpenedSize.height,
-            width: notchOpenedSize.width,
-            height: notchOpenedSize.height
-        )
-    }
+    @Published private(set) var status: Status = .idle
+    @Published var contentType: ContentType = .normal
+    @Published var optionKeyPressed: Bool = false
+    @Published var bannerIDs: [UUID] = []           // 最新在前
+    @Published var measuredBannerHeight: CGFloat = 0
 
-    var windowFrame: CGRect {
-        guard screenRect.width > 0, screenRect.height > 0 else { return .zero }
-
-        let windowWidth = min(
-            screenRect.width,
-            notchOpenedSize.width + DynamicIslandLayout.windowShadowPadding * 2
-        )
-        let windowHeight = min(
-            screenRect.height,
-            notchOpenedSize.height + DynamicIslandLayout.windowShadowPadding
-        )
-
-        return CGRect(
-            x: screenRect.midX - windowWidth / 2,
-            y: screenRect.maxY - windowHeight,
-            width: windowWidth,
-            height: windowHeight
-        )
-    }
-
-    var deviceNotchRect: CGRect = .zero
+    var bellRect: CGRect = .zero
     var screenRect: CGRect = .zero
 
-    /// Expanded hit-test area for click/hover detection (min 200×44pt per HIG).
-    var hitTestRect: CGRect {
-        let minHitWidth: CGFloat = 200
-        let minHitHeight: CGFloat = 44
-        let expandedWidth = max(deviceNotchRect.width + 16, minHitWidth)
-        let expandedHeight = max(deviceNotchRect.height + 8, minHitHeight)
-        return CGRect(
-            x: deviceNotchRect.midX - expandedWidth / 2,
-            y: deviceNotchRect.midY - expandedHeight / 2,
-            width: expandedWidth,
-            height: expandedHeight
-        )
+    /// 完整面板尺寸（沿用现有 openedSize 纯函数与设置项）
+    var panelSize: CGSize {
+        DynamicIslandLayout.openedSize(for: screenRect, settings: uiSettings)
     }
 
-    var activeHitTestRect: CGRect {
+    /// 横幅堆叠尺寸：宽度固定，高度由视图测量回填
+    var bannerStackSize: CGSize {
+        CGSize(width: DynamicIslandLayout.bannerWidth, height: measuredBannerHeight)
+    }
+
+    var contentSize: CGSize {
         switch status {
-        case .opened:
-            return notchOpenedRect.insetBy(dx: -8, dy: -8)
-        case .closed, .popping:
-            return hitTestRect
+        case .idle: return .zero
+        case .bannerStack: return bannerStackSize
+        case .panel: return panelSize
         }
     }
 
-    @Published private(set) var status: Status = .closed
-    @Published var openReason: OpenReason = .unknown
-    @Published var contentType: ContentType = .normal
-    @Published var optionKeyPressed: Bool = false
-    @Published var notchVisible: Bool = true
-    @Published var closeLocked: Bool = false
+    var windowFrame: CGRect {
+        DynamicIslandLayout.bellAnchoredFrame(
+            bellRect: bellRect,
+            contentSize: contentSize,
+            screen: screenRect
+        )
+    }
+
+    /// 当前可见内容的屏幕 rect（命中测试/点外部关闭用）
+    var visibleContentRect: CGRect { windowFrame }
 
     var spacing: CGFloat { DynamicIslandLayout.panelSpacing(uiSettings) }
 
     let hapticSender = PassthroughSubject<Void, Never>()
 
-    func notchOpen(_ reason: OpenReason) {
-        openReason = reason
-        status = .opened
+    // MARK: - 状态切换
+    func showPanel() {
         contentType = .normal
+        status = .panel
     }
-
-    func notchClose() {
-        openReason = .unknown
-        status = .closed
-        contentType = .normal
+    func showBannerStack() { status = .bannerStack }
+    func hide() { status = .idle }
+    func togglePanel() {
+        status == .panel ? hide() : showPanel()
     }
+    func showSettings() { contentType = .settings; status = .panel }
+    func showNotificationCenter() { contentType = .normal }
 
-    func showSettings() {
-        contentType = .settings
+    // MARK: - 横幅队列
+    func pushBanner(id: UUID) {
+        bannerIDs.removeAll { $0 == id }
+        bannerIDs.insert(id, at: 0)   // 最新在前
     }
-
-    func showNotificationCenter() {
-        contentType = .normal
+    func removeBanner(id: UUID) {
+        bannerIDs.removeAll { $0 == id }
+        if bannerIDs.isEmpty { hide() }
     }
-
-    func notchPop() {
-        openReason = .unknown
-        status = .popping
+    func clearBanners() {
+        bannerIDs.removeAll()
     }
 
     func resetUISettings() {

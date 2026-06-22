@@ -6,9 +6,7 @@ class DynamicIslandViewController: NSViewController {
     let vm: DynamicIslandViewModel
     let manager: NotifyManager
     let eventBus: NotificationEventBus
-    private var autoCloseWorkItem: DispatchWorkItem?
     private var cancellables: Set<AnyCancellable> = []
-    private let hoverPauseInterval: TimeInterval = 1.0
 
     init(vm: DynamicIslandViewModel, manager: NotifyManager, eventBus: NotificationEventBus) {
         self.vm = vm
@@ -29,7 +27,7 @@ class DynamicIslandViewController: NSViewController {
 
         let hostingView = DynamicIslandHostingView(rootView: contentView)
         hostingView.shouldHandleScreenPoint = { [weak vm] screenPoint in
-            vm?.activeHitTestRect.contains(screenPoint) == true
+            vm?.visibleContentRect.contains(screenPoint) == true
         }
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
@@ -39,60 +37,29 @@ class DynamicIslandViewController: NSViewController {
     // MARK: - Event Bus Bindings
 
     private func setupBindings() {
-        // 新通知到达 → 打开面板
-        eventBus.subscribe(for: .notificationAdded) { [weak self] _ in
-            self?.handleNewNotification()
-        }
-        .store(in: &cancellables)
-
-        // 锁定状态变化 → 控制自动收起
-        eventBus.subscribe(for: .lockChanged) { [weak self] event in
-            guard case .lockChanged(let isLocked) = event else { return }
-            self?.handleLockChanged(isLocked: isLocked)
+        // 新通知到达 → 入队 + 显示横幅堆叠
+        eventBus.subscribe(for: .notificationAdded) { [weak self] event in
+            self?.handleNewNotification(event: event)
         }
         .store(in: &cancellables)
     }
 
     // MARK: - Event Handlers
 
-    private func handleNewNotification() {
-        autoCloseWorkItem?.cancel()
-        vm.notchOpen(.click)
-        scheduleAutoClose()
+    private func handleNewNotification(event: NotificationEvent) {
+        guard case .notificationAdded(let record) = event else { return }
+        vm.pushBanner(id: record.id)
+        vm.showBannerStack()
     }
 
     private func handleLockChanged(isLocked: Bool) {
-        vm.closeLocked = isLocked
-        if isLocked {
-            autoCloseWorkItem?.cancel()
-        } else if vm.status == .opened {
-            scheduleAutoClose()
-        }
+        // Task 6
     }
 
     // MARK: - Auto Close
 
     private func scheduleAutoClose(after delay: TimeInterval? = nil) {
-        autoCloseWorkItem?.cancel()
-        guard !manager.isLocked else { return }
-
-        let closeDelay = delay ?? vm.uiSettings.autoCloseSeconds
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self, !self.manager.isLocked else { return }
-
-            if self.vm.status == .opened, self.vm.notchOpenedRect.contains(NSEvent.mouseLocation) {
-                self.scheduleAutoClose(after: self.hoverPauseInterval)
-                return
-            }
-
-            self.vm.notchClose()
-        }
-        autoCloseWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + closeDelay, execute: workItem)
-    }
-
-    deinit {
-        autoCloseWorkItem?.cancel()
+        // Task 6
     }
 }
 

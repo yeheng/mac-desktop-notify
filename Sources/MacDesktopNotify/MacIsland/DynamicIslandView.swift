@@ -7,89 +7,51 @@ struct DynamicIslandView: View {
         _vm = StateObject(wrappedValue: vm)
     }
 
-    var notchSize: CGSize {
+    var cornerRadius: CGFloat {
         switch vm.status {
-        case .closed:
-            var ans = CGSize(
-                width: vm.deviceNotchRect.width - 4,
-                height: vm.deviceNotchRect.height - 4
-            )
-            if ans.width < 0 { ans.width = 0 }
-            if ans.height < 0 { ans.height = 0 }
-            return ans
-        case .opened:
-            return vm.notchOpenedSize
-        case .popping:
-            return .init(
-                width: vm.deviceNotchRect.width,
-                height: vm.deviceNotchRect.height
-            )
+        case .idle: return 0
+        case .bannerStack: return 14
+        case .panel:
+            let maxR = min(vm.panelSize.width, vm.panelSize.height) / 2
+            return DynamicIslandLayout.panelCornerRadius(vm.uiSettings, maxRadius: maxR)
         }
     }
 
-    var notchCornerRadius: CGFloat {
-        switch vm.status {
-        case .closed:
-            return 8
-        case .opened:
-            let maxRadius = min(vm.notchOpenedSize.width, vm.notchOpenedSize.height) / 2
-            return DynamicIslandLayout.panelCornerRadius(vm.uiSettings, maxRadius: maxRadius)
-        case .popping:
-            return 10
-        }
-    }
-
-    var notchTopCornerRadius: CGFloat {
-        vm.status == .opened ? notchCornerRadius : 0
-    }
-
-    var notchShape: UnevenRoundedRectangle {
+    /// 右上角微方，视觉贴合铃铛
+    var panelShape: UnevenRoundedRectangle {
         UnevenRoundedRectangle(
-            topLeadingRadius: notchTopCornerRadius,
-            bottomLeadingRadius: notchCornerRadius,
-            bottomTrailingRadius: notchCornerRadius,
-            topTrailingRadius: notchTopCornerRadius
+            topLeadingRadius: cornerRadius,
+            bottomLeadingRadius: cornerRadius,
+            bottomTrailingRadius: cornerRadius,
+            topTrailingRadius: vm.status == .panel ? 4 : cornerRadius
         )
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            notch
-                .zIndex(0)
-                .disabled(true)
-                .opacity(vm.notchVisible ? 1 : 0.85)
-
-            if vm.status == .opened {
+        Group {
+            switch vm.status {
+            case .idle:
+                Color.clear
+            case .bannerStack:
+                BannerStackView(vm: vm)
+                    .padding(vm.spacing)
+            case .panel:
                 VStack(spacing: vm.spacing) {
                     DynamicIslandHeaderView(vm: vm)
                     DynamicIslandContentView(vm: vm)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .padding(vm.spacing)
-                .frame(width: vm.notchOpenedSize.width, height: vm.notchOpenedSize.height)
-                .clipShape(notchShape)
-                .zIndex(2)
-                .transition(
-                    .scale.combined(
-                        with: .opacity
-                    ).combined(
-                        with: .offset(y: -vm.notchOpenedSize.height / 2)
-                    ).animation(vm.animation)
-                )
+                .frame(width: vm.panelSize.width, height: vm.panelSize.height)
             }
         }
+        .frame(width: vm.contentSize.width, height: vm.contentSize.height)
+        .clipShape(panelShape)
+        .background(
+            panelShape.fill(Color.black)
+        )
+        .shadow(color: .black.opacity(vm.status == .idle ? 0 : 0.5), radius: vm.status == .panel ? 16 : 10)
         .animation(vm.animation, value: vm.status)
         .preferredColorScheme(.dark)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    var notch: some View {
-        notchShape
-        .fill(.black)
-        .frame(width: notchSize.width, height: notchSize.height)
-        .shadow(
-            color: .black.opacity(([.opened, .popping].contains(vm.status)) ? 1 : 0),
-            radius: vm.status == .opened ? 16 : (vm.status == .popping ? 8 : 0)
-        )
     }
 }
