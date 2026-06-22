@@ -18,6 +18,10 @@ let package = Package(
                 .product(name: "Swifter", package: "swifter"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui")
             ]
+        ),
+        .testTarget(
+            name: "MacDesktopNotifyTests",
+            dependencies: ["MacDesktopNotify"]
         )
     ]
 )
