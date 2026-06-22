@@ -202,8 +202,6 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
 
     var spacing: CGFloat { DynamicIslandLayout.panelSpacing(uiSettings) }
 
-    let hapticSender = PassthroughSubject<Void, Never>()
-
     // MARK: - 状态切换
     func showPanel() {
         contentType = .normal
