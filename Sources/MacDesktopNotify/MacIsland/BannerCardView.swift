@@ -34,7 +34,8 @@ struct BannerCardView: View {
                 Spacer(minLength: 4)
 
                 Button {
-                    vm.removeBanner(id: item.id)
+                    manager.markSeen(id: item.id)
+                    if manager.unseenItems.isEmpty { vm.hide() }
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
@@ -53,7 +54,7 @@ struct BannerCardView: View {
                     ForEach(item.actions) { action in
                         Button {
                             manager.triggerAction(notificationID: item.id, actionID: action.id)
-                            vm.removeBanner(id: item.id)
+                            if manager.unseenItems.isEmpty { vm.hide() }
                         } label: {
                             Text(action.title)
                                 .font(.system(size: 11, weight: .semibold))

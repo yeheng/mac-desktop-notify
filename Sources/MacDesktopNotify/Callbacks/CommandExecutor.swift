@@ -1,20 +1,19 @@
 import Foundation
 
-/// Shell 命令回调执行器
+/// Shell 命令回调执行器。
+///
+/// `shell` 契约：**显式 boolean**，默认 `false`（直接 exec）。
+/// 不再做"命令带空格就自动走 shell"的启发式 —— 那是隐性行为，
+/// 调用方必须显式传 `"shell": true` 才经 `/bin/zsh -lc` 执行。
 struct CommandExecutor: CallbackExecutor {
     func execute(
-        _ callback: NotificationActionCallback,
+        _ payload: NotificationActionCallback.Command,
         context: NotificationActionEvent
     ) async -> CallbackResult {
         let start = Date()
-
-        guard let command = callback.command?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !command.isEmpty
-        else {
-            return .failed(error: "Empty command", duration: 0)
-        }
-
-        let timeout = max(1, min(callback.timeout ?? 15, 120))
+        // command 已在解码阶段 trim + 非空校验
+        let command = payload.command
+        let timeout = max(1, min(payload.timeout ?? 15, 120))
 
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
@@ -22,8 +21,8 @@ struct CommandExecutor: CallbackExecutor {
                 let outPipe = Pipe()
                 let errPipe = Pipe()
 
-                let arguments = callback.arguments ?? []
-                let useShell = callback.shell ?? (arguments.isEmpty && command.contains(" "))
+                let arguments = payload.arguments ?? []
+                let useShell = payload.shell ?? false
 
                 if useShell {
                     process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -36,8 +35,7 @@ struct CommandExecutor: CallbackExecutor {
                 process.standardOutput = outPipe
                 process.standardError = errPipe
 
-                // 设置环境变量
-                if let env = callback.environment {
+                if let env = payload.environment {
                     var envDict = ProcessInfo.processInfo.environment
                     for (key, value) in env {
                         envDict[key] = value

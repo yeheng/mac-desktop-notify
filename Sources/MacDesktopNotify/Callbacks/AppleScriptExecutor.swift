@@ -1,33 +1,31 @@
 import Foundation
 
-/// AppleScript 回调执行器 — 通过 osascript 执行脚本（避免主线程阻塞）
+/// AppleScript 回调执行器 — 通过 osascript 执行脚本（避免主线程阻塞）。
+/// 解码阶段已保证 `inline` 或 `file` 至少一个非 nil，无需入口 guard。
 struct AppleScriptExecutor: CallbackExecutor {
     func execute(
-        _ callback: NotificationActionCallback,
+        _ payload: NotificationActionCallback.AppleScript,
         context: NotificationActionEvent
     ) async -> CallbackResult {
         let start = Date()
-
-        // 确定脚本来源：内联脚本 或 脚本文件
-        let inlineScript = callback.appleScript?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scriptFile = callback.appleScriptFile?.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let source = inlineScript, !source.isEmpty || !(scriptFile ?? "").isEmpty else {
-            return .failed(error: "No AppleScript source or file specified", duration: 0)
-        }
-
-        let timeout = max(1, min(callback.timeout ?? 15, 120))
+        let timeout = max(1, min(payload.timeout ?? 15, 120))
 
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
 
-                // 内联脚本用 -e 参数，文件路径直接传递
-                if let inline = inlineScript, !inline.isEmpty {
+                // inline 优先（匹配旧行为）；解码保证至少一个非 nil
+                if let inline = payload.inline {
                     process.arguments = ["-e", inline]
+                } else if let file = payload.file {
+                    process.arguments = [file]
                 } else {
-                    process.arguments = [scriptFile!]
+                    // 不可达：解码已校验
+                    continuation.resume(
+                        returning: .failed(error: "No AppleScript source or file specified", duration: 0)
+                    )
+                    return
                 }
 
                 let outPipe = Pipe()

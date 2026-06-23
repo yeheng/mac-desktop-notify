@@ -1,22 +1,16 @@
 import AppKit
 import Foundation
 
-/// 文件/路径回调执行器 — 在 Finder 中显示或用默认应用打开
+/// 文件/路径回调执行器 — 在 Finder 中显示或用默认应用打开。
+/// `filePath` 已在解码阶段校验非空。
 struct FileExecutor: CallbackExecutor {
     func execute(
-        _ callback: NotificationActionCallback,
+        _ payload: NotificationActionCallback.File,
         context: NotificationActionEvent
     ) async -> CallbackResult {
         let start = Date()
-
-        guard let path = callback.filePath?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !path.isEmpty
-        else {
-            return .failed(error: "Empty file path", duration: 0)
-        }
-
-        let url = URL(fileURLWithPath: path)
-        let action = callback.fileAction ?? .open
+        let url = URL(fileURLWithPath: payload.path)
+        let action = payload.action ?? .open
 
         switch action {
         case .open:
@@ -25,9 +19,9 @@ struct FileExecutor: CallbackExecutor {
             }
             let duration = Date().timeIntervalSince(start)
             if success {
-                return .ok(output: "Opened \(path)", duration: duration)
+                return .ok(output: "Opened \(payload.path)", duration: duration)
             } else {
-                return .failed(error: "Failed to open: \(path)", duration: duration)
+                return .failed(error: "Failed to open: \(payload.path)", duration: duration)
             }
 
         case .revealInFinder:
@@ -35,7 +29,7 @@ struct FileExecutor: CallbackExecutor {
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             }
             let duration = Date().timeIntervalSince(start)
-            return .ok(output: "Revealed in Finder: \(path)", duration: duration)
+            return .ok(output: "Revealed in Finder: \(payload.path)", duration: duration)
         }
     }
 }

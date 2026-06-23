@@ -393,11 +393,11 @@ ws.send(JSON.stringify({
 |------|------|------|--------|------|
 | `command` | `string` | ✅ | — | 要执行的命令 |
 | `arguments` | `string[]` | ❌ | `[]` | 命令参数 |
-| `shell` | `boolean` | ❌ | 自动判断 | `true` = 用 `/bin/zsh -lc`，`false` = 用 `/usr/bin/env` |
+| `shell` | `boolean` | ❌ | `false` | `true` = 用 `/bin/zsh -lc`，`false` = 用 `/usr/bin/env` |
 | `timeout` | `number` | ❌ | `15` | 超时秒数（范围 1-120） |
 | `environment` | `object` | ❌ | — | 额外环境变量 |
 
-> **提示：** 当命令包含空格且无 `arguments` 时，`shell` 默认为 `true`。
+> **提示：** 需要执行 shell 管道、内建命令或通配符时，请显式设置 `"shell": true`。
 
 ---
 

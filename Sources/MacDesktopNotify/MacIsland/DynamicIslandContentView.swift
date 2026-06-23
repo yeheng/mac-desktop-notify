@@ -88,6 +88,7 @@ struct DynamicIslandContentView: View {
                         }
                     }
                     .padding(.bottom, 2)
+                    .animation(vm.reduceMotion ? nil : AnimationTokens.cardInsert, value: manager.items)
                 }
             }
         }

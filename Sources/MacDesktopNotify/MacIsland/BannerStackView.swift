@@ -4,22 +4,17 @@ import SwiftUI
 struct BannerStackView: View {
     @ObservedObject var vm: DynamicIslandViewModel
     @Environment(NotifyManager.self) var manager
-    @State private var hasMeasured = false
 
     private var banners: [NotificationRecord] {
-        let byID = Dictionary(uniqueKeysWithValues: manager.items.map { ($0.id, $0) })
-        return BannerQueue.visible(vm.bannerIDs).compactMap { byID[$0] }
+        BannerQueue.visible(manager.unseenItems)
     }
-    private var overflow: Int { BannerQueue.overflowCount(vm.bannerIDs) }
+    private var overflow: Int { BannerQueue.overflowCount(manager.unseenItems) }
 
     var body: some View {
         VStack(spacing: DynamicIslandLayout.bannerSpacing) {
             ForEach(banners) { item in
                 BannerCardView(item: item, vm: vm)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        removal: .opacity
-                    ))
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
 
             if overflow > 0 {
@@ -40,10 +35,7 @@ struct BannerStackView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("还有 \(overflow) 条新消息，点击查看")
-                .transition(.asymmetric(
-                    insertion: .move(edge: .trailing).combined(with: .opacity),
-                    removal: .opacity
-                ))
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .frame(width: DynamicIslandLayout.bannerWidth, alignment: .top)
@@ -54,13 +46,11 @@ struct BannerStackView: View {
         )
         .onPreferenceChange(ViewHeightKey.self) { height in
             guard vm.measuredBannerHeight != height else { return }
-            // 首帧瞬切（避免初值 92 → 实测值动画引入首帧抖动，回归 83a1c4e）；后续用 banner ease 平滑过渡。
-            if hasMeasured {
-                withAnimation(AnimationTokens.banner) { vm.measuredBannerHeight = height }
-            } else {
-                hasMeasured = true
-                vm.measuredBannerHeight = height
-            }
+            // 与窗口 frame 共用 banner ease，避免内容高度与窗口尺寸不同步导致裁切或跳动。
+            withAnimation(vm.bannerAnimation) { vm.measuredBannerHeight = height }
         }
+        // unseenItems 数量变化时（新增/移除横幅）自动套用 banner 动画，
+        // 因为 markSeen/markAllSeen 等操作不在 withAnimation 事务内。
+        .animation(vm.bannerAnimation, value: manager.unseenItems.count)
     }
 }

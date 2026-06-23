@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Foundation
 import SwiftUI
 
 class DynamicIslandViewController: NSViewController {
@@ -47,25 +48,20 @@ class DynamicIslandViewController: NSViewController {
         }
         .store(in: &cancellables)
 
-        // 进入面板 → 视为已看，清空横幅
+        // 通知被移除（timeout/action/dismiss/clear）→ 清理对应的 banner 定时器
+        eventBus.subscribe(for: .notificationDismissed) { [weak self] event in
+            guard let self, case .notificationDismissed(let id, _) = event else { return }
+            self.bannerTimers.removeValue(forKey: id)?.cancel()
+        }
+        .store(in: &cancellables)
+
+        // 进入面板 → 视为已看，清空横幅（面板保持打开）
         vm.$status
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in
-                guard let self else { return }
-                if status == .panel { self.clearAllBanners() }
-            }
-            .store(in: &cancellables)
-
-        vm.$bannerIDs
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] ids in
-                guard let self else { return }
-                let active = Set(ids)
-                for id in self.bannerTimers.keys where !active.contains(id) {
-                    self.bannerTimers.removeValue(forKey: id)?.cancel()
-                }
+                guard let self, status == .panel else { return }
+                self.markAllBannersSeen()
             }
             .store(in: &cancellables)
     }
@@ -74,12 +70,11 @@ class DynamicIslandViewController: NSViewController {
 
     private func handleNewNotification(event: NotificationEvent) {
         guard case .notificationAdded(let record) = event else { return }
-        vm.pushBanner(id: record.id)
         vm.showBannerStack()
+        // 有操作按钮的横幅不自动消失
         if record.actions.isEmpty {
             scheduleBannerDismiss(for: record.id, after: vm.uiSettings.autoCloseSeconds)
         }
-        // 有操作按钮的横幅不自动消失
     }
 
     // MARK: - Banner Dismiss
@@ -87,16 +82,18 @@ class DynamicIslandViewController: NSViewController {
     private func scheduleBannerDismiss(for id: UUID, after delay: TimeInterval) {
         bannerTimers.removeValue(forKey: id)?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.vm.removeBanner(id: id)
+            guard let self else { return }
+            self.manager.markSeen(id: id)
+            if self.manager.unseenItems.isEmpty { self.vm.hide() }
         }
         bannerTimers[id] = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    private func clearAllBanners() {
+    private func markAllBannersSeen() {
         bannerTimers.values.forEach { $0.cancel() }
         bannerTimers.removeAll()
-        vm.clearBanners()
+        manager.markAllSeen()
     }
 }
 

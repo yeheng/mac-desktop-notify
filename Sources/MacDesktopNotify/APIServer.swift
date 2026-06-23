@@ -71,10 +71,8 @@ final class APIServer {
                     return self.badRequest(error.rawValue)
                 }
 
+                // callback 字段校验已下沉到解码器：坏 URL / 空命令等会抛 CallbackValidationError
                 let item = NotificationRecord(request: payload)
-                if let validationError = item.validationError {
-                    return self.badRequest(validationError)
-                }
                 if payload.shouldWaitForAction, item.actions.isEmpty {
                     return self.badRequest("waitForAction requires at least one action")
                 }
@@ -107,6 +105,8 @@ final class APIServer {
                     notification: item,
                     result: nil
                 ))
+            } catch let err as CallbackValidationError {
+                return self.badRequest(err.description)
             } catch {
                 return self.badRequest("Invalid JSON: \(error.localizedDescription)")
             }
@@ -156,13 +156,11 @@ final class APIServer {
             }
 
             let item = NotificationRecord(request: payload)
-            if let validationError = item.validationError {
-                session.writeText("{\"event\":\"error\",\"message\":\"\(validationError)\"}")
-                return
-            }
             addNotification(item)
             broadcast(item: item)
             session.writeText("{\"event\":\"received\",\"id\":\"\(item.id.uuidString)\"}")
+        } catch let err as CallbackValidationError {
+            session.writeText("{\"event\":\"error\",\"message\":\"\(err.description)\"}")
         } catch {
             session.writeText("{\"event\":\"error\",\"message\":\"Invalid JSON payload\"}")
         }

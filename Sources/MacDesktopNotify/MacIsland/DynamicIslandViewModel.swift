@@ -188,6 +188,9 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     /// 注：interactiveSpring 用于离散状态切换会过冲且 blendDuration 无效，故改用 spring。
     var animation: Animation? { reduceMotion ? nil : AnimationTokens.standard }
 
+    /// 横幅出现/消失/增删的动画。reduceMotion 时返回 nil（禁用动画，瞬切）。
+    var bannerAnimation: Animation? { reduceMotion ? nil : AnimationTokens.banner }
+
     /// 共享时间发布者，所有 MessageCard 共用单个 Timer，避免每张卡片创建独立 Timer
     let sharedTimePublisher = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -204,7 +207,6 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
 
     @Published private(set) var status: Status = .idle
     @Published var contentType: ContentType = .normal
-    @Published var bannerIDs: [UUID] = []           // 最新在前
     @Published var measuredBannerHeight: CGFloat = DynamicIslandLayout.bannerCardHeight
 
     var bellRect: CGRect = .zero
@@ -261,12 +263,12 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         }
     }
     func showBannerStack() {
-        withAnimation(AnimationTokens.banner) { status = .bannerStack }
+        withAnimation(bannerAnimation) { status = .bannerStack }
     }
     func hide() {
         // measuredBannerHeight 的重置移至 WindowController 真正 orderOut 之后，
         // 避免与收起动画竞争（status 已 idle，contentSize 走 .zero 分支）。
-        withAnimation(AnimationTokens.banner) { status = .idle }
+        withAnimation(bannerAnimation) { status = .idle }
     }
     func togglePanel() {
         status == .panel ? hide() : showPanel()
@@ -279,26 +281,6 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         }
     }
     func showNotificationCenter() { contentType = .normal }
-
-    // MARK: - 横幅队列
-    func pushBanner(id: UUID) {
-        withAnimation(AnimationTokens.banner) {
-            bannerIDs.removeAll { $0 == id }
-            bannerIDs.insert(id, at: 0)   // 最新在前
-        }
-    }
-    func removeBanner(id: UUID) {
-        withAnimation(AnimationTokens.banner) {
-            bannerIDs.removeAll { $0 == id }
-        }
-        if bannerIDs.isEmpty { hide() }   // 移到 withAnimation 块外，避免与 hide 的事务嵌套
-    }
-    func clearBanners() {
-        withAnimation(AnimationTokens.banner) {
-            bannerIDs.removeAll()
-        }
-        measuredBannerHeight = DynamicIslandLayout.bannerCardHeight
-    }
 
     func resetUISettings() {
         uiSettings = .default

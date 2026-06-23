@@ -79,53 +79,9 @@ enum NotificationActionStyle: String, Codable, Equatable {
     case destructive
 }
 
-// MARK: - Callback Types
-
-enum NotificationActionCallbackType: String, Codable, Equatable, CaseIterable {
-    case webhook
-    case command
-    case urlScheme
-    case file
-    case appleScript
-}
-
-/// 文件操作类型
-enum FileAction: String, Codable, Equatable {
-    case open
-    case revealInFinder
-}
-
-struct NotificationActionCallback: Codable, Equatable {
-    let type: NotificationActionCallbackType
-
-    // Webhook
-    let url: String?
-    let method: String?
-    let headers: [String: String]?
-    let body: String?
-
-    // Command
-    let command: String?
-    let arguments: [String]?
-    let shell: Bool?
-
-    // URL Scheme
-    let urlScheme: String?
-
-    // File
-    let filePath: String?
-    let fileAction: FileAction?
-
-    // AppleScript
-    let appleScript: String?
-    let appleScriptFile: String?
-
-    // Shared
-    let timeout: TimeInterval?
-    let environment: [String: String]?
-}
-
 // MARK: - Action Models
+// NotificationActionCallback / NotificationActionCallbackType / FileAction 已移至
+// Sources/MacDesktopNotify/Callbacks/NotificationActionCallback.swift（tagged union，校验下沉到解码器）
 
 struct NotificationAction: Identifiable, Codable, Equatable {
     let id: String
@@ -199,44 +155,6 @@ struct NotificationRecord: Identifiable, Codable, Equatable {
         )
     }
 
-    var validationError: String? {
-        for action in actions {
-            guard let callback = action.callback else { continue }
-            switch callback.type {
-            case .webhook:
-                guard let rawURL = callback.url?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      let url = URL(string: rawURL),
-                      ["http", "https"].contains(url.scheme?.lowercased() ?? "")
-                else {
-                    return "Action '\(action.id)' has an invalid webhook URL"
-                }
-            case .command:
-                guard callback.command?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-                    return "Action '\(action.id)' has an empty command"
-                }
-            case .urlScheme:
-                guard let scheme = callback.urlScheme?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !scheme.isEmpty
-                else {
-                    return "Action '\(action.id)' has an empty URL scheme"
-                }
-            case .file:
-                guard let path = callback.filePath?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !path.isEmpty
-                else {
-                    return "Action '\(action.id)' has an empty file path"
-                }
-            case .appleScript:
-                let hasInline = callback.appleScript?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                let hasFile = callback.appleScriptFile?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                guard hasInline || hasFile else {
-                    return "Action '\(action.id)' must specify appleScript or appleScriptFile"
-                }
-            }
-        }
-        return nil
-    }
-
     private static func normalizedActions(from requests: [NotificationActionRequest]) -> [NotificationAction] {
         var seen = Set<String>()
 
@@ -300,8 +218,15 @@ final class NotifyManager {
     let eventBus: NotificationEventBus
 
     private(set) var items: [NotificationRecord] = []
+    /// 已看通知的 id 集合。横幅列表由 `unseenItems` 派生，不再单独维护 bannerIDs。
+    private(set) var seenIDs: Set<UUID> = []
     var isLocked = false
     var serviceState: APIServiceState = .stopped
+
+    /// 未看通知（最新在前）—— 横幅堆叠的数据源，从 `items` 派生，不独立存储。
+    var unseenItems: [NotificationRecord] {
+        items.filter { !seenIDs.contains($0.id) }
+    }
 
     init(eventBus: NotificationEventBus) {
         self.eventBus = eventBus
@@ -310,11 +235,9 @@ final class NotifyManager {
     // MARK: - Mutation Methods
 
     func add(_ item: NotificationRecord) {
-        withAnimation(AnimationTokens.cardInsert) {
-            items.insert(item, at: 0)
-            if items.count > maxItems {
-                items.removeLast(items.count - maxItems)
-            }
+        items.insert(item, at: 0)
+        if items.count > maxItems {
+            items.removeLast(items.count - maxItems)
         }
         eventBus.publish(.notificationAdded(item))
 
@@ -339,10 +262,9 @@ final class NotifyManager {
         guard hadItem else { return }
 
         timeoutTasks.removeValue(forKey: id)?.cancel()
+        seenIDs.remove(id)
 
-        withAnimation(AnimationTokens.cardRemove) {
-            items.removeAll { $0.id == id }
-        }
+        items.removeAll { $0.id == id }
 
         if reason != .actionSelected {
             eventBus.publish(.notificationDismissed(id: id, reason: reason))
@@ -356,9 +278,9 @@ final class NotifyManager {
         let removedIDs = items.map(\.id)
         guard !removedIDs.isEmpty else { return }
 
-        withAnimation(AnimationTokens.cardInsert) {
-            items.removeAll()
-        }
+        seenIDs.removeAll()
+
+        items.removeAll()
         removedIDs.forEach { eventBus.publish(.notificationDismissed(id: $0, reason: .cleared)) }
     }
 
@@ -389,6 +311,19 @@ final class NotifyManager {
     func updateServiceState(_ state: APIServiceState) {
         serviceState = state
         eventBus.publish(.serviceStateChanged(state))
+    }
+
+    // MARK: - Seen State
+
+    /// 标记单条通知为已看（从横幅移除，但保留在主列表）。
+    func markSeen(id: UUID) {
+        guard items.contains(where: { $0.id == id }) else { return }
+        seenIDs.insert(id)
+    }
+
+    /// 标记所有通知为已看（进入面板时调用）。
+    func markAllSeen() {
+        seenIDs.formUnion(items.map(\.id))
     }
 
     func snapshot() -> [NotificationRecord] {

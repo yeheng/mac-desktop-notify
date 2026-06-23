@@ -1,32 +1,27 @@
 import Foundation
 
-/// Webhook 回调执行器 — 发送 HTTP 请求
+/// Webhook 回调执行器 — 发送 HTTP 请求。
+/// URL 已在解码阶段校验为合法 http/https，无需重复 guard。
 struct WebhookExecutor: CallbackExecutor {
     func execute(
-        _ callback: NotificationActionCallback,
+        _ payload: NotificationActionCallback.Webhook,
         context: NotificationActionEvent
     ) async -> CallbackResult {
         let start = Date()
 
-        guard let rawURL = callback.url?.trimmingCharacters(in: .whitespacesAndNewlines),
-              let url = URL(string: rawURL)
-        else {
-            return .failed(error: "Invalid webhook URL", duration: 0)
-        }
+        var request = URLRequest(url: payload.url)
+        request.httpMethod = payload.method?.isEmpty == false ? payload.method : "POST"
+        request.timeoutInterval = payload.timeout ?? 15
 
-        var request = URLRequest(url: url)
-        request.httpMethod = callback.method?.isEmpty == false ? callback.method : "POST"
-        request.timeoutInterval = callback.timeout ?? 15
-
-        callback.headers?.forEach { key, value in
+        payload.headers?.forEach { key, value in
             request.setValue(value, forHTTPHeaderField: key)
         }
 
-        if let body = callback.body {
+        if let body = payload.body {
             request.httpBody = Data(body.utf8)
-            setDefaultContentType("text/plain; charset=utf-8", on: &request, headers: callback.headers)
+            setDefaultContentType("text/plain; charset=utf-8", on: &request, headers: payload.headers)
         } else {
-            let payload = ActionCallbackPayload(
+            let defaultBody = ActionCallbackPayload(
                 event: "action",
                 notificationId: context.notification.id,
                 notificationTitle: context.notification.title,
@@ -38,8 +33,8 @@ struct WebhookExecutor: CallbackExecutor {
             )
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
-            request.httpBody = try? encoder.encode(payload)
-            setDefaultContentType("application/json", on: &request, headers: callback.headers)
+            request.httpBody = try? encoder.encode(defaultBody)
+            setDefaultContentType("application/json", on: &request, headers: payload.headers)
         }
 
         do {
@@ -68,7 +63,7 @@ struct WebhookExecutor: CallbackExecutor {
     }
 }
 
-/// Webhook 请求体
+/// Webhook 请求体（无 body 时默认发送的结构化 payload）
 private struct ActionCallbackPayload: Encodable {
     let event: String
     let notificationId: UUID
