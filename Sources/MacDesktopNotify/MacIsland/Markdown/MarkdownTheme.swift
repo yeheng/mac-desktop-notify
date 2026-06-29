@@ -6,7 +6,7 @@ import SwiftUI
 extension Theme {
     static let dynamicIsland = Theme()
         .text {
-            ForegroundColor(.white.opacity(0.82))
+            ForegroundColor(.white.opacity(0.88))
             FontSize(12)
         }
         .code {
