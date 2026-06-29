@@ -12,7 +12,7 @@ struct UISettingsState: Codable, Equatable {
     var panelCornerRadius: Double = 32
     var listSpacing: Double = 8
     var cardPadding: Double = 10
-    var cardCornerRadius: Double = 8
+    var cardCornerRadius: Double = 10
     var autoCloseSeconds: Double = 4
     var showMessageIcons: Bool = true
     var showTimestamps: Bool = true
@@ -42,7 +42,7 @@ struct UISettingsState: Codable, Equatable {
         panelCornerRadius = try values.decodeIfPresent(Double.self, forKey: .panelCornerRadius) ?? 32
         listSpacing = try values.decodeIfPresent(Double.self, forKey: .listSpacing) ?? 8
         cardPadding = try values.decodeIfPresent(Double.self, forKey: .cardPadding) ?? 10
-        cardCornerRadius = try values.decodeIfPresent(Double.self, forKey: .cardCornerRadius) ?? 8
+        cardCornerRadius = try values.decodeIfPresent(Double.self, forKey: .cardCornerRadius) ?? 10
         autoCloseSeconds = try values.decodeIfPresent(Double.self, forKey: .autoCloseSeconds) ?? 4
         showMessageIcons = try values.decodeIfPresent(Bool.self, forKey: .showMessageIcons) ?? true
         showTimestamps = try values.decodeIfPresent(Bool.self, forKey: .showTimestamps) ?? true
