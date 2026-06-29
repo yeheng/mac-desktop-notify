@@ -11,7 +11,7 @@ struct DynamicIslandHeaderView: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 12, weight: .bold))
                         .frame(width: 28, height: 28)
-                        .background(.white.opacity(0.08))
+                        .background(IslandTheme.Colors.buttonFill)
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -27,10 +27,10 @@ struct DynamicIslandHeaderView: View {
                 if manager.items.count > 0 {
                     Text("\(manager.items.count)")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.68))
+                        .foregroundStyle(IslandTheme.Colors.primaryText.opacity(0.8))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(.white.opacity(0.1))
+                        .background(IslandTheme.Colors.buttonActive)
                         .clipShape(Capsule())
                         .accessibilityLabel("\(manager.items.count) 条消息")
                 }
@@ -42,14 +42,14 @@ struct DynamicIslandHeaderView: View {
                 Button(action: { manager.toggleLock() }) {
                     Image(systemName: manager.isLocked ? "pin.fill" : "pin")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(manager.isLocked ? .white : .white.opacity(0.55))
+                        .foregroundStyle(manager.isLocked ? .white : IslandTheme.Colors.secondaryText)
                         .frame(width: 28, height: 28)
                         .background(
                             Circle()
-                                .fill(.white.opacity(manager.isLocked ? 0.18 : 0.08))
+                                .fill(manager.isLocked ? IslandTheme.Colors.buttonActive : IslandTheme.Colors.buttonFill)
                                 .overlay(
                                     Circle()
-                                        .stroke(.white.opacity(manager.isLocked ? 0.25 : 0.1), lineWidth: 1)
+                                        .stroke(IslandTheme.Colors.cardBorder, lineWidth: 1)
                                 )
                         )
                 }
@@ -78,9 +78,9 @@ struct DynamicIslandHeaderView: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.68))
+                    .foregroundStyle(IslandTheme.Colors.primaryText.opacity(0.8))
                     .frame(width: 28, height: 28)
-                    .background(.white.opacity(0.08))
+                    .background(IslandTheme.Colors.buttonFill)
                     .clipShape(Circle())
             }
             .menuStyle(.borderlessButton)
