@@ -1,36 +1,6 @@
 import MarkdownUI
 import SwiftUI
 
-// MARK: - Design Tokens
-
-private enum Theme {
-    enum Colors {
-        static let primaryText = Color.white.opacity(0.82)
-        static let secondaryText = Color.white.opacity(0.56)
-        static let tertiaryText = Color.white.opacity(0.42)
-        static let faintIcon = Color.white.opacity(0.32)
-        static let labelText = Color.white.opacity(0.62)
-        static let valueText = Color.white.opacity(0.66)
-        static let cardFill = Color.white.opacity(0.05)
-        static let cardFillHover = Color.white.opacity(0.09)
-        static let cardBorder = Color.white.opacity(0.06)
-        static let buttonFill = Color.white.opacity(0.08)
-        static let buttonFillActive = Color.white.opacity(0.14)
-        static let progressTrack = Color.white.opacity(0.06)
-    }
-
-    enum Fonts {
-        static let cardTitle = Font.system(size: 13, weight: .bold)
-        static let cardBody = Font.system(size: 12)
-        static let timestamp = Font.system(size: 10)
-        static let sectionTitle = Font.system(size: 11, weight: .bold)
-        static let rowTitle = Font.system(size: 12, weight: .medium)
-        static let rowValue = Font.system(size: 11, weight: .semibold, design: .monospaced)
-        static let endpointLabel = Font.system(size: 11, weight: .semibold)
-        static let endpointValue = Font.system(size: 11, design: .monospaced)
-    }
-}
-
 // MARK: - Content View
 
 struct DynamicIslandContentView: View {
@@ -77,13 +47,13 @@ struct DynamicIslandContentView: View {
         VStack(spacing: 10) {
             Image(systemName: "bell.slash.fill")
                 .font(.system(size: 32))
-                .foregroundStyle(Theme.Colors.faintIcon)
+                .foregroundStyle(IslandTheme.Colors.faintIcon)
             Text("暂无消息")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Theme.Colors.secondaryText)
+                .foregroundStyle(IslandTheme.Colors.secondaryText)
             Text("POST \(AppConfig.notifyEndpoint)")
                 .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(Theme.Colors.tertiaryText)
+                .foregroundStyle(IslandTheme.Colors.tertiaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -180,7 +150,7 @@ struct DynamicIslandContentView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
-                        .background(Theme.Colors.buttonFill)
+                        .background(IslandTheme.Colors.buttonFill)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
