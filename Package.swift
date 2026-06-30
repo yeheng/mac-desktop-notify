@@ -12,12 +12,23 @@ let package = Package(
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.3.0")
     ],
     targets: [
+        .target(
+            name: "IslandAnimationCore",
+            path: "Sources/IslandAnimationCore"
+        ),
+        .testTarget(
+            name: "IslandAnimationCoreTests",
+            dependencies: ["IslandAnimationCore"],
+            path: "Tests/IslandAnimationCoreTests"
+        ),
         .executableTarget(
             name: "MacDesktopNotify",
             dependencies: [
+                "IslandAnimationCore",
                 .product(name: "Swifter", package: "swifter"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui")
-            ]
+            ],
+            path: "Sources/MacDesktopNotify"
         )
     ]
 )
