@@ -94,6 +94,8 @@ struct DynamicIslandContentView: View {
                     )
                 }
 
+                IslandAnimationSettingsView(vm: vm)
+
                 SettingsSection(title: "消息卡片") {
                     SettingsSliderRow(
                         title: "列表间距",
