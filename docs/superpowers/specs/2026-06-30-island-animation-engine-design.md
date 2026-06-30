@@ -43,18 +43,23 @@ animator 每帧产出的几何快照,View 直接读它渲染:
 ```swift
 struct IslandFrame: Equatable {
     var size: CGSize              // 当前帧 notch 尺寸
-    var cornerRadius: CGFloat     // 底部/整体圆角
-    var topCornerRadius: CGFloat  // 顶部圆角(opened 时归 0 模拟从刘海撑开)
+    var cornerRadius: CGFloat     // 底部圆角
+    var topCornerRadius: CGFloat  // 顶部圆角(opened 终态=全圆角;closed/popping 终态=0,从刘海顶部平直撑开)
     var offsetY: CGFloat          // 内容相对顶部偏移(撑开时下沉感)
     var contentOpacity: Double    // 内容淡入(尺寸到位后再淡入)
     var shadowRadius: CGFloat     // 影子半径随状态变化
 
-    // 三个终态的便捷构造
-    static func closed(_ deviceNotchRect: CGRect) -> IslandFrame
+    // 三个终态的便捷构造(与现有 DynamicIslandView 圆角规则一致):
+    //   closed:  size=deviceNotchRect 缩进, top=0, bottom=8, opacity=0, shadow=0
+    //   opened:  top=bottom=panelCornerRadius(全圆角), opacity=1, shadow=16
+    //   popping: top=0, bottom=22, opacity=1, shadow=8
+    static func closed(_ deviceNotchRect: CGRect, inset: CGFloat) -> IslandFrame
     static func opened(size: CGSize, cornerRadius: CGFloat) -> IslandFrame
     static func popping(size: CGSize) -> IslandFrame
 }
 ```
+
+> 注: closed→opened 转换时, `topCornerRadius` 从 0 连续插值到 `panelCornerRadius`,这正是"连续圆角"的核心 —— 顶部圆角不再随状态跳变,而是每帧连续变化。
 
 ### EasingCurve
 
@@ -214,6 +219,15 @@ class DynamicIslandViewModel {
 ```
 
 `uiSettings.animations` 变化 → 下次 transition 自动用新 profile,无需重启。
+
+### displayedStatus(渲染态,滞后于 status)
+
+`status` 在 transition 起点立即翻转到目标态(驱动事件命中测试与终态尺寸),但内容视图若也立即切换,收起时内容会瞬间消失而非淡出。引入 `displayedStatus`:
+
+- 展开类转换(to.contentOpacity > from.contentOpacity,如 closed→opened):`displayedStatus` 立即设为目标态,内容随 contentOpacity 0→1 淡入。
+- 收起类转换(to.contentOpacity < from.contentOpacity,如 opened→closed):`displayedStatus` 保持源态,内容随 contentOpacity 1→0 淡出;动画完成时 `displayedStatus = status`。
+
+View 的内容分支读 `vm.displayedStatus`,事件/命中测试/终态尺寸读 `vm.status`。
 
 ## View 层改造
 
