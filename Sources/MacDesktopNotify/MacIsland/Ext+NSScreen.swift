@@ -1,8 +1,12 @@
 import Cocoa
 
 extension NSScreen {
+    var hasNotch: Bool {
+        safeAreaInsets.top > 0 && auxiliaryTopLeftArea != nil && auxiliaryTopRightArea != nil
+    }
+
     var notchSize: CGSize {
-        guard safeAreaInsets.top > 0 else { return .zero }
+        guard hasNotch else { return .zero }
         let notchHeight = safeAreaInsets.top
         let fullWidth = frame.width
         let leftPadding = auxiliaryTopLeftArea?.width ?? 0

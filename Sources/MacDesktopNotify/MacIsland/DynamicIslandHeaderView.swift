@@ -5,12 +5,12 @@ struct DynamicIslandHeaderView: View {
     @Environment(NotifyManager.self) var manager
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             if vm.contentType == .settings {
                 Button(action: { vm.showNotificationCenter() }) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .bold))
-                        .frame(width: 28, height: 28)
+                        .font(.system(size: 11, weight: .bold))
+                        .frame(width: 26, height: 26)
                         .background(IslandTheme.Colors.buttonFill)
                         .clipShape(Circle())
                 }
@@ -19,17 +19,17 @@ struct DynamicIslandHeaderView: View {
                 .accessibilityLabel("返回消息中心")
 
                 Label("设置", systemImage: "gearshape.fill")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(IslandTheme.Fonts.headerTitle)
             } else {
                 Label("消息中心", systemImage: "bell.badge.fill")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(IslandTheme.Fonts.headerTitle)
 
                 if manager.items.count > 0 {
                     Text("\(manager.items.count)")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(IslandTheme.Colors.primaryText.opacity(0.8))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
                         .background(IslandTheme.Colors.buttonActive)
                         .clipShape(Capsule())
                         .accessibilityLabel("\(manager.items.count) 条消息")
@@ -41,9 +41,9 @@ struct DynamicIslandHeaderView: View {
             if vm.contentType != .settings {
                 Button(action: { manager.toggleLock() }) {
                     Image(systemName: manager.isLocked ? "pin.fill" : "pin")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(manager.isLocked ? .white : IslandTheme.Colors.secondaryText)
-                        .frame(width: 28, height: 28)
+                        .frame(width: 26, height: 26)
                         .background(
                             Circle()
                                 .fill(manager.isLocked ? IslandTheme.Colors.buttonActive : IslandTheme.Colors.buttonFill)
@@ -77,9 +77,9 @@ struct DynamicIslandHeaderView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(IslandTheme.Colors.primaryText.opacity(0.8))
-                    .frame(width: 28, height: 28)
+                    .frame(width: 26, height: 26)
                     .background(IslandTheme.Colors.buttonFill)
                     .clipShape(Circle())
             }
@@ -88,6 +88,7 @@ struct DynamicIslandHeaderView: View {
             .help("更多操作")
             .accessibilityLabel("更多操作")
         }
+        .frame(height: IslandTheme.Metrics.headerHeight)
         .animation(vm.animation, value: vm.contentType)
         .foregroundStyle(.white)
     }

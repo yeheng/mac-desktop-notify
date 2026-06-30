@@ -24,18 +24,35 @@ public struct IslandFrame: Equatable {
         self.shadowRadius = shadowRadius
     }
 
-    /// closed 终态:deviceNotchRect 缩 inset(负数收缩),top=0(平直贴合刘海顶部),bottom=8
+    /// closed 终态:deviceNotchRect 缩 inset(负数收缩),top=0(平直贴合刘海顶部),bottom=12
     /// 注:inset 是总收缩量(与现有 DynamicIslandView.notchSize 的 `width - 4` 行为一致,
     /// inset=-4 → width-4),而非每侧收缩。
-    public static func closed(deviceNotchRect: CGRect, inset: CGFloat) -> IslandFrame {
-        let w = max(0, deviceNotchRect.width + inset)
-        let h = max(0, deviceNotchRect.height + inset)
+    public static func closed(deviceNotchRect: CGRect,
+                              widthInset: CGFloat,
+                              heightInset: CGFloat) -> IslandFrame {
+        let w = max(0, deviceNotchRect.width + widthInset)
+        let h = max(0, deviceNotchRect.height + heightInset)
         return .init(size: .init(width: w, height: h),
-                     cornerRadius: 8,
+                     cornerRadius: 12,
                      topCornerRadius: 0,
                      offsetY: 0,
                      contentOpacity: 0,
                      shadowRadius: 0)
+    }
+
+    /// 兼容旧版单 inset API（宽度/高度使用相同收缩量）。
+    public static func closed(deviceNotchRect: CGRect, inset: CGFloat) -> IslandFrame {
+        closed(deviceNotchRect: deviceNotchRect, widthInset: inset, heightInset: inset)
+    }
+
+    /// compact 终态:无刘海设备上的悬浮胶囊,上下均有圆角
+    public static func compact(size: CGSize) -> IslandFrame {
+        .init(size: size,
+              cornerRadius: 12,
+              topCornerRadius: 12,
+              offsetY: 0,
+              contentOpacity: 0,
+              shadowRadius: 0)
     }
 
     /// opened 终态:顶部底部都=panelCornerRadius(全圆角),内容全显,影 16
@@ -48,10 +65,10 @@ public struct IslandFrame: Equatable {
               shadowRadius: 16)
     }
 
-    /// popping 终态:顶部=0(融入刘海),底部=22,内容全显,影 8
-    public static func popping(size: CGSize) -> IslandFrame {
+    /// popping 终态:顶部=0(融入刘海),底部大圆角,内容全显,影 8
+    public static func popping(size: CGSize, cornerRadius: CGFloat = 22) -> IslandFrame {
         .init(size: size,
-              cornerRadius: 22,
+              cornerRadius: cornerRadius,
               topCornerRadius: 0,
               offsetY: 0,
               contentOpacity: 1,

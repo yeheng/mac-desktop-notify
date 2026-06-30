@@ -19,9 +19,7 @@ class DynamicIslandWindowController: NSWindowController {
         self.eventBus = eventBus
         super.init(window: window)
 
-        var notchSize = screen.notchSize
-
-        let vm = DynamicIslandViewModel(inset: notchSize == .zero ? 0 : -4)
+        let vm = DynamicIslandViewModel()
         self.vm = vm
         contentViewController = DynamicIslandViewController(
             vm: vm,
@@ -29,19 +27,32 @@ class DynamicIslandWindowController: NSWindowController {
             eventBus: eventBus
         )
 
-        if notchSize == .zero {
-            notchSize = .init(width: 150, height: 28)
-        }
-        vm.deviceNotchRect = CGRect(
-            x: screen.frame.origin.x + (screen.frame.width - notchSize.width) / 2,
-            y: screen.frame.origin.y + screen.frame.height - notchSize.height,
-            width: notchSize.width,
-            height: notchSize.height
-        )
         vm.screenRect = screen.frame
+        configureNotchOrFloatingCapsule(for: screen)
         updateWindowFrame(animated: false)
         setupWindowFrameUpdates()
         window.orderFrontRegardless()
+    }
+
+    /// 根据屏幕是否有刘海配置 deviceNotchRect 与 floating capsule 模式。
+    private func configureNotchOrFloatingCapsule(for screen: NSScreen) {
+        let notchSize = screen.notchSize
+        let hasNotch = notchSize != .zero
+        let vm = self.vm!
+
+        vm.isFloatingCapsule = !hasNotch && vm.uiSettings.floatingCapsuleEnabled
+
+        if vm.isFloatingCapsule {
+            vm.updateDeviceNotchRectForFloatingCapsule()
+        } else {
+            let size = hasNotch ? notchSize : CGSize(width: 150, height: 28)
+            vm.deviceNotchRect = CGRect(
+                x: screen.frame.origin.x + (screen.frame.width - size.width) / 2,
+                y: screen.frame.origin.y + screen.frame.height - size.height,
+                width: size.width,
+                height: size.height
+            )
+        }
     }
 
     @available(*, unavailable)
@@ -86,7 +97,9 @@ class DynamicIslandWindowController: NSWindowController {
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.updateWindowFrame(animated: true)
+                guard let self, let screen = self.screen else { return }
+                self.configureNotchOrFloatingCapsule(for: screen)
+                self.updateWindowFrame(animated: true)
             }
             .store(in: &cancellables)
     }

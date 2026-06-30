@@ -6,6 +6,7 @@ import SwiftUI
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var mainWindowController: DynamicIslandWindowController?
     var apiServer: APIServer?
+    var localNotifyServer: LocalNotifyServer?
     var statusItem: NSStatusItem?
     private let statusMenu = NSMenu()
     private var cancellables: Set<AnyCancellable> = []
@@ -95,6 +96,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             print("Failed to start API server: \(message)")
         }
 
+        // 启动本地 Unix socket 桥
+        let localServer = LocalNotifyServer(manager: manager)
+        localNotifyServer = localServer
+        do {
+            try localServer.start()
+        } catch {
+            print("Failed to start local notify server: \(error)")
+        }
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(rebuildWindow),
@@ -105,7 +115,39 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         apiServer?.stop()
+        localNotifyServer?.stop()
         EventMonitors.shared.stop()
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            handleURL(url)
+        }
+    }
+
+    private func handleURL(_ url: URL) {
+        guard url.scheme?.lowercased() == "macdesktopnotify" else { return }
+        guard url.host()?.lowercased() == "notify" else { return }
+
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let query = components?.queryItems?.reduce(into: [String: String]()) { result, item in
+            result[item.name] = item.value
+        } ?? [:]
+
+        guard let title = query["title"], !title.isEmpty else { return }
+        let body = query["body"] ?? ""
+        let type = NotifyType(rawValue: query["type"] ?? "info") ?? .info
+        let timeout = TimeInterval(query["timeout"] ?? "") ?? 8
+
+        let record = NotificationRecord(
+            title: title,
+            body: body,
+            type: type,
+            timeout: timeout
+        )
+        manager.add(record)
+
+        mainWindowController?.vm?.notchPop(.notification)
     }
 
     @objc func rebuildWindow() {

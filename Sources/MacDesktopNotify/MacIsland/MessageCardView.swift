@@ -13,7 +13,7 @@ struct MessageCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: IslandTheme.Metrics.cardInternalSpacing) {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
                 if vm.uiSettings.showMessageIcons {
                     iconBadge
                 }
@@ -66,7 +66,7 @@ struct MessageCard: View {
             RoundedRectangle(cornerRadius: IslandTheme.Metrics.badgeCornerRadius)
                 .fill(item.type.iconBackgroundColor)
             Image(systemName: item.icon ?? item.type.systemImageName)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(item.type.iconColor)
         }
         .frame(width: IslandTheme.Metrics.badgeSize, height: IslandTheme.Metrics.badgeSize)
@@ -75,7 +75,7 @@ struct MessageCard: View {
     // MARK: - 标题行（标题 + 状态点 + 时间 + 展开 + 关闭）
 
     private var titleRow: some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: 5) {
             Text(item.title)
                 .font(IslandTheme.Fonts.cardTitle)
                 .foregroundStyle(.white)
@@ -85,9 +85,9 @@ struct MessageCard: View {
             Circle()
                 .fill(item.type.iconColor)
                 .frame(width: IslandTheme.Metrics.statusDotSize, height: IslandTheme.Metrics.statusDotSize)
-                .padding(.top, 5)
+                .padding(.top, 4)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
 
             if vm.uiSettings.showTimestamps {
                 Text(timeString(from: item.createdAt, relativeTo: now))
@@ -107,7 +107,7 @@ struct MessageCard: View {
     private var expandButton: some View {
         Button(action: toggleExpanded) {
             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 8, weight: .bold))
                 .foregroundStyle(IslandTheme.Colors.labelText)
                 .frame(width: IslandTheme.Metrics.iconButtonSize, height: IslandTheme.Metrics.iconButtonSize)
                 .background(IslandTheme.Colors.buttonFill)
@@ -121,7 +121,7 @@ struct MessageCard: View {
     private var closeButton: some View {
         Button(action: { manager.remove(id: item.id) }) {
             Image(systemName: "xmark")
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 8, weight: .bold))
                 .foregroundStyle(IslandTheme.Colors.secondaryText)
                 .frame(width: IslandTheme.Metrics.iconButtonSize, height: IslandTheme.Metrics.iconButtonSize)
                 .background(IslandTheme.Colors.buttonFill)
@@ -152,20 +152,20 @@ struct MessageCard: View {
 
     private var actionBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 ForEach(item.actions) { action in
                     Button(action: { trigger(action) }) {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 4) {
                             if let icon = actionIcon(action) {
                                 Image(systemName: icon)
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(.system(size: 9, weight: .semibold))
                             }
                             Text(action.title)
                                 .font(IslandTheme.Fonts.actionLabel)
                                 .lineLimit(1)
                         }
                         .foregroundStyle(actionForeground(action))
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, 8)
                         .frame(height: IslandTheme.Metrics.actionHeight)
                         .background(actionBackground(action))
                         .clipShape(Capsule())

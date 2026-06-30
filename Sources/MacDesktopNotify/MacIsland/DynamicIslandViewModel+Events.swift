@@ -10,6 +10,7 @@ extension DynamicIslandViewModel {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self else { return }
+                guard !isGestureActive else { return }
                 let mouseLocation: NSPoint = NSEvent.mouseLocation
                 switch status {
                 case .opened:
@@ -21,7 +22,7 @@ extension DynamicIslandViewModel {
                         notchClose()
                     }
                 case .closed, .popping:
-                    if hitTestRect.contains(mouseLocation) {
+                    if activeHitTestRect.contains(mouseLocation) {
                         notchOpen(.click)
                     }
                 }
@@ -43,7 +44,7 @@ extension DynamicIslandViewModel {
                 let mouseLocation: NSPoint = NSEvent.mouseLocation
                 let aboutToOpen = hitTestRect.contains(mouseLocation)
                 if status == .closed, aboutToOpen { notchPop() }
-                if status == .popping, !aboutToOpen { notchClose() }
+                if status == .popping, !aboutToOpen, popReason != .notification { notchClose() }
             }
             .store(in: &cancellables)
 

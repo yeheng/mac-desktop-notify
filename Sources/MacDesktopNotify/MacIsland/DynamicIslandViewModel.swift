@@ -7,16 +7,36 @@ import SwiftUI
 // UISettingsState — 手动实现 init(from:) 以支持向前兼容：
 // 新增字段时，旧版 UserDefaults 数据缺少该 key 不会导致解码失败
 struct UISettingsState: Codable, Equatable {
+    // 展开面板
     var panelMaxWidth: Double = 720
     var panelMaxHeight: Double = 340
     var panelSpacing: Double = 16
     var panelCornerRadius: Double = 32
+
+    // 列表与卡片
     var listSpacing: Double = 8
     var cardPadding: Double = 10
     var cardCornerRadius: Double = 10
+
+    // 行为
     var autoCloseSeconds: Double = 4
     var showMessageIcons: Bool = true
     var showTimestamps: Bool = true
+
+    // 灵动岛胶囊样式
+    var closedWidthInset: Double = -8
+    var closedHeightInset: Double = -6
+    var poppingWidth: Double = 360
+    var poppingHeight: Double = 72
+    var poppingCornerRadius: Double = 22
+    var shadowIntensity: Double = 1.0
+
+    // 无刘海 fallback
+    var floatingCapsuleEnabled: Bool = true
+    var floatingCapsuleTopOffset: Double = 10
+    var floatingCapsuleWidth: Double = 140
+    var floatingCapsuleHeight: Double = 36
+
     var animations: IslandAnimationSettings = .default
 
     static let `default` = UISettingsState()
@@ -32,6 +52,16 @@ struct UISettingsState: Codable, Equatable {
         case autoCloseSeconds
         case showMessageIcons
         case showTimestamps
+        case closedWidthInset
+        case closedHeightInset
+        case poppingWidth
+        case poppingHeight
+        case poppingCornerRadius
+        case shadowIntensity
+        case floatingCapsuleEnabled
+        case floatingCapsuleTopOffset
+        case floatingCapsuleWidth
+        case floatingCapsuleHeight
         case animations
     }
 
@@ -49,6 +79,16 @@ struct UISettingsState: Codable, Equatable {
         autoCloseSeconds = try values.decodeIfPresent(Double.self, forKey: .autoCloseSeconds) ?? 4
         showMessageIcons = try values.decodeIfPresent(Bool.self, forKey: .showMessageIcons) ?? true
         showTimestamps = try values.decodeIfPresent(Bool.self, forKey: .showTimestamps) ?? true
+        closedWidthInset = try values.decodeIfPresent(Double.self, forKey: .closedWidthInset) ?? -8
+        closedHeightInset = try values.decodeIfPresent(Double.self, forKey: .closedHeightInset) ?? -6
+        poppingWidth = try values.decodeIfPresent(Double.self, forKey: .poppingWidth) ?? 360
+        poppingHeight = try values.decodeIfPresent(Double.self, forKey: .poppingHeight) ?? 72
+        poppingCornerRadius = try values.decodeIfPresent(Double.self, forKey: .poppingCornerRadius) ?? 22
+        shadowIntensity = try values.decodeIfPresent(Double.self, forKey: .shadowIntensity) ?? 1.0
+        floatingCapsuleEnabled = try values.decodeIfPresent(Bool.self, forKey: .floatingCapsuleEnabled) ?? true
+        floatingCapsuleTopOffset = try values.decodeIfPresent(Double.self, forKey: .floatingCapsuleTopOffset) ?? 10
+        floatingCapsuleWidth = try values.decodeIfPresent(Double.self, forKey: .floatingCapsuleWidth) ?? 140
+        floatingCapsuleHeight = try values.decodeIfPresent(Double.self, forKey: .floatingCapsuleHeight) ?? 36
         animations = try values.decodeIfPresent(IslandAnimationSettings.self, forKey: .animations) ?? .default
     }
 }
@@ -94,10 +134,12 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     private static let uiSettingsStorageKey = "MacDesktopNotify.UISettings"
 
     var cancellables: Set<AnyCancellable> = []
-    let inset: CGFloat
 
-    init(inset: CGFloat = -4) {
-        self.inset = inset
+    /// 是否为无刘海/外接显示器下的悬浮胶囊模式。
+    /// 由 `DynamicIslandWindowController` 根据屏幕是否有刘海设置。
+    @Published var isFloatingCapsule: Bool = false
+
+    override init() {
         super.init()
         restoreUISettings()
         setupCancellables()
@@ -163,7 +205,10 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
 
     /// 弹出态（灵动岛单卡）尺寸：紧凑，顶部融入刘海、底部大圆角
     var notchPoppingSize: CGSize {
-        CGSize(width: 400, height: 88)
+        CGSize(
+            width: CGFloat(uiSettings.poppingWidth).clamped(to: 280...520),
+            height: CGFloat(uiSettings.poppingHeight).clamped(to: 56...120)
+        )
     }
 
     var notchPoppingRect: CGRect {
@@ -179,18 +224,23 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     var windowFrame: CGRect {
         guard screenRect.width > 0, screenRect.height > 0 else { return .zero }
 
+        let openedSize = notchOpenedSize
+        let floatingTopOffset = isFloatingCapsule
+            ? CGFloat(uiSettings.floatingCapsuleTopOffset).clamped(to: 0...80)
+            : 0
+
         let windowWidth = min(
             screenRect.width,
-            notchOpenedSize.width + DynamicIslandLayout.windowShadowPadding * 2
+            openedSize.width + DynamicIslandLayout.windowShadowPadding * 2
         )
         let windowHeight = min(
             screenRect.height,
-            notchOpenedSize.height + DynamicIslandLayout.windowShadowPadding
+            openedSize.height + DynamicIslandLayout.windowShadowPadding + floatingTopOffset
         )
 
         return CGRect(
             x: screenRect.midX - windowWidth / 2,
-            y: screenRect.maxY - windowHeight,
+            y: screenRect.maxY - windowHeight - floatingTopOffset,
             width: windowWidth,
             height: windowHeight
         )
@@ -204,7 +254,13 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
             }
         }
     }
-    var screenRect: CGRect = .zero
+
+    var screenRect: CGRect = .zero {
+        didSet {
+            guard screenRect != oldValue else { return }
+            updateDeviceNotchRectForFloatingCapsule()
+        }
+    }
 
     /// Expanded hit-test area for click/hover detection (min 200×44pt per HIG).
     var hitTestRect: CGRect {
@@ -239,6 +295,12 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     @Published var notchVisible: Bool = true
     @Published var closeLocked: Bool = false
 
+    /// 手势拖动产生的实时内容偏移（仅用于 popping 态水平滑动视觉反馈）。
+    @Published var dragOffset: CGSize = .zero
+
+    /// 是否正在执行手势，用于屏蔽 click-outside 自动关闭。
+    @Published var isGestureActive: Bool = false
+
     var spacing: CGFloat { DynamicIslandLayout.panelSpacing(uiSettings) }
 
     let hapticSender = PassthroughSubject<Void, Never>()
@@ -246,6 +308,24 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     private let animator = IslandSpringAnimator()
     @Published private(set) var frame: IslandFrame = .closed(deviceNotchRect: .zero, inset: 0)
     @Published private(set) var displayedStatus: Status = .closed
+
+    /// 闭合态收缩量：宽度/高度分别受用户设置控制。
+    private var closedWidthInset: CGFloat { CGFloat(uiSettings.closedWidthInset) }
+    private var closedHeightInset: CGFloat { CGFloat(uiSettings.closedHeightInset) }
+
+    /// 当 isFloatingCapsule 或 screenRect 变化时,重新计算 deviceNotchRect。
+    func updateDeviceNotchRectForFloatingCapsule() {
+        guard isFloatingCapsule, uiSettings.floatingCapsuleEnabled else { return }
+        let width = CGFloat(uiSettings.floatingCapsuleWidth).clamped(to: 100...240)
+        let height = CGFloat(uiSettings.floatingCapsuleHeight).clamped(to: 28...56)
+        let topOffset = CGFloat(uiSettings.floatingCapsuleTopOffset).clamped(to: 0...80)
+        deviceNotchRect = CGRect(
+            x: screenRect.midX - width / 2,
+            y: screenRect.maxY - height - topOffset,
+            width: width,
+            height: height
+        )
+    }
 
     func notchOpen(_ reason: OpenReason) {
         openReason = reason
@@ -301,12 +381,18 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     private func toTerminalFrame(_ s: Status) -> IslandFrame {
         switch s {
         case .closed:
-            return .closed(deviceNotchRect: deviceNotchRect, inset: inset)
+            if isFloatingCapsule {
+                return .compact(size: deviceNotchRect.size)
+            }
+            return .closed(deviceNotchRect: deviceNotchRect,
+                           widthInset: closedWidthInset,
+                           heightInset: closedHeightInset)
         case .opened:
             return .opened(size: notchOpenedSize,
                            cornerRadius: DynamicIslandLayout.panelCornerRadius(uiSettings, maxRadius: min(notchOpenedSize.width, notchOpenedSize.height) / 2))
         case .popping:
-            return .popping(size: notchPoppingSize)
+            return .popping(size: notchPoppingSize,
+                            cornerRadius: CGFloat(uiSettings.poppingCornerRadius).clamped(to: 12...40))
         }
     }
 
@@ -343,7 +429,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     }
 }
 
-private extension Comparable {
+extension Comparable {
     func clamped(to limits: ClosedRange<Self>) -> Self {
         min(max(self, limits.lowerBound), limits.upperBound)
     }

@@ -94,6 +94,76 @@ struct DynamicIslandContentView: View {
                     )
                 }
 
+                SettingsSection(title: "灵动岛样式") {
+                    SettingsSliderRow(
+                        title: "闭合宽度收缩",
+                        value: $vm.uiSettings.closedWidthInset,
+                        range: -20...0,
+                        step: 1,
+                        unit: "pt"
+                    )
+                    SettingsSliderRow(
+                        title: "闭合高度收缩",
+                        value: $vm.uiSettings.closedHeightInset,
+                        range: -16...0,
+                        step: 1,
+                        unit: "pt"
+                    )
+                    SettingsSliderRow(
+                        title: "弹出宽度",
+                        value: $vm.uiSettings.poppingWidth,
+                        range: 280...520,
+                        step: 10,
+                        unit: "pt"
+                    )
+                    SettingsSliderRow(
+                        title: "弹出高度",
+                        value: $vm.uiSettings.poppingHeight,
+                        range: 56...120,
+                        step: 4,
+                        unit: "pt"
+                    )
+                    SettingsSliderRow(
+                        title: "弹出圆角",
+                        value: $vm.uiSettings.poppingCornerRadius,
+                        range: 12...40,
+                        step: 1,
+                        unit: "pt"
+                    )
+                    SettingsSliderRow(
+                        title: "阴影强度",
+                        value: $vm.uiSettings.shadowIntensity,
+                        range: 0...2,
+                        step: 0.1,
+                        unit: "x"
+                    )
+                }
+
+                SettingsSection(title: "无刘海设备") {
+                    SettingsToggleRow(title: "启用悬浮胶囊", isOn: $vm.uiSettings.floatingCapsuleEnabled)
+                    SettingsSliderRow(
+                        title: "胶囊宽度",
+                        value: $vm.uiSettings.floatingCapsuleWidth,
+                        range: 100...240,
+                        step: 10,
+                        unit: "pt"
+                    )
+                    SettingsSliderRow(
+                        title: "胶囊高度",
+                        value: $vm.uiSettings.floatingCapsuleHeight,
+                        range: 28...56,
+                        step: 2,
+                        unit: "pt"
+                    )
+                    SettingsSliderRow(
+                        title: "顶部偏移",
+                        value: $vm.uiSettings.floatingCapsuleTopOffset,
+                        range: 0...80,
+                        step: 2,
+                        unit: "pt"
+                    )
+                }
+
                 IslandAnimationSettingsView(vm: vm)
 
                 SettingsSection(title: "消息卡片") {
@@ -145,6 +215,9 @@ struct DynamicIslandContentView: View {
                             value: "X-Mac-Desktop-Notify-Token"
                         )
                     }
+                    SettingsEndpointRow(title: "本地 Socket", value: LocalNotifyServer.defaultSocketPath)
+                    SettingsEndpointRow(title: "CLI", value: "mac-notify \"标题\" \"正文\"")
+                    SettingsEndpointRow(title: "URL Scheme", value: "macdesktopnotify://notify")
                 }
 
                 Button(action: { vm.resetUISettings() }) {

@@ -64,6 +64,17 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<PLIST
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>${BUNDLE_ID}.notify</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>macdesktopnotify</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
 PLIST

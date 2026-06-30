@@ -7,7 +7,29 @@ final class IslandFrameTests: XCTestCase {
         XCTAssertEqual(f.size.width, 196, accuracy: 1e-6)
         XCTAssertEqual(f.size.height, 28, accuracy: 1e-6)
         XCTAssertEqual(f.topCornerRadius, 0.0, accuracy: 1e-6)
-        XCTAssertEqual(f.cornerRadius, 8.0, accuracy: 1e-6)
+        XCTAssertEqual(f.cornerRadius, 12.0, accuracy: 1e-6)
+        XCTAssertEqual(f.contentOpacity, 0.0, accuracy: 1e-6)
+        XCTAssertEqual(f.shadowRadius, 0.0, accuracy: 1e-6)
+    }
+
+    func testClosedWithSeparateInsets() {
+        let f = IslandFrame.closed(
+            deviceNotchRect: .init(x: 0, y: 0, width: 200, height: 32),
+            widthInset: -8,
+            heightInset: -6
+        )
+        XCTAssertEqual(f.size.width, 192, accuracy: 1e-6)
+        XCTAssertEqual(f.size.height, 26, accuracy: 1e-6)
+        XCTAssertEqual(f.cornerRadius, 12.0, accuracy: 1e-6)
+        XCTAssertEqual(f.topCornerRadius, 0.0, accuracy: 1e-6)
+    }
+
+    func testCompactTerminal() {
+        let f = IslandFrame.compact(size: .init(width: 140, height: 36))
+        XCTAssertEqual(f.size.width, 140, accuracy: 1e-6)
+        XCTAssertEqual(f.size.height, 36, accuracy: 1e-6)
+        XCTAssertEqual(f.cornerRadius, 12.0, accuracy: 1e-6)
+        XCTAssertEqual(f.topCornerRadius, 12.0, accuracy: 1e-6)
         XCTAssertEqual(f.contentOpacity, 0.0, accuracy: 1e-6)
         XCTAssertEqual(f.shadowRadius, 0.0, accuracy: 1e-6)
     }
@@ -37,7 +59,7 @@ final class IslandFrameTests: XCTestCase {
         let b = IslandFrame.opened(size: .init(width: 600, height: 300), cornerRadius: 32)
         let mid = IslandFrame.lerp(a, b, t: 0.5)
         XCTAssertEqual(mid.size.width, 398, accuracy: 1e-6)
-        XCTAssertEqual(mid.cornerRadius, 20.0, accuracy: 1e-6)
+        XCTAssertEqual(mid.cornerRadius, 22.0, accuracy: 1e-6)
         XCTAssertEqual(mid.topCornerRadius, 16.0, accuracy: 1e-6)
         XCTAssertEqual(mid.contentOpacity, 0.5, accuracy: 1e-6)
     }

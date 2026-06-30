@@ -20,13 +20,45 @@ struct DynamicIslandView: View {
         )
     }
 
+    private var shadowOpacity: Double {
+        let intensity = Double(vm.uiSettings.shadowIntensity).clamped(to: 0...2)
+        let base = frame.shadowRadius > 0 ? 0.55 : 0.0
+        return base * intensity
+    }
+
+    private var strokeOpacity: Double {
+        vm.isFloatingCapsule ? 0.18 : 0.0
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
+            // 灵动岛背景：纯黑 OLED 基底 + 边缘微光
             notchShape
-                .fill(.black)
+                .fill(Color.black)
                 .frame(width: frame.size.width, height: frame.size.height)
-                .shadow(color: .black.opacity(frame.shadowRadius > 0 ? 1 : 0),
-                        radius: frame.shadowRadius)
+                .overlay(
+                    RadialGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: Color.white.opacity(0.07), location: 0.0),
+                            .init(color: Color.white.opacity(0.0), location: 1.0)
+                        ]),
+                        center: .top,
+                        startRadius: 0,
+                        endRadius: frame.size.height * 1.2
+                    )
+                    .blendMode(.plusLighter)
+                    .clipShape(notchShape)
+                )
+                .overlay(
+                    notchShape
+                        .stroke(Color.white.opacity(strokeOpacity), lineWidth: 1)
+                )
+                .shadow(
+                    color: Color.black.opacity(shadowOpacity),
+                    radius: frame.shadowRadius,
+                    x: 0,
+                    y: frame.shadowRadius > 0 ? 4 : 0
+                )
                 .opacity(vm.notchVisible ? 1 : 0.85)
                 .zIndex(0)
 
@@ -34,6 +66,7 @@ struct DynamicIslandView: View {
                 .frame(width: frame.size.width, height: frame.size.height)
                 .clipShape(notchShape)
                 .opacity(frame.contentOpacity)
+                .offset(vm.dragOffset)
                 .zIndex(2)
         }
         .preferredColorScheme(.dark)
