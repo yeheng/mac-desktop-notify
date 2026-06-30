@@ -1,6 +1,7 @@
 import Combine
 import Cocoa
 import Foundation
+import IslandAnimationCore
 import SwiftUI
 
 // UISettingsState — 手动实现 init(from:) 以支持向前兼容：
@@ -16,6 +17,7 @@ struct UISettingsState: Codable, Equatable {
     var autoCloseSeconds: Double = 4
     var showMessageIcons: Bool = true
     var showTimestamps: Bool = true
+    var animations: IslandAnimationSettings = .default
 
     static let `default` = UISettingsState()
 
@@ -30,6 +32,7 @@ struct UISettingsState: Codable, Equatable {
         case autoCloseSeconds
         case showMessageIcons
         case showTimestamps
+        case animations
     }
 
     init() {}
@@ -46,6 +49,7 @@ struct UISettingsState: Codable, Equatable {
         autoCloseSeconds = try values.decodeIfPresent(Double.self, forKey: .autoCloseSeconds) ?? 4
         showMessageIcons = try values.decodeIfPresent(Bool.self, forKey: .showMessageIcons) ?? true
         showTimestamps = try values.decodeIfPresent(Bool.self, forKey: .showTimestamps) ?? true
+        animations = try values.decodeIfPresent(IslandAnimationSettings.self, forKey: .animations) ?? .default
     }
 }
 
@@ -129,6 +133,12 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         case popping
     }
 
+    /// 弹出态触发原因：hover（鼠标悬停预览）或 notification（新通知弹出）
+    enum PopReason: String, Codable, Hashable, Equatable {
+        case hover
+        case notification
+    }
+
     enum OpenReason: String, Codable, Hashable, Equatable {
         case click
         case drag
@@ -148,6 +158,21 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
             y: screenRect.origin.y + screenRect.height - notchOpenedSize.height,
             width: notchOpenedSize.width,
             height: notchOpenedSize.height
+        )
+    }
+
+    /// 弹出态（灵动岛单卡）尺寸：紧凑，顶部融入刘海、底部大圆角
+    var notchPoppingSize: CGSize {
+        CGSize(width: 400, height: 88)
+    }
+
+    var notchPoppingRect: CGRect {
+        let size = notchPoppingSize
+        return .init(
+            x: screenRect.origin.x + (screenRect.width - size.width) / 2,
+            y: screenRect.origin.y + screenRect.height - size.height,
+            width: size.width,
+            height: size.height
         )
     }
 
@@ -192,13 +217,16 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         switch status {
         case .opened:
             return notchOpenedRect.insetBy(dx: -8, dy: -8)
-        case .closed, .popping:
+        case .popping:
+            return notchPoppingRect.insetBy(dx: -8, dy: -8)
+        case .closed:
             return hitTestRect
         }
     }
 
     @Published private(set) var status: Status = .closed
     @Published var openReason: OpenReason = .unknown
+    @Published var popReason: PopReason = .hover
     @Published var contentType: ContentType = .normal
     @Published var optionKeyPressed: Bool = false
     @Published var notchVisible: Bool = true
@@ -228,8 +256,9 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         contentType = .normal
     }
 
-    func notchPop() {
+    func notchPop(_ reason: PopReason = .hover) {
         openReason = .unknown
+        popReason = reason
         status = .popping
     }
 
