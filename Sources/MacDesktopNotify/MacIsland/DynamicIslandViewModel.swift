@@ -196,7 +196,14 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         )
     }
 
-    var deviceNotchRect: CGRect = .zero
+    var deviceNotchRect: CGRect = .zero {
+        didSet {
+            // 刘海尺寸变化时,若处于 closed 态,把 frame 对齐到新终态
+            if status == .closed {
+                frame = toTerminalFrame(.closed)
+            }
+        }
+    }
     var screenRect: CGRect = .zero
 
     /// Expanded hit-test area for click/hover detection (min 200×44pt per HIG).
@@ -236,16 +243,20 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
 
     let hapticSender = PassthroughSubject<Void, Never>()
 
+    private let animator = IslandSpringAnimator()
+    @Published private(set) var frame: IslandFrame = .closed(deviceNotchRect: .zero, inset: 0)
+    @Published private(set) var displayedStatus: Status = .closed
+
     func notchOpen(_ reason: OpenReason) {
         openReason = reason
-        status = .opened
         contentType = .normal
+        transition(to: .opened)
     }
 
     func notchClose() {
         openReason = .unknown
-        status = .closed
         contentType = .normal
+        transition(to: .closed)
     }
 
     func showSettings() {
@@ -259,7 +270,59 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     func notchPop(_ reason: PopReason = .hover) {
         openReason = .unknown
         popReason = reason
-        status = .popping
+        transition(to: .popping)
+    }
+
+    /// 走 animator 转换到目标态。
+    func transition(to next: Status) {
+        let prev = status
+        status = next
+        let to = toTerminalFrame(next)
+        // 展开类(to.contentOpacity >= from):渲染态立即跳目标态,内容随 opacity 淡入
+        // 收起类(to.contentOpacity <  from):渲染态保持源态,动画完成后再跳,内容随 opacity 淡出
+        if to.contentOpacity >= frame.contentOpacity {
+            displayedStatus = next
+        }
+        let path = TransitionPath.between(prev.islandStatus, next.islandStatus)
+        let profile = uiSettings.animations.resolve(path)
+        let from = frame
+        animator.transition(from: from, to: to, profile: profile) { [weak self] f in
+            self?.frame = f
+        } onComplete: { [weak self] in
+            guard let self else { return }
+            self.frame = to
+            if to.contentOpacity < from.contentOpacity {
+                self.displayedStatus = next
+            }
+        }
+    }
+
+    /// 算某状态的终态 IslandFrame(复用现有 DynamicIslandLayout 尺寸函数)。
+    private func toTerminalFrame(_ s: Status) -> IslandFrame {
+        switch s {
+        case .closed:
+            return .closed(deviceNotchRect: deviceNotchRect, inset: inset)
+        case .opened:
+            return .opened(size: notchOpenedSize,
+                           cornerRadius: DynamicIslandLayout.panelCornerRadius(uiSettings, maxRadius: min(notchOpenedSize.width, notchOpenedSize.height) / 2))
+        case .popping:
+            return .popping(size: notchPoppingSize)
+        }
+    }
+
+    /// 调试用:无动画地把状态机置到某态,并同步 frame/displayedStatus。仅供动画预览面板调用。
+    func forceSetStatus(_ s: IslandStatus) {
+        let native: Status = {
+            switch s {
+            case .closed: return .closed
+            case .opened: return .opened
+            case .popping: return .popping
+            }
+        }()
+        animator.stop()
+        status = native
+        displayedStatus = native
+        frame = toTerminalFrame(native)
     }
 
     func resetUISettings() {
@@ -283,5 +346,15 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
 private extension Comparable {
     func clamped(to limits: ClosedRange<Self>) -> Self {
         min(max(self, limits.lowerBound), limits.upperBound)
+    }
+}
+
+private extension DynamicIslandViewModel.Status {
+    var islandStatus: IslandStatus {
+        switch self {
+        case .closed: return .closed
+        case .opened: return .opened
+        case .popping: return .popping
+        }
     }
 }
