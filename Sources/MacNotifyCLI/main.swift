@@ -1,4 +1,5 @@
 import Foundation
+import UnixSocketSupport
 
 /// 本地命令行工具，通过 Unix socket 向 MacDesktopNotify 发送通知。
 struct MacNotifyCLI {
@@ -51,34 +52,22 @@ struct MacNotifyCLI {
     }
 
     private static func send(request: [String: Any]) async throws -> String {
-        let socket = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-        guard socket >= 0 else {
+        let socket: Int32
+        do {
+            socket = try connectUnixSocket(path: socketPath)
+        } catch let error as UnixSocketError {
+            switch error {
+            case .pathTooLong(let path):
+                throw CLIError.socketPathTooLong(path: path)
+            case .connectFailed(let path, let errno):
+                throw CLIError.connectionFailed(path: path, errno: errno)
+            case .socketCreationFailed:
+                throw CLIError.socketFailed
+            }
+        } catch {
             throw CLIError.socketFailed
         }
         defer { Darwin.close(socket) }
-
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        let pathSize = MemoryLayout.size(ofValue: addr.sun_path) - 1
-        socketPath.withCString { cString in
-            withUnsafeMutableBytes(of: &addr.sun_path) { rawBuffer in
-                guard let baseAddress = rawBuffer.baseAddress else { return }
-                strncpy(
-                    baseAddress.assumingMemoryBound(to: CChar.self),
-                    cString,
-                    pathSize
-                )
-            }
-        }
-
-        let connected = withUnsafePointer(to: &addr) { ptr -> Int32 in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                Darwin.connect(socket, sockaddrPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard connected == 0 else {
-            throw CLIError.connectionFailed(errno: errno)
-        }
 
         guard let data = try? JSONSerialization.data(withJSONObject: request, options: []),
               let line = String(data: data, encoding: .utf8) else {
@@ -106,7 +95,8 @@ struct MacNotifyCLI {
 
 enum CLIError: Error, CustomStringConvertible {
     case socketFailed
-    case connectionFailed(errno: Int32)
+    case socketPathTooLong(path: String)
+    case connectionFailed(path: String, errno: Int32)
     case encodingFailed
     case noResponse
 
@@ -114,8 +104,10 @@ enum CLIError: Error, CustomStringConvertible {
         switch self {
         case .socketFailed:
             return "Failed to create socket"
-        case .connectionFailed(let errno):
-            return "Failed to connect to MacDesktopNotify: \(String(cString: strerror(errno)))"
+        case .socketPathTooLong(let path):
+            return "Socket path too long: \(path)"
+        case .connectionFailed(let path, let errno):
+            return "Failed to connect to MacDesktopNotify at \(path): \(String(cString: strerror(errno)))"
         case .encodingFailed:
             return "Failed to encode request"
         case .noResponse:

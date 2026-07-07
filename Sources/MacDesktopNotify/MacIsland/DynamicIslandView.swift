@@ -98,7 +98,18 @@ struct DynamicIslandView: View {
                 }
             }
         case .closed:
-            EmptyView()
+            if vm.isFloatingCapsule {
+                HStack { Spacer()
+                    Circle()
+                        .fill(Color.blue.opacity(0.7))
+                        .frame(width: 10, height: 10)
+                    Spacer()
+                }
+                .frame(width: 80, height: 30)
+                .opacity(0.6)
+            } else {
+                EmptyView()
+            }
         }
     }
 }

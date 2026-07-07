@@ -19,7 +19,7 @@ struct UISettingsState: Codable, Equatable {
     var cardCornerRadius: Double = 10
 
     // 行为
-    var autoCloseSeconds: Double = 4
+    var autoCloseSeconds: Double = 8
     var showMessageIcons: Bool = true
     var showTimestamps: Bool = true
 
@@ -76,7 +76,7 @@ struct UISettingsState: Codable, Equatable {
         listSpacing = try values.decodeIfPresent(Double.self, forKey: .listSpacing) ?? 8
         cardPadding = try values.decodeIfPresent(Double.self, forKey: .cardPadding) ?? 10
         cardCornerRadius = try values.decodeIfPresent(Double.self, forKey: .cardCornerRadius) ?? 10
-        autoCloseSeconds = try values.decodeIfPresent(Double.self, forKey: .autoCloseSeconds) ?? 4
+        autoCloseSeconds = try values.decodeIfPresent(Double.self, forKey: .autoCloseSeconds) ?? 8
         showMessageIcons = try values.decodeIfPresent(Bool.self, forKey: .showMessageIcons) ?? true
         showTimestamps = try values.decodeIfPresent(Bool.self, forKey: .showTimestamps) ?? true
         closedWidthInset = try values.decodeIfPresent(Double.self, forKey: .closedWidthInset) ?? -8
@@ -167,12 +167,6 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
 
     var notchOpenedSize: CGSize {
         DynamicIslandLayout.openedSize(for: screenRect, settings: uiSettings)
-    }
-
-    enum Status: String, Codable, Hashable, Equatable {
-        case closed
-        case opened
-        case popping
     }
 
     /// 弹出态触发原因：hover（鼠标悬停预览）或 notification（新通知弹出）
@@ -287,11 +281,10 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         }
     }
 
-    @Published private(set) var status: Status = .closed
+    @Published private(set) var status: IslandStatus = .closed
     @Published var openReason: OpenReason = .unknown
     @Published var popReason: PopReason = .hover
     @Published var contentType: ContentType = .normal
-    @Published var optionKeyPressed: Bool = false
     @Published var notchVisible: Bool = true
     @Published var closeLocked: Bool = false
 
@@ -307,7 +300,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
 
     private let animator = IslandSpringAnimator()
     @Published private(set) var frame: IslandFrame = .closed(deviceNotchRect: .zero, inset: 0)
-    @Published private(set) var displayedStatus: Status = .closed
+    @Published private(set) var displayedStatus: IslandStatus = .closed
 
     /// 闭合态收缩量：宽度/高度分别受用户设置控制。
     private var closedWidthInset: CGFloat { CGFloat(uiSettings.closedWidthInset) }
@@ -354,7 +347,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     }
 
     /// 走 animator 转换到目标态。
-    func transition(to next: Status) {
+    func transition(to next: IslandStatus) {
         let prev = status
         status = next
         let to = toTerminalFrame(next)
@@ -363,7 +356,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         if to.contentOpacity >= frame.contentOpacity {
             displayedStatus = next
         }
-        let path = TransitionPath.between(prev.islandStatus, next.islandStatus)
+        let path = TransitionPath.between(prev, next)
         let profile = uiSettings.animations.resolve(path)
         let from = frame
         animator.transition(from: from, to: to, profile: profile) { [weak self] f in
@@ -378,7 +371,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     }
 
     /// 算某状态的终态 IslandFrame(复用现有 DynamicIslandLayout 尺寸函数)。
-    private func toTerminalFrame(_ s: Status) -> IslandFrame {
+    private func toTerminalFrame(_ s: IslandStatus) -> IslandFrame {
         switch s {
         case .closed:
             if isFloatingCapsule {
@@ -398,17 +391,10 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
 
     /// 调试用:无动画地把状态机置到某态,并同步 frame/displayedStatus。仅供动画预览面板调用。
     func forceSetStatus(_ s: IslandStatus) {
-        let native: Status = {
-            switch s {
-            case .closed: return .closed
-            case .opened: return .opened
-            case .popping: return .popping
-            }
-        }()
         animator.stop()
-        status = native
-        displayedStatus = native
-        frame = toTerminalFrame(native)
+        status = s
+        displayedStatus = s
+        frame = toTerminalFrame(s)
     }
 
     func resetUISettings() {
@@ -432,15 +418,5 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
 extension Comparable {
     func clamped(to limits: ClosedRange<Self>) -> Self {
         min(max(self, limits.lowerBound), limits.upperBound)
-    }
-}
-
-private extension DynamicIslandViewModel.Status {
-    var islandStatus: IslandStatus {
-        switch self {
-        case .closed: return .closed
-        case .opened: return .opened
-        case .popping: return .popping
-        }
     }
 }

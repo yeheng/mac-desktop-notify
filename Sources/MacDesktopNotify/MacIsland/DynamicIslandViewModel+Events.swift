@@ -29,14 +29,6 @@ extension DynamicIslandViewModel {
             }
             .store(in: &cancellables)
 
-        events.optionKeyPress
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] input in
-                guard let self else { return }
-                optionKeyPressed = input
-            }
-            .store(in: &cancellables)
-
         events.mouseLocation
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in

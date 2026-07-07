@@ -6,12 +6,10 @@ class EventMonitors {
 
     private var mouseMoveEvent: EventMonitor?
     private var mouseDownEvent: EventMonitor?
-    private var optionKeyPressEvent: EventMonitor?
     private var keyDownEvent: EventMonitor?
 
     let mouseLocation: CurrentValueSubject<NSPoint, Never> = .init(.zero)
     let mouseDown: PassthroughSubject<Void, Never> = .init()
-    let optionKeyPress: CurrentValueSubject<Bool, Never> = .init(false)
     let keyDown: PassthroughSubject<UInt16, Never> = .init()
 
     private init() {}
@@ -31,12 +29,6 @@ class EventMonitors {
         }
         mouseDownEvent?.start()
 
-        optionKeyPressEvent = EventMonitor(mask: .flagsChanged) { [weak self] event in
-            guard let self else { return }
-            optionKeyPress.send(event?.modifierFlags.contains(.option) == true)
-        }
-        optionKeyPressEvent?.start()
-
         keyDownEvent = EventMonitor(mask: .keyDown) { [weak self] event in
             guard let self, let event else { return }
             keyDown.send(event.keyCode)
@@ -49,8 +41,6 @@ class EventMonitors {
         mouseMoveEvent = nil
         mouseDownEvent?.stop()
         mouseDownEvent = nil
-        optionKeyPressEvent?.stop()
-        optionKeyPressEvent = nil
         keyDownEvent?.stop()
         keyDownEvent = nil
     }

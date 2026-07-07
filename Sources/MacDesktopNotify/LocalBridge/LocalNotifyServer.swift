@@ -1,4 +1,5 @@
 import Foundation
+import UnixSocketSupport
 
 /// 本地 Unix domain socket 通知桥。
 /// 接收 newline-delimited JSON，字段同 `NotifyCreateRequest`，转发给 `NotifyManager`。
@@ -43,24 +44,10 @@ final class LocalNotifyServer {
                 try FileManager.default.removeItem(atPath: self.socketPath)
             }
 
-            self.serverSocket = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-            guard self.serverSocket >= 0 else {
-                throw LocalNotifyError.socketCreationFailed(errno: errno)
-            }
+            // Path length is validated inside makeUnixSocketAddress (throws pathTooLong).
+            self.serverSocket = try createUnixStreamSocket()
 
-            var addr = sockaddr_un()
-            addr.sun_family = sa_family_t(AF_UNIX)
-            let pathSize = MemoryLayout.size(ofValue: addr.sun_path) - 1
-            self.socketPath.withCString { cString in
-                withUnsafeMutableBytes(of: &addr.sun_path) { rawBuffer in
-                    guard let baseAddress = rawBuffer.baseAddress else { return }
-                    strncpy(
-                        baseAddress.assumingMemoryBound(to: CChar.self),
-                        cString,
-                        pathSize
-                    )
-                }
-            }
+            var addr = try makeUnixSocketAddress(path: self.socketPath)
 
             let bindResult = withUnsafePointer(to: &addr) { ptr -> Int32 in
                 ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
@@ -82,8 +69,6 @@ final class LocalNotifyServer {
             }
 
             self.isStopped = false
-            let log = "[LocalNotifyServer] listening on \(self.socketPath)\n"
-            try? log.write(toFile: "/tmp/mdn-server.log", atomically: true, encoding: .utf8)
             self.acceptLoop()
         }
     }
@@ -102,9 +87,7 @@ final class LocalNotifyServer {
         socketQueue.async { [weak self] in
             guard let self else { return }
             while !self.isStopped {
-                self.appendLog("waiting for accept")
                 let client = Darwin.accept(self.serverSocket, nil, nil)
-                self.appendLog("accept returned \(client), errno=\(errno)")
                 guard client >= 0 else {
                     if errno == EINTR { continue }
                     break
@@ -112,7 +95,6 @@ final class LocalNotifyServer {
                 // 必须在独立并发队列处理客户端；串行 socketQueue 正忙于 accept 循环。
                 self.clientQueue.async { [weak self] in
                     guard let self else { return }
-                    self.appendLog("handling client \(client)")
                     self.handleClient(client)
                     Darwin.close(client)
                 }
@@ -121,10 +103,8 @@ final class LocalNotifyServer {
     }
 
     private func handleClient(_ clientSocket: Int32) {
-        appendLog("reading from client \(clientSocket)")
         var buffer = [UInt8](repeating: 0, count: 65536)
         let bytesRead = Darwin.read(clientSocket, &buffer, buffer.count)
-        appendLog("read \(bytesRead) bytes")
         guard bytesRead > 0 else {
             _ = sendResponse(to: clientSocket, success: false, message: "Failed to read request")
             return
@@ -157,23 +137,7 @@ final class LocalNotifyServer {
         DispatchQueue.main.async { [weak self] in
             self?.manager.add(record)
         }
-        appendLog("sending OK response")
-        let sent = sendResponse(to: clientSocket, success: true, message: "OK", id: record.id)
-        appendLog("response sent: \(sent)")
-    }
-
-    private func appendLog(_ message: String) {
-        let line = "[LocalNotifyServer] \(message)\n"
-        if let data = line.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: "/tmp/mdn-server.log"),
-               let handle = FileHandle(forWritingAtPath: "/tmp/mdn-server.log") {
-                _ = handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            } else {
-                try? line.write(toFile: "/tmp/mdn-server.log", atomically: true, encoding: .utf8)
-            }
-        }
+        _ = sendResponse(to: clientSocket, success: true, message: "OK", id: record.id)
     }
 
     @discardableResult
@@ -197,14 +161,11 @@ final class LocalNotifyServer {
 }
 
 enum LocalNotifyError: Error, CustomStringConvertible {
-    case socketCreationFailed(errno: Int32)
     case bindFailed(errno: Int32)
     case listenFailed(errno: Int32)
 
     var description: String {
         switch self {
-        case .socketCreationFailed(let errno):
-            return "Socket creation failed: \(String(cString: strerror(errno)))"
         case .bindFailed(let errno):
             return "Bind failed: \(String(cString: strerror(errno)))"
         case .listenFailed(let errno):

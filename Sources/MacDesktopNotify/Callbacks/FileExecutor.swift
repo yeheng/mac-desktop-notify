@@ -2,21 +2,13 @@ import AppKit
 import Foundation
 
 /// 文件/路径回调执行器 — 在 Finder 中显示或用默认应用打开
-struct FileExecutor: CallbackExecutor {
+struct FileExecutor {
     func execute(
-        _ callback: NotificationActionCallback,
+        url: URL,
+        action: FileAction,
         context: NotificationActionEvent
     ) async -> CallbackResult {
         let start = Date()
-
-        guard let path = callback.filePath?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !path.isEmpty
-        else {
-            return .failed(error: "Empty file path", duration: 0)
-        }
-
-        let url = URL(fileURLWithPath: path)
-        let action = callback.fileAction ?? .open
 
         switch action {
         case .open:
@@ -25,9 +17,9 @@ struct FileExecutor: CallbackExecutor {
             }
             let duration = Date().timeIntervalSince(start)
             if success {
-                return .ok(output: "Opened \(path)", duration: duration)
+                return .ok(output: "Opened \(url.path)", duration: duration)
             } else {
-                return .failed(error: "Failed to open: \(path)", duration: duration)
+                return .failed(error: "Failed to open: \(url.path)", duration: duration)
             }
 
         case .revealInFinder:
@@ -35,7 +27,7 @@ struct FileExecutor: CallbackExecutor {
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             }
             let duration = Date().timeIntervalSince(start)
-            return .ok(output: "Revealed in Finder: \(path)", duration: duration)
+            return .ok(output: "Revealed in Finder: \(url.path)", duration: duration)
         }
     }
 }

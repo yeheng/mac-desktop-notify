@@ -1,21 +1,12 @@
 import Foundation
 
 /// AppleScript 回调执行器 — 通过 osascript 执行脚本（避免主线程阻塞）
-struct AppleScriptExecutor: CallbackExecutor {
+struct AppleScriptExecutor {
     func execute(
-        _ callback: NotificationActionCallback,
+        _ callback: TypedCallback.AppleScript,
         context: NotificationActionEvent
     ) async -> CallbackResult {
         let start = Date()
-
-        // 确定脚本来源：内联脚本 或 脚本文件
-        let inlineScript = callback.appleScript?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scriptFile = callback.appleScriptFile?.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let source = inlineScript, !source.isEmpty || !(scriptFile ?? "").isEmpty else {
-            return .failed(error: "No AppleScript source or file specified", duration: 0)
-        }
-
         let timeout = max(1, min(callback.timeout ?? 15, 120))
 
         return await withCheckedContinuation { continuation in
@@ -23,11 +14,11 @@ struct AppleScriptExecutor: CallbackExecutor {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
 
-                // 内联脚本用 -e 参数，文件路径直接传递
-                if let inline = inlineScript, !inline.isEmpty {
-                    process.arguments = ["-e", inline]
-                } else {
-                    process.arguments = [scriptFile!]
+                switch callback.source {
+                case .inline(let script):
+                    process.arguments = ["-e", script]
+                case .file(let path):
+                    process.arguments = [path]
                 }
 
                 let outPipe = Pipe()

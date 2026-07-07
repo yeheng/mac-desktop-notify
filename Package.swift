@@ -17,6 +17,10 @@ let package = Package(
             name: "IslandAnimationCore",
             path: "Sources/IslandAnimationCore"
         ),
+        .target(
+            name: "UnixSocketSupport",
+            path: "Sources/UnixSocketSupport"
+        ),
         .testTarget(
             name: "IslandAnimationCoreTests",
             dependencies: ["IslandAnimationCore"],
@@ -24,13 +28,14 @@ let package = Package(
         ),
         .testTarget(
             name: "MacDesktopNotifyTests",
-            dependencies: ["MacDesktopNotify"],
+            dependencies: ["MacDesktopNotify", "UnixSocketSupport"],
             path: "Tests/MacDesktopNotifyTests"
         ),
         .executableTarget(
             name: "MacDesktopNotify",
             dependencies: [
                 "IslandAnimationCore",
+                "UnixSocketSupport",
                 .product(name: "Swifter", package: "swifter"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui")
             ],
@@ -39,6 +44,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "MacNotifyCLI",
+            dependencies: ["UnixSocketSupport"],
             path: "Sources/MacNotifyCLI"
         )
     ]

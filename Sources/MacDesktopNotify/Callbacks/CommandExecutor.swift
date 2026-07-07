@@ -1,19 +1,12 @@
 import Foundation
 
 /// Shell 命令回调执行器
-struct CommandExecutor: CallbackExecutor {
+struct CommandExecutor {
     func execute(
-        _ callback: NotificationActionCallback,
+        _ callback: TypedCallback.Command,
         context: NotificationActionEvent
     ) async -> CallbackResult {
         let start = Date()
-
-        guard let command = callback.command?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !command.isEmpty
-        else {
-            return .failed(error: "Empty command", duration: 0)
-        }
-
         let timeout = max(1, min(callback.timeout ?? 15, 120))
 
         return await withCheckedContinuation { continuation in
@@ -22,21 +15,17 @@ struct CommandExecutor: CallbackExecutor {
                 let outPipe = Pipe()
                 let errPipe = Pipe()
 
-                let arguments = callback.arguments ?? []
-                let useShell = callback.shell ?? (arguments.isEmpty && command.contains(" "))
-
-                if useShell {
+                if callback.shell {
                     process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-                    process.arguments = ["-lc", command]
+                    process.arguments = ["-lc", callback.command]
                 } else {
                     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                    process.arguments = [command] + arguments
+                    process.arguments = [callback.command] + callback.arguments
                 }
 
                 process.standardOutput = outPipe
                 process.standardError = errPipe
 
-                // 设置环境变量
                 if let env = callback.environment {
                     var envDict = ProcessInfo.processInfo.environment
                     for (key, value) in env {

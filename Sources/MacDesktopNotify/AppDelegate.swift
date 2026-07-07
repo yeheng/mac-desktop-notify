@@ -68,6 +68,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         .store(in: &cancellables)
 
+        // 新通知 → 更新角标
+        eventBus.subscribe(for: .notificationAdded) { [weak self] _ in
+            guard let self, let button = self.statusItem?.button else { return }
+            let count = self.manager.items.count
+            button.title = count > 0 ? " \(count)" : ""
+        }
+        .store(in: &cancellables)
+
         // 通知被关闭 → 完成 waiter
         eventBus.subscribe(for: .notificationDismissed) { [weak self] event in
             guard let self else { return }
@@ -76,6 +84,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 notificationID: id,
                 reason: reason
             )
+            if let button = self.statusItem?.button {
+                let count = self.manager.items.count
+                button.title = count > 0 ? " \(count)" : ""
+            }
         }
         .store(in: &cancellables)
 
@@ -127,8 +139,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func handleURL(_ url: URL) {
         guard url.scheme?.lowercased() == "macdesktopnotify" else { return }
-        guard url.host()?.lowercased() == "notify" else { return }
+        switch url.host()?.lowercased() {
+        case "notify":
+            handleNotifyURL(url)
+        case "clear":
+            manager.clear()
+        case "settings":
+            mainWindowController?.vm?.notchOpen(.click)
+            mainWindowController?.vm?.showSettings()
+        case "list":
+            mainWindowController?.vm?.notchOpen(.click)
+        default:
+            break
+        }
+    }
 
+    private func handleNotifyURL(_ url: URL) {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let query = components?.queryItems?.reduce(into: [String: String]()) { result, item in
             result[item.name] = item.value

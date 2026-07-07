@@ -201,37 +201,13 @@ struct NotificationRecord: Identifiable, Codable, Equatable {
 
     var validationError: String? {
         for action in actions {
+            // `typed()` is the single authority for callback validity. If a callback was
+            // supplied but cannot be parsed into a TypedCallback, report which action failed.
+            // The specific reason isn't surfaced — the executor would re-derive it; here we
+            // only need a yes/no gate that can never diverge from execution.
             guard let callback = action.callback else { continue }
-            switch callback.type {
-            case .webhook:
-                guard let rawURL = callback.url?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      let url = URL(string: rawURL),
-                      ["http", "https"].contains(url.scheme?.lowercased() ?? "")
-                else {
-                    return "Action '\(action.id)' has an invalid webhook URL"
-                }
-            case .command:
-                guard callback.command?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-                    return "Action '\(action.id)' has an empty command"
-                }
-            case .urlScheme:
-                guard let scheme = callback.urlScheme?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !scheme.isEmpty
-                else {
-                    return "Action '\(action.id)' has an empty URL scheme"
-                }
-            case .file:
-                guard let path = callback.filePath?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !path.isEmpty
-                else {
-                    return "Action '\(action.id)' has an empty file path"
-                }
-            case .appleScript:
-                let hasInline = callback.appleScript?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                let hasFile = callback.appleScriptFile?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                guard hasInline || hasFile else {
-                    return "Action '\(action.id)' must specify appleScript or appleScriptFile"
-                }
+            if callback.typed() == nil {
+                return "Action '\(action.id)' has an invalid or incomplete callback"
             }
         }
         return nil
@@ -295,6 +271,8 @@ enum APIServiceState: Equatable {
 final class NotifyManager {
     private let maxItems = 100
     private var timeoutTasks: [UUID: Task<Void, Never>] = [:]
+    nonisolated(unsafe) private var cachedSnapshot: [NotificationRecord] = []
+    private let snapshotLock = NSLock()
 
     /// 统一事件总线
     let eventBus: NotificationEventBus
@@ -317,6 +295,10 @@ final class NotifyManager {
             }
         }
         eventBus.publish(.notificationAdded(item))
+
+        snapshotLock.lock()
+        cachedSnapshot = items
+        snapshotLock.unlock()
 
         // 清理因溢出被移除的项对应的 timeout 任务
         let activeIDs = Set(items.map(\.id))
@@ -344,6 +326,10 @@ final class NotifyManager {
             items.removeAll { $0.id == id }
         }
 
+        snapshotLock.lock()
+        cachedSnapshot = items
+        snapshotLock.unlock()
+
         if reason != .actionSelected {
             eventBus.publish(.notificationDismissed(id: id, reason: reason))
         }
@@ -359,6 +345,11 @@ final class NotifyManager {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
             items.removeAll()
         }
+
+        snapshotLock.lock()
+        cachedSnapshot = items
+        snapshotLock.unlock()
+
         removedIDs.forEach { eventBus.publish(.notificationDismissed(id: $0, reason: .cleared)) }
     }
 
@@ -393,5 +384,11 @@ final class NotifyManager {
 
     func snapshot() -> [NotificationRecord] {
         items
+    }
+
+    nonisolated func snapshotCached() -> [NotificationRecord] {
+        snapshotLock.lock()
+        defer { snapshotLock.unlock() }
+        return cachedSnapshot
     }
 }

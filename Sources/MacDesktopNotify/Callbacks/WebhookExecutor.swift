@@ -1,28 +1,22 @@
 import Foundation
 
 /// Webhook 回调执行器 — 发送 HTTP 请求
-struct WebhookExecutor: CallbackExecutor {
+struct WebhookExecutor {
     func execute(
-        _ callback: NotificationActionCallback,
+        _ callback: TypedCallback.Webhook,
         context: NotificationActionEvent
     ) async -> CallbackResult {
         let start = Date()
 
-        guard let rawURL = callback.url?.trimmingCharacters(in: .whitespacesAndNewlines),
-              let url = URL(string: rawURL)
-        else {
-            return .failed(error: "Invalid webhook URL", duration: 0)
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = callback.method?.isEmpty == false ? callback.method : "POST"
+        var request = URLRequest(url: callback.url)
+        request.httpMethod = callback.method
         request.timeoutInterval = callback.timeout ?? 15
 
         callback.headers?.forEach { key, value in
             request.setValue(value, forHTTPHeaderField: key)
         }
 
-        if let body = callback.body {
+        if case .raw(let body) = callback.body {
             request.httpBody = Data(body.utf8)
             setDefaultContentType("text/plain; charset=utf-8", on: &request, headers: callback.headers)
         } else {

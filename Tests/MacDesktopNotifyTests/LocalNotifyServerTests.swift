@@ -1,5 +1,6 @@
 import XCTest
 import Combine
+import UnixSocketSupport
 @testable import MacDesktopNotify
 
 @MainActor
@@ -13,8 +14,11 @@ final class LocalNotifyServerTests: XCTestCase {
         super.setUp()
         let eventBus = NotificationEventBus()
         manager = NotifyManager(eventBus: eventBus)
-        socketPath = NSTemporaryDirectory()
-            .appending("mac-desktop-notify-test-\(UUID().uuidString).sock")
+        // macOS $TMPDIR is long (~46 chars); appending a full UUID overflows sockaddr_un.sun_path
+        // (103 char limit). Use a short unique path under /tmp so the path-length guard in
+        // makeUnixSocketAddress isn't the thing being tested here.
+        let shortID = UUID().uuidString.prefix(8)
+        socketPath = "/tmp/mdn-test-\(shortID).sock"
         server = LocalNotifyServer(manager: manager, socketPath: socketPath)
     }
 
@@ -86,33 +90,24 @@ final class LocalNotifyServerTests: XCTestCase {
         XCTAssertFalse(message.isEmpty)
     }
 
+    func testRejectsTooLongPath() {
+        // sockaddr_un.sun_path is 104 bytes on macOS; a path exceeding it must be rejected
+        // rather than silently truncated (which previously left orphaned socket files on disk).
+        let longPath = String(repeating: "x", count: 200) + ".sock"
+        XCTAssertThrowsError(try makeUnixSocketAddress(path: longPath)) { error in
+            guard case UnixSocketError.pathTooLong = error else {
+                XCTFail("expected pathTooLong, got \(error)")
+                return
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func sendAndReceive(_ payload: String) throws -> (success: Bool, id: UUID?, message: String) {
-        let socket = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        let socket = try connectUnixSocket(path: socketPath)
         XCTAssertGreaterThanOrEqual(socket, 0)
         defer { Darwin.close(socket) }
-
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        let pathSize = MemoryLayout.size(ofValue: addr.sun_path) - 1
-        socketPath.withCString { cString in
-            withUnsafeMutableBytes(of: &addr.sun_path) { rawBuffer in
-                guard let baseAddress = rawBuffer.baseAddress else { return }
-                strncpy(
-                    baseAddress.assumingMemoryBound(to: CChar.self),
-                    cString,
-                    pathSize
-                )
-            }
-        }
-
-        let connectResult = withUnsafePointer(to: &addr) { ptr -> Int32 in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                Darwin.connect(socket, sockaddrPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        XCTAssertEqual(connectResult, 0)
 
         payload.withCString { ptr in
             _ = Darwin.send(socket, ptr, strlen(ptr), 0)

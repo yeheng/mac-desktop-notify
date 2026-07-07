@@ -217,17 +217,7 @@ final class APIServer {
     // MARK: - Notification Snapshot
 
     private func notificationSnapshot() -> [NotificationRecord] {
-        if Thread.isMainThread {
-            return MainActor.assumeIsolated {
-                manager.snapshot()
-            }
-        }
-
-        return DispatchQueue.main.sync {
-            MainActor.assumeIsolated {
-                manager.snapshot()
-            }
-        }
+        manager.snapshotCached()
     }
 
     // MARK: - WebSocket Broadcast
