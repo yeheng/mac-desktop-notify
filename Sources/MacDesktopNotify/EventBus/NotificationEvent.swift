@@ -10,6 +10,7 @@ enum NotificationEventKind: String, CaseIterable, Sendable {
     case lockChanged
     case serviceStateChanged
     case callbackResult
+    case itemsChanged
 }
 
 // MARK: - Event
@@ -22,6 +23,7 @@ enum NotificationEvent: Sendable {
     case lockChanged(isLocked: Bool)
     case serviceStateChanged(APIServiceState)
     case callbackResult(notificationId: UUID, actionId: String, result: CallbackResult)
+    case itemsChanged
 
     var kind: NotificationEventKind {
         switch self {
@@ -31,6 +33,7 @@ enum NotificationEvent: Sendable {
         case .lockChanged: return .lockChanged
         case .serviceStateChanged: return .serviceStateChanged
         case .callbackResult: return .callbackResult
+        case .itemsChanged: return .itemsChanged
         }
     }
 }

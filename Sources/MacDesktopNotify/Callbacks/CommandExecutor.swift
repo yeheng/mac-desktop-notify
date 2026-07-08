@@ -42,6 +42,12 @@ struct CommandExecutor {
 
                     if semaphore.wait(timeout: .now() + timeout) == .timedOut {
                         process.terminate()
+                        // 等待进程退出，避免孤儿进程继续运行
+                        let gracePeriod: TimeInterval = 1.0
+                        let deadline = Date().addingTimeInterval(gracePeriod)
+                        while process.isRunning && Date() < deadline {
+                            Thread.sleep(forTimeInterval: 0.05)
+                        }
                         let duration = Date().timeIntervalSince(start)
                         continuation.resume(
                             returning: .failed(

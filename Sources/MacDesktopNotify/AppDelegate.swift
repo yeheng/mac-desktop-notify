@@ -68,8 +68,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         .store(in: &cancellables)
 
-        // 新通知 → 更新角标
-        eventBus.subscribe(for: .notificationAdded) { [weak self] _ in
+        // 列表变化 → 更新角标（单一数据源，覆盖 add / remove / clear / action 所有路径）
+        eventBus.subscribe(for: .itemsChanged) { [weak self] _ in
             guard let self, let button = self.statusItem?.button else { return }
             let count = self.manager.items.count
             button.title = count > 0 ? " \(count)" : ""
@@ -84,10 +84,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 notificationID: id,
                 reason: reason
             )
-            if let button = self.statusItem?.button {
-                let count = self.manager.items.count
-                button.title = count > 0 ? " \(count)" : ""
-            }
         }
         .store(in: &cancellables)
 

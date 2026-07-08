@@ -295,10 +295,7 @@ final class NotifyManager {
             }
         }
         eventBus.publish(.notificationAdded(item))
-
-        snapshotLock.lock()
-        cachedSnapshot = items
-        snapshotLock.unlock()
+        refreshSnapshotCache()
 
         // 清理因溢出被移除的项对应的 timeout 任务
         let activeIDs = Set(items.map(\.id))
@@ -326,13 +323,8 @@ final class NotifyManager {
             items.removeAll { $0.id == id }
         }
 
-        snapshotLock.lock()
-        cachedSnapshot = items
-        snapshotLock.unlock()
-
-        if reason != .actionSelected {
-            eventBus.publish(.notificationDismissed(id: id, reason: reason))
-        }
+        refreshSnapshotCache()
+        eventBus.publish(.notificationDismissed(id: id, reason: reason))
     }
 
     func clear() {
@@ -346,10 +338,8 @@ final class NotifyManager {
             items.removeAll()
         }
 
-        snapshotLock.lock()
-        cachedSnapshot = items
-        snapshotLock.unlock()
-
+        refreshSnapshotCache()
+        eventBus.publish(.itemsChanged)
         removedIDs.forEach { eventBus.publish(.notificationDismissed(id: $0, reason: .cleared)) }
     }
 
@@ -390,5 +380,11 @@ final class NotifyManager {
         snapshotLock.lock()
         defer { snapshotLock.unlock() }
         return cachedSnapshot
+    }
+
+    private func refreshSnapshotCache() {
+        snapshotLock.lock()
+        cachedSnapshot = items
+        snapshotLock.unlock()
     }
 }

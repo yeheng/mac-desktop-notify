@@ -87,7 +87,9 @@ extension NotificationActionCallback {
 
         case .file:
             guard let raw = filePath?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
-            return .file(URL(fileURLWithPath: raw), fileAction ?? .open)
+            let expanded = NSString(string: raw).expandingTildeInPath
+            let standardized = NSString(string: expanded).standardizingPath
+            return .file(URL(fileURLWithPath: standardized), fileAction ?? .open)
 
         case .appleScript:
             let inline = appleScript?.trimmingCharacters(in: .whitespacesAndNewlines)

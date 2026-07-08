@@ -74,11 +74,13 @@ final class LocalNotifyServer {
     }
 
     func stop() {
-        isStopped = true
-        if serverSocket >= 0 {
-            let sock = serverSocket
-            serverSocket = -1
-            Darwin.close(sock)
+        socketQueue.sync {
+            isStopped = true
+            if serverSocket >= 0 {
+                let sock = serverSocket
+                serverSocket = -1
+                Darwin.close(sock)
+            }
         }
         try? FileManager.default.removeItem(atPath: socketPath)
     }
@@ -134,9 +136,13 @@ final class LocalNotifyServer {
             return
         }
 
+        // 等待主线程 add 落盘后再回复客户端，避免 GET-POST 竞态读到旧快照
+        let addDone = DispatchSemaphore(value: 0)
         DispatchQueue.main.async { [weak self] in
             self?.manager.add(record)
+            addDone.signal()
         }
+        _ = addDone.wait(timeout: .now() + 5.0)
         _ = sendResponse(to: clientSocket, success: true, message: "OK", id: record.id)
     }
 

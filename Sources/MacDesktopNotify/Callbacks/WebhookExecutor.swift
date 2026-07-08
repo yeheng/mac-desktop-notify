@@ -41,7 +41,18 @@ struct WebhookExecutor {
             let httpStatus = (response as? HTTPURLResponse)?.statusCode
             let body = String(data: data, encoding: .utf8)
             let duration = Date().timeIntervalSince(start)
-            return .ok(output: body, statusCode: httpStatus, duration: duration)
+            if let httpStatus, (200...299).contains(httpStatus) {
+                return .ok(output: body, statusCode: httpStatus, duration: duration)
+            }
+            let errorOutput = body?.isEmpty == false ? body : "HTTP \(httpStatus ?? -1)"
+            return CallbackResult(
+                success: false,
+                output: body,
+                error: errorOutput,
+                statusCode: httpStatus,
+                duration: duration,
+                completedAt: Date()
+            )
         } catch {
             let duration = Date().timeIntervalSince(start)
             return .failed(error: error.localizedDescription, duration: duration)

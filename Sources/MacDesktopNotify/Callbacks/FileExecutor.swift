@@ -23,6 +23,11 @@ struct FileExecutor {
             }
 
         case .revealInFinder:
+            let exists = FileManager.default.fileExists(atPath: url.path)
+            guard exists else {
+                let duration = Date().timeIntervalSince(start)
+                return .failed(error: "File not found: \(url.path)", duration: duration)
+            }
             await MainActor.run {
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             }
