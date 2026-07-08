@@ -96,7 +96,7 @@ struct UISettingsState: Codable, Equatable {
 enum DynamicIslandLayout {
     static let windowShadowPadding: CGFloat = 24
 
-    static func openedSize(for screenRect: CGRect, settings: UISettingsState) -> CGSize {
+    static func openedSize(for screenRect: CGRect, settings: UISettingsState, topInset: CGFloat = 0) -> CGSize {
         let configuredWidth = CGFloat(settings.panelMaxWidth).clamped(to: 360...920)
         let configuredHeight = CGFloat(settings.panelMaxHeight).clamped(to: 280...380)
 
@@ -105,7 +105,9 @@ enum DynamicIslandLayout {
         }
 
         let width = min(configuredWidth, max(320, screenRect.width - 48))
-        let height = min(configuredHeight, max(280, screenRect.height * 0.42))
+        // 有刘海时,可用高度需扣除 inset,否则窗口顶部会被物理挖孔遮挡。
+        let availableHeight = max(0, screenRect.height - topInset)
+        let height = min(configuredHeight, max(280, availableHeight * 0.42))
         return .init(width: width, height: height)
     }
 
@@ -166,7 +168,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     let sharedTimePublisher = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var notchOpenedSize: CGSize {
-        DynamicIslandLayout.openedSize(for: screenRect, settings: uiSettings)
+        DynamicIslandLayout.openedSize(for: screenRect, settings: uiSettings, topInset: displayTopInset)
     }
 
     /// 弹出态触发原因：hover（鼠标悬停预览）或 notification（新通知弹出）
@@ -191,7 +193,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     var notchOpenedRect: CGRect {
         .init(
             x: screenRect.origin.x + (screenRect.width - notchOpenedSize.width) / 2,
-            y: screenRect.origin.y + screenRect.height - notchOpenedSize.height,
+            y: screenRect.maxY - displayTopInset - notchOpenedSize.height,
             width: notchOpenedSize.width,
             height: notchOpenedSize.height
         )
@@ -209,7 +211,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         let size = notchPoppingSize
         return .init(
             x: screenRect.origin.x + (screenRect.width - size.width) / 2,
-            y: screenRect.origin.y + screenRect.height - size.height,
+            y: screenRect.maxY - displayTopInset - size.height,
             width: size.width,
             height: size.height
         )
@@ -227,14 +229,15 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
             screenRect.width,
             openedSize.width + DynamicIslandLayout.windowShadowPadding * 2
         )
+        // 有刘海时,窗口顶部需下移 displayTopInset,否则顶部内容会被物理挖孔遮挡。
         let windowHeight = min(
-            screenRect.height,
+            screenRect.height - displayTopInset,
             openedSize.height + DynamicIslandLayout.windowShadowPadding + floatingTopOffset
         )
 
         return CGRect(
             x: screenRect.midX - windowWidth / 2,
-            y: screenRect.maxY - windowHeight - floatingTopOffset,
+            y: screenRect.maxY - displayTopInset - windowHeight - floatingTopOffset,
             width: windowWidth,
             height: windowHeight
         )
@@ -255,6 +258,11 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
             updateDeviceNotchRectForFloatingCapsule()
         }
     }
+
+    /// 屏幕顶部的刘海高度(安全区内边距)。
+    /// 有刘海时,所有顶部对齐的面板/胶囊都下移该距离,避免内容被物理挖孔遮挡。
+    /// 由 `DynamicIslandWindowController.configureNotchOrFloatingCapsule` 设置。
+    var displayTopInset: CGFloat = 0
 
     /// Expanded hit-test area for click/hover detection (min 200×44pt per HIG).
     var hitTestRect: CGRect {
@@ -314,7 +322,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         let topOffset = CGFloat(uiSettings.floatingCapsuleTopOffset).clamped(to: 0...80)
         deviceNotchRect = CGRect(
             x: screenRect.midX - width / 2,
-            y: screenRect.maxY - height - topOffset,
+            y: screenRect.maxY - displayTopInset - height - topOffset,
             width: width,
             height: height
         )

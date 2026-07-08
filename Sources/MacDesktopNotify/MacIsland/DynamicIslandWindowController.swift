@@ -41,14 +41,18 @@ class DynamicIslandWindowController: NSWindowController {
         let vm = self.vm!
 
         vm.isFloatingCapsule = !hasNotch && vm.uiSettings.floatingCapsuleEnabled
+        // 有刘海时记录刘海高度,用于将所有顶部对齐的面板下移,避免被物理挖孔遮挡。
+        vm.displayTopInset = hasNotch ? notchSize.height : 0
 
         if vm.isFloatingCapsule {
             vm.updateDeviceNotchRectForFloatingCapsule()
         } else {
             let size = hasNotch ? notchSize : CGSize(width: 150, height: 28)
+            // 有刘海时机身位于刘海内部;但闭合胶囊下移到刘海下方,确保内容可见。
+            let yOffset = hasNotch ? notchSize.height : 0
             vm.deviceNotchRect = CGRect(
                 x: screen.frame.origin.x + (screen.frame.width - size.width) / 2,
-                y: screen.frame.origin.y + screen.frame.height - size.height,
+                y: screen.frame.origin.y + screen.frame.height - size.height - yOffset,
                 width: size.width,
                 height: size.height
             )
