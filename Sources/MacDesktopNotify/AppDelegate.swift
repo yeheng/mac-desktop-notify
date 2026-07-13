@@ -7,6 +7,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var island: AppIntegration?
     var apiServer: APIServer?
     var localNotifyServer: LocalNotifyServer?
+    var extensionHost: AtollExtensionHost?
     var statusItem: NSStatusItem?
     private let statusMenu = NSMenu()
     private var cancellables: Set<AnyCancellable> = []
@@ -113,6 +114,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             print("Failed to start local notify server: \(error)")
         }
 
+        // Start the AtollExtensionKit XPC host stub.
+        let host = AtollExtensionHost()
+        extensionHost = host
+        host.start()
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(rebuildWindow),
@@ -124,6 +130,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         apiServer?.stop()
         localNotifyServer?.stop()
+        extensionHost?.stop()
         EventMonitors.shared.stop()
     }
 
