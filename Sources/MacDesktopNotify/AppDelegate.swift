@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var mainWindowController: DynamicIslandWindowController?
+    var island: AppIntegration?
     var apiServer: APIServer?
     var localNotifyServer: LocalNotifyServer?
     var statusItem: NSStatusItem?
@@ -169,6 +170,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         manager.add(record)
 
+        island?.popNotification()
         mainWindowController?.vm?.notchPop(.notification)
     }
 
@@ -177,17 +179,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainWindowController = nil
 
         guard let screen = NSScreen.builtIn ?? NSScreen.main else { return }
-        let controller = DynamicIslandWindowController(
-            screen: screen,
-            manager: manager,
-            eventBus: eventBus
-        )
-        mainWindowController = controller
+        island = AppIntegration(screen: screen, eventBus: eventBus)
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
-        guard let vm = mainWindowController?.vm else { return true }
-        vm.notchOpen(.click)
+        island?.openIsland()
         return true
     }
 
@@ -263,15 +259,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func openNotificationCenterFromMenu() {
-        guard let vm = mainWindowController?.vm else { return }
-        vm.notchOpen(.click)
-        vm.showNotificationCenter()
+        island?.openIsland()
     }
 
     @objc private func openSettingsFromMenu() {
-        guard let vm = mainWindowController?.vm else { return }
-        vm.notchOpen(.click)
-        vm.showSettings()
+        island?.openSettings()
     }
 
     @objc private func toggleAutoCloseFromMenu() {

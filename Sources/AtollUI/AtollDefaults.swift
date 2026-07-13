@@ -24,14 +24,9 @@ enum ExternalDisplayStyle: String, CaseIterable, Defaults.Serializable, Identifi
     var id: String { rawValue }
 }
 
-enum NotchState {
+public enum NotchState {
     case closed
     case open
-}
-
-enum SneakPeekStyle {
-    case standard
-    case inline
 }
 
 // MARK: - Stub types for unported Atoll features referenced by the coordinator

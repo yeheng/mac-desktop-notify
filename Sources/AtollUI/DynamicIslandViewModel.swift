@@ -21,7 +21,7 @@ import Defaults
 import SwiftUI
 
 @MainActor
-class DynamicIslandViewModel: NSObject, ObservableObject {
+public class DynamicIslandViewModel: NSObject, ObservableObject {
     @ObservedObject var coordinator = DynamicIslandViewCoordinator.shared
     @ObservedObject var detector = FullscreenMediaDetector.shared
 
@@ -29,7 +29,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
     let animation: Animation?
 
     @Published var contentType: ContentType = .normal
-    @Published private(set) var notchState: NotchState = .closed
+    @Published public private(set) var notchState: NotchState = .closed
 
     @Published var dragDetectorTargeting: Bool = false
     @Published var dropZoneTargeting: Bool = false
@@ -125,7 +125,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         cancellables.removeAll()
     }
 
-    init(screen: String? = nil) {
+    public init(screen: String? = nil) {
         animation = animationLibrary.animation
 
         super.init()
@@ -331,7 +331,7 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
         return false
     }
 
-    func open() {
+    public func open() {
         let targetSize = calculateDynamicNotchSize()
 
         let applyWindowResize: () -> Void = {

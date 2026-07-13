@@ -20,7 +20,7 @@ import Combine
 import Defaults
 import SwiftUI
 
-enum SneakContentType: Equatable {
+public enum SneakContentType: Equatable {
     case brightness
     case volume
     case backlight
@@ -40,7 +40,7 @@ enum SneakContentType: Equatable {
 }
 
 extension SneakContentType {
-    static func == (lhs: SneakContentType, rhs: SneakContentType) -> Bool {
+    public static func == (lhs: SneakContentType, rhs: SneakContentType) -> Bool {
         switch (lhs, rhs) {
         case (.brightness, .brightness),
              (.volume, .volume),
@@ -75,16 +75,18 @@ extension SneakContentType {
     }
 }
 
-struct sneakPeek {
-    var show: Bool = false
-    var type: SneakContentType = .music
-    var value: CGFloat = 0
-    var icon: String = ""
-    var title: String = ""
-    var subtitle: String = ""
-    var accentColor: Color?
-    var styleOverride: SneakPeekStyle? = nil
-    var targetScreenName: String? = nil
+public struct sneakPeek {
+    public var show: Bool = false
+    public var type: SneakContentType = .music
+    public var value: CGFloat = 0
+    public var icon: String = ""
+    public var title: String = ""
+    public var subtitle: String = ""
+    public var accentColor: Color?
+    public var styleOverride: SneakPeekStyle? = nil
+    public var targetScreenName: String? = nil
+
+    public init() {}
 }
 
 enum BrowserType {
@@ -92,7 +94,7 @@ enum BrowserType {
     case safari
 }
 
-struct ExpandedItem {
+public struct ExpandedItem {
     var show: Bool = false
     var type: SneakContentType = .battery
     var value: CGFloat = 0
@@ -100,8 +102,8 @@ struct ExpandedItem {
     var autoHideDuration: TimeInterval? = nil
 }
 
-class DynamicIslandViewCoordinator: ObservableObject {
-    static let shared = DynamicIslandViewCoordinator()
+public class DynamicIslandViewCoordinator: ObservableObject {
+    public static let shared = DynamicIslandViewCoordinator()
     private var cancellables = Set<AnyCancellable>()
     private var hoverOpenSuppressedUntil: Date = .distantPast
     
@@ -126,7 +128,7 @@ class DynamicIslandViewCoordinator: ObservableObject {
     
     @Published var statsSecondRowExpansion: CGFloat = 1
     @Published var notesLayoutState: NotesLayoutState = .list
-    @Published var selectedExtensionExperienceID: String?
+    @Published public var selectedExtensionExperienceID: String?
     
     
     @AppStorage("firstLaunch") var firstLaunch: Bool = true
@@ -325,7 +327,7 @@ class DynamicIslandViewCoordinator: ObservableObject {
         && Defaults[.enableExtensionNotchTabs]
     }
     
-    func toggleSneakPeek(
+    public func toggleSneakPeek(
         status: Bool,
         type: SneakContentType,
         duration: TimeInterval = 1.5,
@@ -455,7 +457,7 @@ class DynamicIslandViewCoordinator: ObservableObject {
     }
 
     
-    func showEmpty() {
+    public func showEmpty() {
         currentView = .home
     }
     

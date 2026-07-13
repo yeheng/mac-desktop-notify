@@ -14,7 +14,7 @@ import SwiftUI
 /// injects its ``NotifyManager`` + ``EventBus`` for notification routing
 /// (wired later in the integration task).
 @MainActor
-final class DynamicIslandWindowController: ObservableObject {
+public final class DynamicIslandWindowController: ObservableObject {
 
     // MARK: - Per-screen state
 
@@ -25,7 +25,7 @@ final class DynamicIslandWindowController: ObservableObject {
     /// The coordinator that owns the shared tab/sneak-peek state.
     let coordinator: DynamicIslandViewCoordinator
 
-    init(coordinator: DynamicIslandViewCoordinator = .shared) {
+    public init(coordinator: DynamicIslandViewCoordinator = .shared) {
         self.coordinator = coordinator
 
         NotificationCenter.default.addObserver(
@@ -80,7 +80,7 @@ final class DynamicIslandWindowController: ObservableObject {
 
     /// Build, position, and order a window front for `screen`. Re-uses an
     /// existing window if one is already tracked for that screen.
-    func configure(_ screen: NSScreen, content: AnyView) {
+    public func configure(_ screen: NSScreen, content: AnyView) {
         let window = createWindow(for: screen)
         position(window: window, on: screen)
         window.contentView = NSHostingView(rootView: content)

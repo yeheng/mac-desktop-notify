@@ -1,3 +1,4 @@
+import Defaults
 import Foundation
 
 public enum Style {
@@ -28,6 +29,13 @@ public enum NotchViews {
     case clipboard
     case terminal
     case extensionExperience
+}
+
+public enum SneakPeekStyle: String, CaseIterable, Identifiable, Defaults.Serializable {
+    case standard = "Default"
+    case inline = "Inline"
+
+    public var id: String { self.rawValue }
 }
 
 enum NotesLayoutState: Equatable {
