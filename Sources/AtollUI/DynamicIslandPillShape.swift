@@ -22,15 +22,15 @@ import SwiftUI
 /// on external and non-notched displays. Uses `.continuous` rounded corners
 /// for an Apple-style squircle appearance, inspired by DynamicNotchKit's
 /// floating style.
-struct DynamicIslandPillShape: Shape {
+public struct DynamicIslandPillShape: Shape {
     var cornerRadius: CGFloat
 
-    var animatableData: CGFloat {
+    public var animatableData: CGFloat {
         get { cornerRadius }
         set { cornerRadius = newValue }
     }
 
-    func path(in rect: CGRect) -> Path {
+    public func path(in rect: CGRect) -> Path {
         let resolvedRadius = min(cornerRadius, min(rect.width, rect.height) / 2)
         return Path(roundedRect: rect, cornerRadius: resolvedRadius, style: .continuous)
     }

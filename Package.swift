@@ -15,10 +15,6 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "IslandAnimationCore",
-            path: "Sources/IslandAnimationCore"
-        ),
-        .target(
             name: "UnixSocketSupport",
             path: "Sources/UnixSocketSupport"
         ),
@@ -32,11 +28,6 @@ let package = Package(
             path: "Sources/AtollExtensionKit"
         ),
         .testTarget(
-            name: "IslandAnimationCoreTests",
-            dependencies: ["IslandAnimationCore"],
-            path: "Tests/IslandAnimationCoreTests"
-        ),
-        .testTarget(
             name: "MacDesktopNotifyTests",
             dependencies: ["MacDesktopNotify", "UnixSocketSupport"],
             path: "Tests/MacDesktopNotifyTests"
@@ -46,7 +37,6 @@ let package = Package(
             dependencies: [
                 "AtollUI",
                 "AtollExtensionKit",
-                "IslandAnimationCore",
                 "UnixSocketSupport",
                 .product(name: "Swifter", package: "swifter"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui")

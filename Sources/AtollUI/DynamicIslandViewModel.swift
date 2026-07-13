@@ -110,7 +110,7 @@ public class DynamicIslandViewModel: NSObject, ObservableObject {
 
     @Published var screen: String?
 
-    @Published var notchSize: CGSize = getClosedNotchSize()
+    @Published public var notchSize: CGSize = getClosedNotchSize()
     @Published var closedNotchSize: CGSize = getClosedNotchSize()
     
     @MainActor

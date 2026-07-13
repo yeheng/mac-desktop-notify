@@ -31,17 +31,23 @@ final class AppIntegration {
     /// The view model for the currently active (staged) screen.
     private(set) var viewModel: AtollUI.DynamicIslandViewModel?
 
+    /// Content adapter driving the notification cards / header / settings.
+    private(set) var contentViewModel: ContentViewModel?
+
     private var cancellables: Set<AnyCancellable> = []
 
     // MARK: - Init
 
-    init(screen: NSScreen, eventBus: NotificationEventBus) {
+    init(screen: NSScreen, eventBus: NotificationEventBus, manager: NotifyManager) {
+        self.manager = manager
         coordinator = AtollUI.DynamicIslandViewCoordinator.shared
         windowController = AtollUI.DynamicIslandWindowController(coordinator: coordinator)
 
         stage(screen: screen)
         wire(eventBus: eventBus)
     }
+
+    private let manager: NotifyManager
 
     deinit {
         cancellables.forEach { $0.cancel() }
@@ -54,7 +60,11 @@ final class AppIntegration {
     func stage(screen: NSScreen) {
         let vm = AtollUI.DynamicIslandViewModel(screen: screen.localizedName)
         viewModel = vm
-        windowController.configure(screen, content: AnyView(AtollUI.DynamicIslandContainerView(vm: vm)))
+        let content = ContentViewModel()
+        contentViewModel = content
+        let root = DynamicIslandRootView(vm: content, islandVM: vm)
+            .environment(manager)
+        windowController.configure(screen, content: AnyView(root))
     }
 
     // MARK: - Event wiring

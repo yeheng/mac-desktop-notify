@@ -22,11 +22,11 @@
 
 import SwiftUI
 
-struct NotchShape: Shape {
+public struct NotchShape: Shape {
     private var topCornerRadius: CGFloat
     private var bottomCornerRadius: CGFloat
 
-    init(
+    public init(
         topCornerRadius: CGFloat? = nil,
         bottomCornerRadius: CGFloat? = nil
     ) {
@@ -34,7 +34,7 @@ struct NotchShape: Shape {
         self.bottomCornerRadius = bottomCornerRadius ?? 14
     }
 
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+    public var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get {
             .init(
                 topCornerRadius,
@@ -47,7 +47,7 @@ struct NotchShape: Shape {
         }
     }
 
-    func path(in rect: CGRect) -> Path {
+    public func path(in rect: CGRect) -> Path {
         var path = Path()
 
         path.move(

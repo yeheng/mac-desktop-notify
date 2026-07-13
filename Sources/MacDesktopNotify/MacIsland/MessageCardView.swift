@@ -5,7 +5,7 @@ import SwiftUI
 
 struct MessageCard: View {
     let item: NotificationRecord
-    @ObservedObject var vm: DynamicIslandViewModel
+    @ObservedObject var vm: ContentViewModel
     @Environment(NotifyManager.self) var manager
     @State private var isHovered = false
     @State private var isExpanded = true

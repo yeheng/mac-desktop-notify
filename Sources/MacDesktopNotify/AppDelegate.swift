@@ -4,7 +4,6 @@ import SwiftUI
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    var mainWindowController: DynamicIslandWindowController?
     var island: AppIntegration?
     var apiServer: APIServer?
     var localNotifyServer: LocalNotifyServer?
@@ -142,10 +141,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "clear":
             manager.clear()
         case "settings":
-            mainWindowController?.vm?.notchOpen(.click)
-            mainWindowController?.vm?.showSettings()
+            island?.openSettings()
         case "list":
-            mainWindowController?.vm?.notchOpen(.click)
+            island?.openIsland()
         default:
             break
         }
@@ -171,15 +169,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         manager.add(record)
 
         island?.popNotification()
-        mainWindowController?.vm?.notchPop(.notification)
     }
 
     @objc func rebuildWindow() {
-        mainWindowController?.destroy()
-        mainWindowController = nil
-
         guard let screen = NSScreen.builtIn ?? NSScreen.main else { return }
-        island = AppIntegration(screen: screen, eventBus: eventBus)
+        island = AppIntegration(screen: screen, eventBus: eventBus, manager: manager)
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
