@@ -4,6 +4,17 @@ import Combine
 import Defaults
 import Foundation
 
+// MARK: - Screen-capture visibility (privacy helper)
+
+struct ScreenCaptureVisibilityManager {
+    static let shared = ScreenCaptureVisibilityManager()
+    enum Scope { case entireInterface, panelsOnly }
+    func register(_: NSWindow, scope _: Scope) {
+        // Opacity-hiding during screen capture is an Atoll feature; we use
+        // the window's built-in .fullScreenAuxiliary behavior instead.
+    }
+}
+
 // MARK: - Enums used by Defaults keys (ported from Atoll's enums/generic.swift + Constants.swift)
 
 enum ExternalDisplayStyle: String, CaseIterable, Defaults.Serializable, Identifiable {
