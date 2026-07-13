@@ -1,0 +1,98 @@
+import Defaults
+import Foundation
+
+// MARK: - Enums used by Defaults keys (ported from Atoll's enums/generic.swift + Constants.swift)
+
+enum ExternalDisplayStyle: String, CaseIterable, Defaults.Serializable, Identifiable {
+    case notch = "Standard Notch"
+    case dynamicIsland = "Dynamic Island"
+
+    var id: String { rawValue }
+}
+
+enum NotchState {
+    case closed
+    case open
+}
+
+enum WindowHeightMode: String, Defaults.Serializable {
+    case matchMenuBar = "Match menubar height"
+    case matchRealNotchSize = "Match real notch height"
+    case custom = "Custom height"
+}
+
+enum ClipboardDisplayMode: String, CaseIterable, Codable, Defaults.Serializable {
+    case popover
+    case panel
+    case separateTab
+}
+
+enum TimerDisplayMode: String, CaseIterable, Defaults.Serializable, Identifiable {
+    case tab
+    case popover
+
+    var id: String { rawValue }
+}
+
+// MARK: - Defaults keys read by Atoll's sizing engine
+//
+// Many keys back Atoll features MacDesktopNotify does not have (lyrics, stats,
+// terminal, shelf, calendar, mirror, physical-notch customization). They sit at
+// safe defaults so the ported sizing engine compiles and behaves correctly when
+// those features are disabled.
+
+// MARK: - Minimal stubs for disabled Atoll features referenced by Sizing.swift
+//
+// These back features MacDesktopNotify does not port (reminder live activity, external timer,
+// minimalistic music player). They no-op when the matching Defaults keys are disabled, which
+// is always — the keys above default to `false`.
+
+struct ReminderEntry { let id: String = "" }
+
+struct ReminderLiveActivityManager {
+    static let shared = ReminderLiveActivityManager()
+    let activeWindowReminders: [ReminderEntry] = []
+    static func additionalHeight(forRowCount _: Int) -> CGFloat { 0 }
+}
+
+struct TimerManager {
+    static let shared = TimerManager()
+    var isExternalTimerActive: Bool { false }
+}
+
+final class DynamicIslandViewCoordinator: ObservableObject {
+    static let shared = DynamicIslandViewCoordinator()
+    var timerLiveActivityEnabled: Bool { false }
+}
+
+extension Defaults.Keys {
+    // Keys MacDesktopNotify uses (values migrated from UISettingsState in Task 8)
+    static let openNotchWidth              = Key<CGFloat>("atoll.openNotchWidth", default: 640)
+    static let closedNotchWidth            = Key<CGFloat>("atoll.closedNotchWidth", default: 200)
+    static let notchHeight                 = Key<CGFloat>("atoll.notchHeight", default: 32)
+    static let nonNotchHeight              = Key<CGFloat>("atoll.nonNotchHeight", default: 28)
+    static let externalDisplayStyle        = Key<ExternalDisplayStyle>("atoll.externalDisplayStyle", default: .dynamicIsland)
+    static let enableMinimalisticUI        = Key<Bool>("atoll.enableMinimalisticUI", default: false)
+
+    // Atoll-feature keys — stay at defaults (features disabled in MacDesktopNotify)
+    static let notchHeightMode             = Key<WindowHeightMode>("atoll.notchHeightMode", default: .custom)
+    static let nonNotchHeightMode          = Key<WindowHeightMode>("atoll.nonNotchHeightMode", default: .custom)
+    static let customizePhysicalNotchWidth = Key<Bool>("atoll.customizePhysicalNotchWidth", default: false)
+    static let enableLyrics                = Key<Bool>("atoll.enableLyrics", default: false)
+    static let enableStatsFeature          = Key<Bool>("atoll.enableStatsFeature", default: false)
+    static let enableTimerFeature          = Key<Bool>("atoll.enableTimerFeature", default: false)
+    static let enableNotes                 = Key<Bool>("atoll.enableNotes", default: true)
+    static let enableClipboardManager      = Key<Bool>("atoll.enableClipboardManager", default: false)
+    static let enableTerminalFeature       = Key<Bool>("atoll.enableTerminalFeature", default: false)
+    static let dynamicShelf                = Key<Bool>("atoll.dynamicShelf", default: false)
+    static let showStandardMediaControls   = Key<Bool>("atoll.showStandardMediaControls", default: false)
+    static let showCalendar                = Key<Bool>("atoll.showCalendar", default: false)
+    static let showMirror                  = Key<Bool>("atoll.showMirror", default: false)
+    static let showCpuGraph                = Key<Bool>("atoll.showCpuGraph", default: false)
+    static let showMemoryGraph             = Key<Bool>("atoll.showMemoryGraph", default: false)
+    static let showGpuGraph                = Key<Bool>("atoll.showGpuGraph", default: false)
+    static let showNetworkGraph            = Key<Bool>("atoll.showNetworkGraph", default: false)
+    static let showDiskGraph               = Key<Bool>("atoll.showDiskGraph", default: false)
+    static let timerDisplayMode            = Key<TimerDisplayMode>("atoll.timerDisplayMode", default: .tab)
+    static let clipboardDisplayMode        = Key<ClipboardDisplayMode>("atoll.clipboardDisplayMode", default: .panel)
+}
