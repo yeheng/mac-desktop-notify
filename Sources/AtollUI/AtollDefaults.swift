@@ -1,3 +1,4 @@
+import Combine
 import Defaults
 import Foundation
 
@@ -13,6 +14,44 @@ enum ExternalDisplayStyle: String, CaseIterable, Defaults.Serializable, Identifi
 enum NotchState {
     case closed
     case open
+}
+
+enum SneakPeekStyle {
+    case standard
+    case inline
+}
+
+// MARK: - Stub types for unported Atoll features referenced by the coordinator
+
+struct ExtensionNotchExperienceDescriptor {
+    var id: String = ""
+    var tab: TabConfiguration? = nil
+    struct TabConfiguration {
+        var title: String = ""
+        var preferredHeight: CGFloat? = nil
+    }
+}
+
+struct ExtensionNotchExperiencePayload {
+    var descriptor: ExtensionNotchExperienceDescriptor = .init()
+    var bundleIdentifier: String = ""
+}
+
+final class ExtensionNotchExperienceManager: ObservableObject {
+    static let shared = ExtensionNotchExperienceManager()
+    @Published var activeExperiences: [ExtensionNotchExperiencePayload] = []
+    func payload(experienceID _: String) -> ExtensionNotchExperiencePayload? { nil }
+    func highestPriorityTabPayload() -> ExtensionNotchExperiencePayload? { nil }
+    func minimalisticReplacementPayload() -> ExtensionNotchExperiencePayload? { nil }
+}
+
+struct TrayDrop {
+    static let shared = TrayDrop()
+    var isEmpty: Bool { true }
+}
+
+extension Notification.Name {
+    static let selectedScreenChanged = Notification.Name("SelectedScreenChanged")
 }
 
 enum WindowHeightMode: String, Defaults.Serializable {
@@ -60,10 +99,9 @@ struct TimerManager {
     var isExternalTimerActive: Bool { false }
 }
 
-final class DynamicIslandViewCoordinator: ObservableObject {
-    static let shared = DynamicIslandViewCoordinator()
-    var timerLiveActivityEnabled: Bool { false }
-}
+// NOTE: DynamicIslandViewCoordinator stub intentionally removed — the real
+// implementation is ported in DynamicIslandViewCoordinator.swift (Task 5).
+// The timerLiveActivityEnabled override lives there now.
 
 extension Defaults.Keys {
     // Keys MacDesktopNotify uses (values migrated from UISettingsState in Task 8)
@@ -95,4 +133,12 @@ extension Defaults.Keys {
     static let showDiskGraph               = Key<Bool>("atoll.showDiskGraph", default: false)
     static let timerDisplayMode            = Key<TimerDisplayMode>("atoll.timerDisplayMode", default: .tab)
     static let clipboardDisplayMode        = Key<ClipboardDisplayMode>("atoll.clipboardDisplayMode", default: .panel)
+
+    // Coordinator / sneak-peek keys (referenced by DynamicIslandViewCoordinator)
+    static let enableSystemHUD             = Key<Bool>("atoll.enableSystemHUD", default: true)
+    static let enableThirdPartyExtensions  = Key<Bool>("atoll.enableThirdPartyExtensions", default: false)
+    static let enableExtensionNotchExperiences = Key<Bool>("atoll.enableExtensionNotchExperiences", default: false)
+    static let enableExtensionNotchTabs    = Key<Bool>("atoll.enableExtensionNotchTabs", default: false)
+    static let reminderSneakPeekDuration   = Key<TimeInterval>("atoll.reminderSneakPeekDuration", default: 3)
+    static let openShelfByDefault          = Key<Bool>("atoll.openShelfByDefault", default: false)
 }
