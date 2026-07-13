@@ -1,3 +1,5 @@
+import AppKit
+import AVFoundation
 import Combine
 import Defaults
 import Foundation
@@ -86,18 +88,7 @@ enum TimerDisplayMode: String, CaseIterable, Defaults.Serializable, Identifiable
 // minimalistic music player). They no-op when the matching Defaults keys are disabled, which
 // is always — the keys above default to `false`.
 
-struct ReminderEntry { let id: String = "" }
-
-struct ReminderLiveActivityManager {
-    static let shared = ReminderLiveActivityManager()
-    let activeWindowReminders: [ReminderEntry] = []
-    static func additionalHeight(forRowCount _: Int) -> CGFloat { 0 }
-}
-
-struct TimerManager {
-    static let shared = TimerManager()
-    var isExternalTimerActive: Bool { false }
-}
+struct ReminderEntry: Equatable { let id: String = "" }
 
 // NOTE: DynamicIslandViewCoordinator stub intentionally removed — the real
 // implementation is ported in DynamicIslandViewCoordinator.swift (Task 5).
@@ -141,4 +132,65 @@ extension Defaults.Keys {
     static let enableExtensionNotchTabs    = Key<Bool>("atoll.enableExtensionNotchTabs", default: false)
     static let reminderSneakPeekDuration   = Key<TimeInterval>("atoll.reminderSneakPeekDuration", default: 3)
     static let openShelfByDefault          = Key<Bool>("atoll.openShelfByDefault", default: false)
+    static let enableFullscreenMediaDetection = Key<Bool>("atoll.enableFullscreenMediaDetection", default: false)
+}
+
+// MARK: - Manager stubs for DynamicIslandViewModel
+//
+// These mirror just enough surface for the ported DynamicIslandViewModel to
+// compile. All are disabled-by-default Atoll features (music, clipboard, webcam,
+// shelf, fullscreen detection). The real AppDelegate integration
+// (Task 9) replaces the delegate stub.
+
+typealias AppDelegate = AtollAppDelegate
+
+final class AtollAppDelegate: NSObject {
+    private static let _shared = AtollAppDelegate()
+    static var shared: AtollAppDelegate? { _shared }
+    func ensureWindowSize(_ size: CGSize, animated: Bool, force: Bool = false) {}
+}
+
+final class WebcamManager: ObservableObject {
+    static let shared = WebcamManager()
+    var authorizationStatus: AVAuthorizationStatus = .notDetermined
+    var isSessionRunning: Bool = false
+    var cameraAvailable: Bool = false
+    func startSession() {}
+    func stopSession() {}
+    func checkAndRequestVideoAuthorization() {}
+}
+
+final class MusicManager: ObservableObject {
+    static let shared = MusicManager()
+    @Published var currentLyrics: String? = nil
+    func forceUpdate() {}
+}
+
+struct ClipboardManager {
+    static let shared = ClipboardManager()
+    var isMonitoring: Bool = false
+    var lastCopiedItemDate: Date? = nil
+}
+
+final class FullscreenMediaDetector: ObservableObject {
+    static let shared = FullscreenMediaDetector()
+    @Published var fullscreenStatus: [String: Bool] = [:]
+}
+
+struct ShelfStateViewModel {
+    static let shared = ShelfStateViewModel()
+    var isEmpty: Bool { true }
+}
+
+final class TimerManager: ObservableObject {
+    static let shared = TimerManager()
+    @Published var activeSource: String? = nil
+    @Published var isTimerActive: Bool = false
+    var isExternalTimerActive: Bool { false }
+}
+
+final class ReminderLiveActivityManager: ObservableObject {
+    static let shared = ReminderLiveActivityManager()
+    @Published var activeWindowReminders: [ReminderEntry] = []
+    static func additionalHeight(forRowCount _: Int) -> CGFloat { 0 }
 }
