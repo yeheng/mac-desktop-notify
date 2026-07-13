@@ -4,7 +4,7 @@ import SwiftUI
 // MARK: - Content View
 
 struct DynamicIslandContentView: View {
-    @ObservedObject var vm: DynamicIslandViewModel
+    @ObservedObject var vm: ContentViewModel
     @Environment(NotifyManager.self) var manager
 
     var body: some View {
@@ -163,8 +163,6 @@ struct DynamicIslandContentView: View {
                         unit: "pt"
                     )
                 }
-
-                IslandAnimationSettingsView(vm: vm)
 
                 SettingsSection(title: "消息卡片") {
                     SettingsSliderRow(

@@ -4,9 +4,10 @@ import SwiftUI
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    var mainWindowController: DynamicIslandWindowController?
+    var island: AppIntegration?
     var apiServer: APIServer?
     var localNotifyServer: LocalNotifyServer?
+    var extensionHost: AtollExtensionHost?
     var statusItem: NSStatusItem?
     private let statusMenu = NSMenu()
     private var cancellables: Set<AnyCancellable> = []
@@ -113,6 +114,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             print("Failed to start local notify server: \(error)")
         }
 
+        // Start the AtollExtensionKit XPC host stub.
+        let host = AtollExtensionHost()
+        extensionHost = host
+        host.start()
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(rebuildWindow),
@@ -124,6 +130,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         apiServer?.stop()
         localNotifyServer?.stop()
+        extensionHost?.stop()
         EventMonitors.shared.stop()
     }
 
@@ -141,10 +148,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "clear":
             manager.clear()
         case "settings":
-            mainWindowController?.vm?.notchOpen(.click)
-            mainWindowController?.vm?.showSettings()
+            island?.openSettings()
         case "list":
-            mainWindowController?.vm?.notchOpen(.click)
+            island?.openIsland()
         default:
             break
         }
@@ -169,25 +175,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         manager.add(record)
 
-        mainWindowController?.vm?.notchPop(.notification)
+        island?.popNotification()
     }
 
     @objc func rebuildWindow() {
-        mainWindowController?.destroy()
-        mainWindowController = nil
-
         guard let screen = NSScreen.builtIn ?? NSScreen.main else { return }
-        let controller = DynamicIslandWindowController(
-            screen: screen,
-            manager: manager,
-            eventBus: eventBus
-        )
-        mainWindowController = controller
+        island = AppIntegration(screen: screen, eventBus: eventBus, manager: manager)
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
-        guard let vm = mainWindowController?.vm else { return true }
-        vm.notchOpen(.click)
+        island?.openIsland()
         return true
     }
 
@@ -263,15 +260,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func openNotificationCenterFromMenu() {
-        guard let vm = mainWindowController?.vm else { return }
-        vm.notchOpen(.click)
-        vm.showNotificationCenter()
+        island?.openIsland()
     }
 
     @objc private func openSettingsFromMenu() {
-        guard let vm = mainWindowController?.vm else { return }
-        vm.notchOpen(.click)
-        vm.showSettings()
+        island?.openSettings()
     }
 
     @objc private func toggleAutoCloseFromMenu() {

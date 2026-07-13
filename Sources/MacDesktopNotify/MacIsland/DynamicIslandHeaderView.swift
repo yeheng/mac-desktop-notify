@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct DynamicIslandHeaderView: View {
-    @ObservedObject var vm: DynamicIslandViewModel
+    @ObservedObject var vm: ContentViewModel
     @Environment(NotifyManager.self) var manager
 
     var body: some View {

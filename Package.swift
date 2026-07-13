@@ -10,21 +10,22 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/httpswift/swifter.git", from: "1.5.0"),
-        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.3.0")
+        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.3.0"),
+        .package(url: "https://github.com/sindresorhus/Defaults.git", from: "8.0.0")
     ],
     targets: [
-        .target(
-            name: "IslandAnimationCore",
-            path: "Sources/IslandAnimationCore"
-        ),
         .target(
             name: "UnixSocketSupport",
             path: "Sources/UnixSocketSupport"
         ),
-        .testTarget(
-            name: "IslandAnimationCoreTests",
-            dependencies: ["IslandAnimationCore"],
-            path: "Tests/IslandAnimationCoreTests"
+        .target(
+            name: "AtollUI",
+            dependencies: ["Defaults"],
+            path: "Sources/AtollUI"
+        ),
+        .target(
+            name: "AtollExtensionKit",
+            path: "Sources/AtollExtensionKit"
         ),
         .testTarget(
             name: "MacDesktopNotifyTests",
@@ -34,7 +35,8 @@ let package = Package(
         .executableTarget(
             name: "MacDesktopNotify",
             dependencies: [
-                "IslandAnimationCore",
+                "AtollUI",
+                "AtollExtensionKit",
                 "UnixSocketSupport",
                 .product(name: "Swifter", package: "swifter"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui")
