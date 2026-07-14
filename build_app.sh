@@ -68,10 +68,10 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<PLIST
     <array>
         <dict>
             <key>CFBundleURLName</key>
-            <string>${BUNDLE_ID}.notify</string>
+            <string>${BUNDLE_ID}.push</string>
             <key>CFBundleURLSchemes</key>
             <array>
-                <string>macdesktopnotify</string>
+                <string>notch-notify</string>
             </array>
         </dict>
     </array>

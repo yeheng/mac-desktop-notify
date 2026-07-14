@@ -1,53 +1,23 @@
-// swift-tools-version:5.9
+// swift-tools-version:6.0
 import PackageDescription
 
 let package = Package(
     name: "MacDesktopNotify",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "MacDesktopNotify", targets: ["MacDesktopNotify"]),
-        .executable(name: "mac-notify", targets: ["MacNotifyCLI"])
+        .executable(name: "MacDesktopNotify", targets: ["MacDesktopNotify"])
     ],
     dependencies: [
-        .package(url: "https://github.com/httpswift/swifter.git", from: "1.5.0"),
-        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.3.0"),
-        .package(url: "https://github.com/sindresorhus/Defaults.git", from: "8.0.0")
+        .package(url: "https://github.com/MrKai77/DynamicNotchKit", from: "1.0.0")
     ],
     targets: [
-        .target(
-            name: "UnixSocketSupport",
-            path: "Sources/UnixSocketSupport"
-        ),
-        .target(
-            name: "AtollUI",
-            dependencies: ["Defaults"],
-            path: "Sources/AtollUI"
-        ),
-        .target(
-            name: "AtollExtensionKit",
-            path: "Sources/AtollExtensionKit"
-        ),
-        .testTarget(
-            name: "MacDesktopNotifyTests",
-            dependencies: ["MacDesktopNotify", "UnixSocketSupport"],
-            path: "Tests/MacDesktopNotifyTests"
-        ),
         .executableTarget(
             name: "MacDesktopNotify",
             dependencies: [
-                "AtollUI",
-                "AtollExtensionKit",
-                "UnixSocketSupport",
-                .product(name: "Swifter", package: "swifter"),
-                .product(name: "MarkdownUI", package: "swift-markdown-ui")
+                .product(name: "DynamicNotchKit", package: "DynamicNotchKit")
             ],
             path: "Sources/MacDesktopNotify",
             exclude: ["Info.plist"]
-        ),
-        .executableTarget(
-            name: "MacNotifyCLI",
-            dependencies: ["UnixSocketSupport"],
-            path: "Sources/MacNotifyCLI"
         )
     ]
 )
