@@ -20,12 +20,21 @@ enum URLNotificationParser {
         let urgency = UrgencyLevel(rawValue: value("urgency") ?? "") ?? .normal
 
         let timeout: TimeInterval
+        let usesDefaultTimeout: Bool
         if let raw = value("timeout"), let parsed = TimeInterval(raw) {
             timeout = min(max(parsed, timeoutRange.lowerBound), timeoutRange.upperBound)
+            usesDefaultTimeout = false
         } else {
             timeout = defaultTimeout
+            usesDefaultTimeout = true
         }
 
-        return NotchNotification(title: title, bodyMarkdown: body, urgency: urgency, timeout: timeout)
+        return NotchNotification(
+            title: title,
+            bodyMarkdown: body,
+            urgency: urgency,
+            timeout: timeout,
+            usesDefaultTimeout: usesDefaultTimeout
+        )
     }
 }

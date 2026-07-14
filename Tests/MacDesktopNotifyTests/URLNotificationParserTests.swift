@@ -13,6 +13,7 @@ final class URLNotificationParserTests: XCTestCase {
         XCTAssertEqual(n?.bodyMarkdown, "done")
         XCTAssertEqual(n?.urgency, .critical)
         XCTAssertEqual(n?.timeout, 10)
+        XCTAssertEqual(n?.usesDefaultTimeout, false)
     }
 
     func testMissingTitleReturnsNil() {
@@ -28,6 +29,7 @@ final class URLNotificationParserTests: XCTestCase {
         XCTAssertEqual(n?.bodyMarkdown, "")
         XCTAssertEqual(n?.urgency, .normal)
         XCTAssertEqual(n?.timeout, 6)
+        XCTAssertEqual(n?.usesDefaultTimeout, true)
     }
 
     func testUnknownUrgencyFallsBackToNormal() {

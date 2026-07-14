@@ -8,13 +8,14 @@
 
 ## 特性
 
-- 🖥️ **Dynamic Notch 风格 UI** — 通过 [DynamicNotchKit](https://github.com/MrKai77/DynamicNotchKit) 在灵动岛/菜单栏位置展示通知
+- 🖥️ **Vibe Island 风格 UI** — 常驻摘要态、悬停展开、消息自动展开和内容切换动画
 - 🔗 **URL Scheme 推送** — 通过 `notch-notify://` 协议从任何语言/脚本发送通知
 - 📝 **Markdown 渲染** — 通知正文支持 Markdown（行内格式 + 代码块）
-- ⏱️ **自动消失** — 可配置超时时间，支持悬停暂停计时
+- ⏱️ **智能收起** — 普通消息按停留时间收起，悬停暂停，Critical 消息保持展开
 - 👆 **手势关闭** — 下拉手势关闭当前通知
-- 🎯 **队列管理** — 最多 10 条通知排队，依次展示
+- 🎯 **消息历史** — 最多保留 10 条消息，收起后再次悬停仍可查看
 - 🎨 **紧急度颜色** — 低/中/高三级紧急度对应不同颜色指示点
+- ⚙️ **完整设置** — 行为、显示、通知、声音、快捷键和登录启动配置
 
 ---
 
@@ -55,7 +56,7 @@ swift build -c release
 | `title` | `string` | ✅ | — | 通知标题 |
 | `body` | `string` | ❌ | _(空)_ | 通知正文，最大 5000 字符，支持 Markdown |
 | `urgency` | `string` | ❌ | `"normal"` | 紧急度：`"low"` / `"normal"` / `"critical"` |
-| `timeout` | `number` | ❌ | `6` | 自动消失秒数，范围 1-60 |
+| `timeout` | `number` | ❌ | 设置值（默认 `5`） | 自动收起秒数，范围 1-60；传入后覆盖设置值 |
 
 #### 基础示例
 
@@ -140,7 +141,7 @@ NSWorkspace.shared.open(components.url!)
 open 'notch-notify://clear'
 ```
 
-清除当前展示的通知和队列中的所有待展示通知。
+清除当前展示的通知、待展示队列和摘要历史。
 
 ---
 
@@ -168,8 +169,9 @@ open 'notch-notify://clear'
 
 | 选项 | 说明 |
 |------|------|
-| **Clear** | 清除当前和所有待展示的通知 |
-| **Quit NotchNotify** | 退出应用（快捷键 `q`） |
+| **设置…** | 打开 Vibe Island 风格设置窗口 |
+| **清除消息** | 清除当前、待展示和历史消息 |
+| **退出 MacDesktopNotify** | 退出应用（快捷键 `q`） |
 
 ---
 
@@ -177,9 +179,14 @@ open 'notch-notify://clear'
 
 | 操作 | 说明 |
 |------|------|
-| 悬停在通知上 | 暂停自动消失计时器 |
+| 鼠标靠近刘海 | 延迟 150ms 后展开消息面板 |
+| 悬停在通知上 | 暂停自动收起计时器 |
 | 下拉拖拽通知 | 关闭当前通知，自动展示下一条 |
-| 超过超时时间 | 自动收起，展示下一条通知 |
+| 超过停留时间 | 收起到摘要态或隐藏，历史消息仍然保留 |
+| `⌘⇧N` | 切换展开/收起状态 |
+| `⌘,` | 打开设置 |
+| `⌘Delete` | 清除消息 |
+| `Esc` | 收起面板 |
 
 ---
 
@@ -194,7 +201,7 @@ open 'notch-notify://clear'
 
 | 库 | 说明 |
 |----|------|
-| [DynamicNotchKit](https://github.com/MrKai77/DynamicNotchKit) | macOS 灵动岛风格 UI 框架 |
+| [DynamicNotchKit](https://github.com/yeheng/DynamicNotchKit) | macOS 灵动岛窗口、摘要态与转场基础 |
 
 ---
 
@@ -204,11 +211,16 @@ open 'notch-notify://clear'
 Sources/MacDesktopNotify/
 ├── main.swift                          # 入口
 ├── AppDelegate.swift                   # 应用代理，URL Scheme 处理，菜单
-├── NotificationManager.swift            # 通知队列管理 + 展示循环
+├── AppSettings.swift                    # 类型化设置与持久化
+├── IslandDisplayState.swift             # 灵动岛展示状态
+├── IslandGeometry.swift                 # 刘海检测和悬停触发区
+├── NotificationManager.swift            # 消息历史、队列和展示状态机
 ├── NotchNotification.swift              # 通知数据模型
-├── NotchPresenter.swift                 # DynamicNotchKit 桥接层
+├── NotchPresenter.swift                 # DynamicNotchKit 桥接和全局悬停监控
 ├── URLNotificationParser.swift          # URL Scheme 参数解析
-├── MarkdownNotificationView.swift       # 通知卡片 UI
+├── MarkdownNotificationView.swift       # Compact/Expanded/历史/Markdown UI
+├── SettingsView.swift                   # 设置页面
+├── SettingsWindowController.swift       # 设置窗口生命周期
 └── MarkdownRenderer.swift              # Markdown → AttributedString 简易解析器
 ```
 

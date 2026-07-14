@@ -8,7 +8,7 @@ let package = Package(
         .executable(name: "MacDesktopNotify", targets: ["MacDesktopNotify"])
     ],
     dependencies: [
-        .package(url: "https://github.com/MrKai77/DynamicNotchKit", from: "1.0.0")
+        .package(url: "https://github.com/yeheng/DynamicNotchKit", branch: "main")
     ],
     targets: [
         .executableTarget(

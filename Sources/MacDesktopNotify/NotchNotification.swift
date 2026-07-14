@@ -10,6 +10,7 @@ struct NotchNotification: Identifiable, Sendable, Equatable {
     let bodyMarkdown: String
     let urgency: UrgencyLevel
     let timeout: TimeInterval
+    let usesDefaultTimeout: Bool
     let timestamp: Date
 
     init(
@@ -18,6 +19,7 @@ struct NotchNotification: Identifiable, Sendable, Equatable {
         bodyMarkdown: String,
         urgency: UrgencyLevel,
         timeout: TimeInterval,
+        usesDefaultTimeout: Bool = false,
         timestamp: Date = Date()
     ) {
         self.id = id
@@ -25,6 +27,7 @@ struct NotchNotification: Identifiable, Sendable, Equatable {
         self.bodyMarkdown = bodyMarkdown
         self.urgency = urgency
         self.timeout = timeout
+        self.usesDefaultTimeout = usesDefaultTimeout
         self.timestamp = timestamp
     }
 }
