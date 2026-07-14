@@ -18,6 +18,11 @@ let package = Package(
             ],
             path: "Sources/MacDesktopNotify",
             exclude: ["Info.plist"]
+        ),
+        .testTarget(
+            name: "MacDesktopNotifyTests",
+            dependencies: ["MacDesktopNotify"],
+            path: "Tests/MacDesktopNotifyTests"
         )
     ]
 )
