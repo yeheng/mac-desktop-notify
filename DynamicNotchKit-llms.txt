@@ -1,0 +1,395 @@
+# DynamicNotchKit
+
+> DynamicNotchKit is a Swift framework that lets your macOS app integrate with the MacBook Pro notch, providing a Dynamic Island-like experience. It renders custom SwiftUI views in a floating notch-styled window, with built-in support for expanded and compact display states, automatic fallback to a floating style on notched-less Macs, and smooth animated transitions.
+
+## Overview
+
+- [GitHub Repository](https://github.com/mrkai77/DynamicNotchKit): Source code, issues, and contributions.
+- [Installation](https://github.com/mrkai77/DynamicNotchKit#installation): Add via Xcode's Swift Package Manager (macOS 13+).
+- [Demo Video](https://github.com/user-attachments/assets/09a139a8-1a40-4214-bcd9-1937764fb071): Video walkthrough in action.
+
+## Core Concepts
+
+### DynamicNotch
+
+The primary class for displaying fully custom content in a notch-style window. You provide SwiftUI views for the expanded and compact states.
+
+### DynamicNotchInfo
+
+A convenience wrapper around `DynamicNotch` that provides a predefined layout (icon, title, description) for quickly displaying information.
+
+### Styles
+
+The appearance of the notch, determined by `DynamicNotchStyle`:
+- `.notch` — anchored to the MacBook notch (default on notched Macs)
+- `.floating` — a free-floating popover (default on non-notched Macs)
+- `.auto` — automatically picks based on the screen (default)
+
+### States
+
+Managed by `DynamicNotchState`:
+- `.hidden` — notch is not visible
+- `.expanded` — full content view is shown below the notch
+- `.compact` — leading and trailing contents flank the notch
+
+### Hover Behavior
+
+Configurable via `DynamicNotchHoverBehavior` (an `OptionSet`):
+- `.keepVisible` — keeps the notch open while hovering
+- `.hapticFeedback` — triggers haptic feedback on hover
+- `.increaseShadow` — intensifies the shadow during hover
+- `.all` — all of the above (default)
+
+## DynamicNotch (DynamicNotch/SwiftUI Views)
+
+### Quick Start
+
+```swift
+import DynamicNotchKit
+
+let notch = DynamicNotch {
+    Text("Hello World!")
+}
+await notch.expand()
+```
+
+### Full-Featured Usage (with Compact Mode)
+
+```swift
+Task {
+    let notch = DynamicNotch(style: .auto) {
+        VStack(spacing: 10) {
+            ForEach(0..<10) { i in
+                Text("Hello World \(i)")
+            }
+        }
+    } compactLeading: {
+        Image(systemName: "moon.fill")
+            .foregroundStyle(.blue)
+    } compactTrailing: {
+        Image(systemName: "sun.max")
+            .foregroundStyle(.yellow)
+    }
+
+    await notch.expand()
+    try await Task.sleep(for: .seconds(2))
+    await notch.compact()
+    try await Task.sleep(for: .seconds(2))
+    await notch.hide()
+}
+```
+
+### Available Methods
+
+#### `expand(on: NSScreen)` — Expand the notch (async)
+
+Shows the expanded content. If the window doesn't exist yet, it is created and positioned automatically.
+
+```swift
+await notch.expand()
+await notch.expand(on: NSScreen.main!)
+```
+
+#### `compact(on: NSScreen)` — Switch to compact mode (async)
+
+Shows the leading and trailing contents flanking the notch. On floating-style Macs, this automatically hides the window instead.
+
+```swift
+await notch.compact()
+await notch.compact(on: NSScreen.screens[0])
+```
+
+#### `hide()` — Dismiss the notch (async)
+
+Animates the notch out and deinitializes the underlying window.
+
+```swift
+await notch.hide()
+```
+
+### Configuration
+
+```swift
+// Custom hover behavior (keepVisible is required for notch-only compact mode)
+let notch = DynamicNotch(
+    hoverBehavior: [.keepVisible, .hapticFeedback, .increaseShadow],
+    style: .notch
+) {
+    MyExpandedView()
+} compactLeading: {
+    MyLeadingView()
+} compactTrailing: {
+    MyTrailingView()
+}
+
+// Override transition animations
+notch.transitionConfiguration = DynamicNotchTransitionConfiguration(
+    openingAnimation: .spring(duration: 0.3),
+    closingAnimation: .easeInOut(duration: 0.3),
+    conversionAnimation: .spring(),
+    skipIntermediateHides: true
+)
+```
+
+### Expanded-Only Convenience Init
+
+If you don't need compact mode, use the simpler initializer:
+
+```swift
+let notch = DynamicNotch(style: .auto) {
+    MyContentView()
+}
+```
+
+This automatically sets `disableCompactLeading` and `disableCompactTrailing` to `true`.
+
+### DynamicNotch Styles
+
+```swift
+// Preset styles
+DynamicNotchStyle.notch      // topCornerRadius: 15, bottomCornerRadius: 20
+DynamicNotchStyle.floating   // cornerRadius: 20
+DynamicNotchStyle.auto       // picks based on screen
+
+// Fully custom
+DynamicNotchStyle.notch(topCornerRadius: 10, bottomCornerRadius: 25)
+DynamicNotchStyle.floating(cornerRadius: 16)
+```
+
+### Programmatic Content Updates
+
+You can dynamically swap the expanded/compact content by maintaining a reference to the content views (for `DynamicNotchInfo`, see below). For `DynamicNotch`, the content is captured at init; use observable state (`@State`, `@Published`) within your content views to update what's displayed.
+
+### Environment Values (for Custom Content)
+
+Inside your content views, you can read these environment values:
+
+- `\EnvironmentValues.notchStyle` — the current `DynamicNotchStyle`
+- `\EnvironmentValues.notchSection` — a `DynamicNotchSection` enum (`.expanded`, `.compactLeading`, `.compactTrailing`) indicating which part this view is rendering
+
+---
+
+## DynamicNotchInfo
+
+A higher-level abstraction over `DynamicNotch` for displaying information with pre-built layouts.
+
+### Quick Start
+
+```swift
+let notch = DynamicNotchInfo(
+    icon: .init(systemName: "figure"),
+    title: "Figure",
+    description: "Looks like a person"
+)
+await notch.expand()
+```
+
+### Full Usage
+
+```swift
+Task {
+    let notch = DynamicNotchInfo(
+        icon: .init(systemName: "hand.wave"),
+        title: "Hello There!",
+        description: "This is a description.",
+        compactLeading: .init(systemName: "wave.3.left", color: .blue),
+        compactTrailing: .init(systemName: "wave.3.right", color: .blue)
+    )
+
+    await notch.expand()
+    try await Task.sleep(for: .seconds(2))
+    await notch.compact()
+    try await Task.sleep(for: .seconds(2))
+    await notch.hide()
+}
+```
+
+### DynamicNotchInfo Properties (all `@Published`)
+
+You can animate changes to these properties via `withAnimation`:
+
+```swift
+withAnimation {
+    notch.icon = .init(systemName: "arrow.trianglehead.2.clockwise")
+    notch.title = "Updated Title"
+    notch.description = "Updated description"
+    notch.compactLeading = .init(systemName: "moon.fill", color: .blue)
+    notch.compactTrailing = .init(progress: .constant(0.75))
+}
+```
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `icon` | `DynamicNotchInfo.Label?` | Icon/View shown in expanded state (set to `nil` to remove) |
+| `title` | `LocalizedStringKey` | Main title text |
+| `description` | `LocalizedStringKey?` | Optional subtitle text |
+| `textColor` | `Color?` | Override color for title and description |
+| `compactLeading` | `DynamicNotchInfo.Label?` | Leading compact icon |
+| `compactTrailing` | `DynamicNotchInfo.Label?` | Trailing compact icon |
+
+### DynamicNotchInfo.Label Variants
+
+```swift
+// System image (with optional tint)
+DynamicNotchInfo.Label(systemName: "figure")
+DynamicNotchInfo.Label(systemName: "figure", color: .blue)
+
+// Custom Image
+DynamicNotchInfo.Label(image: Image(nsImage: myImage))
+
+// Progress ring (value 0.0 – 1.0)
+DynamicNotchInfo.Label(progress: .constant(0.5))
+DynamicNotchInfo.Label(progress: .constant(0.5), color: .green) {
+    Image(systemName: "stop.fill")  // overlay
+}
+
+// Fully custom SwiftUI view
+DynamicNotchInfo.Label {
+    LinearGradient(
+        colors: [.blue, .red],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+    .clipShape(.rect(cornerRadius: 4))
+}
+```
+
+### DynamicNotchInfo Methods
+
+#### `expand(on: NSScreen)`
+#### `compact(on: NSScreen)`
+#### `hide()`
+
+Same async behavior as `DynamicNotch`.
+
+### DynamicNotchInfo Styles
+
+```swift
+// Using presets
+DynamicNotchInfo(icon: ..., title: ..., style: .notch)
+DynamicNotchInfo(icon: ..., title: ..., style: .floating)
+
+// Custom radii
+DynamicNotchInfo(
+    icon: ...,
+    title: ...,
+    style: .notch(topCornerRadius: 10, bottomCornerRadius: 25)
+)
+DynamicNotchInfo(
+    icon: ...,
+    title: ...,
+    style: .floating(cornerRadius: 25)
+)
+```
+
+### Important Notes
+
+- On floating-style Macs, compact mode is **not supported** — calling `.compact()` automatically hides the window.
+- Setting `icon` to `nil` hides it in expanded mode, but `compactLeading` will fall back to the previous icon automatically (use `shouldSkipHideWhenConverting = true` internally to avoid flicker during transitions).
+- `matchedGeometryEffect` is used internally for smooth icon transitions between expanded and compact states.
+
+---
+
+## DynamicNotchControllable Protocol
+
+Both `DynamicNotch` and `DynamicNotchInfo` conform to this protocol, giving them a unified interface:
+
+```swift
+@MainActor
+public protocol DynamicNotchControllable {
+    func expand(on screen: NSScreen) async
+    func compact(on screen: NSScreen) async
+    func hide() async
+}
+```
+
+---
+
+## Utility & Internal Components
+
+### DynamicNotchTransitionConfiguration
+
+For overriding the default animations (opening, closing, conversion between compact/expanded):
+
+```swift
+notch.transitionConfiguration = DynamicNotchTransitionConfiguration(
+    openingAnimation: .spring(duration: 0.3, bounce: 0.2),
+    closingAnimation: .easeOut(duration: 0.2),
+    conversionAnimation: .spring(duration: 0.3),
+    skipIntermediateHides: true  // skip hide-step during compact↔expanded
+)
+```
+
+### NSScreen Extensions (internal)
+
+- `NSScreen.notchFrameWithMenubarAsBackup` — returns the notch frame or menubar frame as fallback.
+- `NSScreen.hasNotch` — whether this screen has a physical notch.
+- `NSScreen.menubarHeight` — the height of the menu bar for the screen.
+
+### Environment Keys (internal)
+
+- `EnvironmentValues.notchStyle` — the active style (`DynamicNotchStyle`).
+- `EnvironmentValues.notchSection` — which section the view is rendered in (`DynamicNotchSection`: `.expanded`, `.compactLeading`, `.compactTrailing`).
+
+---
+
+## Installation & Requirements
+
+- **Platform:** macOS 13.0+
+- **Package Manager:** Swift Package Manager (Xcode > File > Add Package Dependencies)
+- **URL:** `https://github.com/MrKai77/DynamicNotchKit`
+- **Swift Tools:** 6.0+
+- **Dependencies:** `swift-docc-plugin` (for documentation generation)
+
+---
+
+## Common Patterns
+
+### Showing a Temporary Notification
+
+```swift
+let notch = DynamicNotchInfo(
+    icon: .init(systemName: "bell.fill", color: .orange),
+    title: "New Message",
+    description: "You have 3 unread emails."
+)
+await notch.expand()
+try await Task.sleep(for: .seconds(3))
+await notch.hide()
+```
+
+### Showing Progress
+
+```swift
+@State var progress: CGFloat = 0.0
+
+let notch = DynamicNotchInfo(
+    icon: .init(progress: $progress, color: .blue),
+    title: "Downloading...",
+    description: "Estimated time: 2 min"
+)
+
+await notch.expand()
+// Update progress externally...
+withAnimation {
+    progress = 0.75
+}
+```
+
+### Responding to Hover
+
+```swift
+let notch = DynamicNotch(hoverBehavior: [.keepVisible, .hapticFeedback, .increaseShadow]) {
+    MyContentView()
+}
+```
+
+---
+
+## Important Caveats
+
+1. Compact mode is unavailable on floating-style Macs — calling `.compact()` will hide instead.
+2. Lifecycle is async (`expand`/`compact`/`hide` are `async`) — use `await` or `Task { }`.
+3. Only one notch per `DynamicNotch` instance — create a new instance for a new presentation.
+4. iOS's "Minimal" multi-app state is not supported.
+5. `DynamicNotch` is generic over three view types (`Expanded`, `CompactLeading`, `CompactTrailing`) — `some View` cannot be used in stored properties; you must provide concrete types or use `EmptyView()`.

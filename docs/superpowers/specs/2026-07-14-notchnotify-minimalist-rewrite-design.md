@@ -27,6 +27,7 @@ HTTP/WS API, the Unix socket, the CLI, the callback/action system, `AtollUI`,
 ## 2. Goals / non-goals
 
 **Goals**
+
 - Push a notification with a single `open "notch-notify://push?..."` — no ports, no daemon socket.
 - Render title + Markdown body (including fenced code blocks) in a notch-styled popup.
 - Stay expanded and **cross-dissolve** between notifications during bursts; never collapse-and-re-expand.
@@ -35,6 +36,7 @@ HTTP/WS API, the Unix socket, the CLI, the callback/action system, `AtollUI`,
 - Zero third-party markdown/networking dependencies; one UI dependency (DynamicNotchKit).
 
 **Non-goals (explicitly cut)**
+
 - HTTP/WebSocket API, Unix socket, `mac-notify` CLI.
 - Interactive action buttons and callback execution; blocking "wait-for-action".
 - Persistent notification-center list panel; settings panel; `Defaults`-backed preferences.
@@ -59,6 +61,7 @@ HTTP/WS API, the Unix socket, the CLI, the callback/action system, `AtollUI`,
 | Toolchain | `swift-tools` **6.0**, strict concurrency on |
 
 **Judgment calls beyond `overall.md` (accepted):**
+
 - Swipe-to-dismiss gesture lives on the **header bar only**, leaving the body text
   selectable — avoids the drag-vs-text-selection conflict `overall.md` flags.
 - No menu-bar unread badge (keeps the surface minimal).
@@ -125,6 +128,7 @@ State: `private(set) var current: NotchNotification?`, `queue: [NotchNotificatio
 (FIFO, drop oldest beyond 10), `dismissTask: Task<Void, Never>?`, `isHovering: Bool`.
 
 Behavior:
+
 - `push(_:)` — enqueue, then `pumpIfIdle()`.
 - `pumpIfIdle()` — if `current == nil` and queue non-empty: promote next into `current`,
   `await presenter.show()`, `scheduleDismiss(current.timeout)`.

@@ -1,0 +1,565 @@
+# Boring Notch
+
+> Boring Notch is a macOS app that transforms the MacBook Pro notch into a dynamic, interactive control center. Inspired by iOS Dynamic Island, it provides music playback controls with live album art and visualizer, calendar and reminders integration, webcam mirror, file shelf with AirDrop/quick share, battery/charging status, system HUD replacements (volume, brightness, backlight), download monitoring, onboarding, and extensive customization — all built with SwiftUI, AppKit, and the Battery Activity Monitor framework.
+
+## Overview
+
+- [GitHub Repository](https://github.com/TheBoredTeam/boring.notch): Source code, issues, releases.
+- [Website](http://theboring.name): Official website.
+- [Discord](https://discord.gg/c8JXA7qrPm): Community server.
+- [Homebrew Cask](https://formulae.brew.sh/cask/boring-notch): `brew install --cask TheBoredTeam/boring-notch/boring-notch`.
+- [Latest Release](https://github.com/TheBoredTeam/boring.notch/releases/latest/download/boringNotch.dmg): Direct DMG download.
+- [Crowdin](https://crowdin.com/project/boring-notch): Localization platform.
+- [Ko-fi](https://www.ko-fi.com/alexander5015): Support the project.
+
+## System Requirements
+
+- **OS:** macOS 14 Sonoma or later
+- **Chip:** Apple Silicon or Intel
+- **Build from Source:** macOS 15.6+, Xcode 26+
+- **First Launch Bypass:** `xattr -dr com.apple.quarantine /Applications/boringNotch.app` (or use System Settings > Privacy & Security > Open Anyway)
+
+## Installation
+
+### DMG (Manual)
+
+1. Download `boringNotch.dmg` from [Releases](https://github.com/TheBoredTeam/boring.notch/releases/latest).
+2. Move to `/Applications`.
+3. Run `xattr -dr com.apple.quarantine /Applications/boringNotch.app`.
+
+### Homebrew
+
+```bash
+brew install --cask TheBoredTeam/boring-notch/boring-notch
+```
+
+### Build from Source
+
+```bash
+git clone https://github.com/TheBoredTeam/boring.notch.git
+cd boringNotch
+open boringNotch.xcodeproj
+# Cmd+R to build and run
+```
+
+All code contributions must be based on the `dev` branch; documentation changes on `main`.
+
+## Architecture
+
+### App Entry Point
+
+- **`boringNotchApp.swift`** — `@main` SwiftUI `App` struct. Declares the `MenuBarExtra` menu and owns the `AppDelegate`. Initializes Sparkle (`SPUStandardUpdaterController`) for auto-updates and passes it to `SettingsWindowController`.
+
+### Delegate & Window Management
+
+- **`AppDelegate`** (`boringNotchApp.swift`) — `NSApplicationDelegate`. Creates, positions, and manages one `BoringNotchSkyLightWindow` per display. Handles screen configuration changes, screen lock/unlock visibility, drag detection, window alpha for display switching, onboarding, and the "Show on All Displays" multi-screen behavior.
+
+### Key Patterns
+
+- **Multi-screen:** When `Defaults[.showOnAllDisplays]` is `true`, `AppDelegate` creates one `BoringViewModel` + `NSWindow` per `NSScreen`. Otherwise a single `vm` / `window` pair serves the selected display.
+- **Notch Space:** `NotchSpaceManager` creates a dedicated `CGSSpace` at level `Int32.max` to float above everything (including full-screen apps).
+- **SkyLight:** `BoringNotchSkyLightWindow` optionally enables SkyLight (used to render above the lock screen when `Defaults[.showOnLockScreen]` is enabled).
+- **Media Control:** `MusicManager` is a facade over pluggable controllers (`MediaControllerProtocol`). Supports Now Playing, Apple Music, Spotify, YouTube Music. Auto-falls back from `NowPlayingController` to `MPRemoteCommandCenter` on macOS 15.4+.
+- **HUD Replacement:** When `Defaults[.hudReplacement]` is enabled, `MediaKeyInterceptor` (via XCPHelper) intercepts system volume/brightness/backlight key events and routes them through Boring Notch's own overlays instead of the system HUD.
+
+---
+
+## Core Classes
+
+### `BoringViewModel` (models/BoringViewModel.swift)
+
+Per-screen view model. Published properties:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `contentType` | `ContentType` | `.normal`, `.menu`, `.settings` |
+| `notchState` | `NotchState` | `.closed` or `.open` (private set) |
+| `notchSize` | `CGSize` | Current dynamic size (computed from closed/open/screen) |
+| `closedNotchSize` | `CGSize` | Closed state size, cached |
+| `dragDetectorTargeting` | `Bool` | Drag hover state for shelf drop zone |
+| `generalDropTargeting` | `Bool` | General drag targeting |
+| `dropZoneTargeting` | `Bool` | Shelf drop zone hover |
+| `dropEvent` | `Bool` | Drop occurred (triggers shelf load) |
+| `anyDropZoneTargeting` | `Bool` | OR of all drop zone flags |
+| `hideOnClosed` | `Bool` | Auto-hide notch when in fullscreen media |
+| `screenUUID` | `?String` | Which display this VM belongs to |
+| `isCameraExpanded` | `Bool` | Webcam mirror expanded state |
+| `isBatteryPopoverActive` | `Bool` | Battery popover visibility |
+| `isHoveringCalendar` | `Bool` | Calendar hover state |
+
+**Methods:**
+
+```swift
+func open()           // Sets notchSize = openNotchSize, notchState = .open
+func close()          // Reverts to closed; blocked if SharingStateManager prevents it
+func toggleCameraPreview() // Toggles webcam mirror (requests authorization if needed)
+func isMouseHovering(position:) -> Bool  // Hit-test against current notch frame
+func closeHello()     // Dismisses the "hello" first-launch animation
+```
+
+---
+
+### `BoringViewCoordinator` (BoringViewCoordinator.swift)
+
+`@MainActor` singleton `ObservableObject`. Central state hub.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `currentView` | `NotchViews` | `.home` or `.shelf` (tab state) |
+| `sneakPeek` | `sneakPeek` | Temporary HUD overlay (volume/brightness/backlight/mic/music) |
+| `expandingView` | `ExpandedItem` | Inline expanding HUD (battery/download) |
+| `alwaysShowTabs` | `Bool` | Always show tab bar |
+| `openLastTabByDefault` | `Bool` | Restore last tab on open |
+| `selectedScreenUUID` | `String` | Currently selected display |
+| `preferredScreenUUID` | `?String` | User-chosen preferred display |
+| `musicLiveActivityEnabled` | `Bool** | Show music live activity |
+| `firstLaunch` | `Bool | First launch flag (triggers onboarding) |
+| `helloAnimationRunning` | `Bool` | Controls welcome animation |
+
+**Methods:**
+
+```swift
+func toggleSneakPeek(status:type:duration:value:icon:)   // Show/hide sneak peek overlay
+func toggleExpandingView(status:type:value:browser:)      // Show/hide inline expanding view
+func showEmpty()                                          // Reset currentView to .home
+```
+
+Enums used by the coordinator:
+
+- **`SneakContentType`** — `.brightness`, `.volume`, .`backlight`, `.music`, `.mic`, `.battery`, `.download`
+- **`ActivityType`** — `.mediaPlayback`, `.charging`, `.download`
+- **`BrowserType`** — `.chromium`, `.safari`
+
+---
+
+### `MusicManager` (managers/MusicManager.swift)
+
+Singleton. `@Published` properties drive the UI.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `songTitle` | `String` | Current track title |
+| `artistName` | `String` | Current artist |
+| `albumArt` | `NSImage` | Album artwork (falls back to app icon or placeholder) |
+| `isPlaying` | `Bool` | Playback state |
+| `album` | `String` | Album name |
+| `songDuration` | `TimeInterval` | Track duration in seconds |
+| `elapsedTime` | `TimeInterval` | Current playback position |
+| `timestampDate` | `Date` | When elapsedTime was last updated |
+| `playbackRate` | `Double` | Playback speed |
+| `isShuffled` | `Bool` | Shuffle enabled |
+| `repeatMode` | `RepeatMode` | `.off`, `.one`, `.all` |
+| `volume` | `Double` | Player volume 0.0–1.0 |
+| `volumeControlSupported` | `Bool` | Whether active app supports volume control |
+| `avgColor` | `NSColor` | Average color of album art (used for tinting) |
+| `bundleIdentifier` | `?String` | Bundle ID of the media source app |
+| `usingAppIconForArtwork` | `Bool` | True when album art is replaced by app icon |
+| `currentLyrics` | `String` | Unsynced lyrics text |
+| `syncedLyrics` | `[(time: Double, text: String)]` | LRC-style synced lyrics |
+| `isFetchingLyrics` | `Bool` | Lyrics fetch in progress |
+| `canFavoriteTrack` | `Bool` | Whether the active app supports favoriting |
+| `isFavoriteTrack` | `Bool` | Favorite state |
+
+**Methods (partial):**
+
+```swift
+func togglePlay()
+func nextTrack()
+func previousTrack()
+func toggleShuffle()
+func toggleRepeat()
+func toggleFavoriteTrack()
+func skip(seconds: Double)        // ±seconds skip
+func seek(to: Double)             // Seek to position (seconds)
+func setVolume(to: Double)        // Set player volume
+func syncVolumeFromActiveApp()    // Read current app volume
+func openMusicApp()               // Activate the source media app
+func destroy()                    // Stop observers and timers
+```
+
+---
+
+### Other Managers
+
+| Class | File | Responsibility |
+|-------|------|----------------|
+| `BatteryActivityManager` | `managers/BatteryActivityManager.swift` | IOKit-based battery monitoring with callbacks for level, charging state, power source, low power mode, time to full charge, max capacity |
+| `BatteryStatusViewModel` | `models/BatteryStatusViewModel.swift` | ObservableObject wrapping `BatteryActivityManager` with `@Published` properties |
+| `BrightnessManager` | `managers/BrightnessManager.swift` | Controls/reads screen brightness via XPCHelper; publishes `animatedBrightness`, `rawBrightness` |
+| `VolumeManager` | `managers/VolumeManager.swift` | CoreAudio volume control; publishes `rawVolume`, `isMuted` |
+| `CalendarManager` | `managers/CalendarManager.swift` | EventKit calendar/reminders integration with `@Published` `events`, `allCalendars`, `eventCalendars`, `reminderLists` |
+| `WebcamManager` | `managers/WebcamManager.swift` | AVFoundation webcam capture session; `previewLayer`, `isSessionRunning`, `authorizationStatus`, `cameraAvailable` |
+| `ImageService` | `managers/ImageServiceProtocol` | Async image fetching with URLCache (50MB memory, 100MB disk) |
+| `NotchSpaceManager` | `managers/NotchSpaceManager.swift` | `CGSSpace` at max level for notch overlay above full-screen content |
+| `MusicManager` | `managers/MusicManager.swift` | Central music playback state (see above) |
+
+---
+
+## Default Settings Reference
+
+All settings use the [Defaults](://github.com/sindresorhus/Defaults#readme) library (`@Default(.key)`). Key prefixes:
+
+### General / Behavior
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `menubarIcon` | `Bool` | `true` | Show menu bar icon |
+| `showOnAllDisplays` | `Bool` | `false` | One notch per screen |
+| `automaticallySwitchDisplay` | `Bool` | `true` | Follow active display |
+| `minimumHoverDuration` | `TimeInterval` | `0.3` | Hover delay before opening |
+| `enableHaptics` | `Bool` | `true` | Haptic feedback on interaction |
+| `openNotchOnHover` | `Bool` | `true` | Open on hover |
+| `extendHoverArea` | `Bool` | `false` | Larger hover hit zone |
+| `notchHeightMode` | `WindowHeightMode` | `.matchRealNotchSize` | Closed height strategy (notch screens) |
+| `nonNotchHeightMode` | `WindowHeightMode` | `.matchMenuBar` | Closed height strategy (non-notch screens) |
+| `nonNotchHeight` | `CGFloat` | `32` | Custom height for non-notch displays |
+| `notchHeight` | `CGFloat` | `32` | Custom height for notch displays |
+| `showOnLockScreen` | `Bool` | `false` | Render above lock screen (SkyLight) |
+| `hideFromScreenRecording` | `Bool` | `false` | Exclude from screen capture |
+
+### Appearance
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `showEmojis` | `Bool` | `false` | Show emojis in UI |
+| `showMirror` | `Bool` | `false` | Show webcam mirror |
+| `mirrorShape` | `MirrorShapeEnum` | `.rectangle` | Webcam shape (`.rectangle`, `.circle`) |
+| `settingsIconInNotch` | `Bool` | `true` | Show gear icon in notch |
+| `lightingEffect` | `Bool` | `true` | Glow effect behind album art |
+| `enableShadow` | `Bool` | `true` | Window shadow |
+| `cornerRadiusScaling` | `Bool` | `true` | Scale corner radius with notch size |
+| `sliderColor` | `SliderColorEnum` | `.white` | Progress slider color (`.white`, `.albumArt`, `.accent`) |
+| `playerColorTinting` | `Bool` | `true` | Tint UI to album art color |
+| `useMusicVisualizer` | `Bool` | `true` | Show metal music visualizer |
+| `customVisualizers` | `[CustomVisualizer]` | `[]` | User-added Lottie visualizers |
+
+### Gestures
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enableGestures` | `Bool` | `true` | Enable notch gesture interactions |
+| `closeGestureEnabled` | `Bool` | `true` | Swipe-down to close |
+| `gestureSensitivity` | `CGFloat` | `200.0` | Gesture recognition threshold |
+
+### Media Playback
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `mediaController` | `MediaControllerType` | `defaultMediaController` | Now Playing / Apple Music / Spotify / YouTube Music |
+| `enableSneakPeek` | `Bool` | `false` | Show sneak peek on media key press |
+| `sneakPeekStyles` | `SneakPeekStyle` | `.standard` | Overlay vs inline sneak peek |
+| `waitInterval` | `Double` | `3` | Sneak peek duration (seconds) |
+| `enableLyrics` | `Bool` | `false` | Show synced/unsynced lyrics |
+| `showShuffleAndRepeat` | `Bool` | `false` | Show shuffle/repeat slots |
+| `coloredSpectrogram` | `Bool` | `true` | Colored audio visualizer |
+| `musicControlSlots` | `[MusicControlButton]` | `defaultLayout` | Slot toolbar layout (3–5 slots) |
+| `musicControlSlotLimit` | `Int` | `5` | Max number of control slots |
+
+### `MusicControlButton` Enum
+
+Available slot types: `.shuffle`, `.previous`, `.playPause`, `.next`, `.repeatMode`, `.volume`, `.favorite`, `.goBackward`, `.goForward`, `.none`.
+
+### Battery
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `showPowerStatusNotifications` | `Bool` | `true` | Notify on charging state changes |
+| `showBatteryIndicator` | `Bool` | `true` | Show battery icon |
+| `showBatteryPercentage` | `Bool` | `true` | Show battery percentage |
+| `showPowerStatusIcons` | `Bool` | `true` | Show AC/battery icon |
+
+### HUD Replacement
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `hudReplacement` | `Bool` | `false` | Replace system HUD with Boring Notch |
+| `inlineHUD` | `Bool` | `false` | Show HUD inline (inside notch) vs overlay |
+| `showOpenNotchHUD` | `Bool` | `true` | Show HUD when notch open |
+| `systemEventIndicatorShadow` | `Bool` | `false` | Shadow on system event icons |
+
+### Shelf
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `boringShelf` | `Bool` | `true` | Enable shelf functionality |
+| `openShelfByDefault` | `Bool` | `true` | Open shelf tab by default |
+| `shelfTapToOpen` | `Bool` | `true` | Tap to expand shelf items |
+| `copyOnDrag` | `Bool` | `false` | Copy files on drag-out |
+| `autoRemoveShelfItems` | `Bool` | `false` | Auto-remove items after action |
+| `expandedDragDetection` | `Bool` | `true` | Open shelf when dragging files over notch |
+| `quickShareProvider` | `String` | default | AirDrop, Slack, Email, etc. |
+
+### Calendar
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `calendarSelectionState` | `CalendarSelectionState` | `.all` | Filter which calendars to display |
+| `hideAllDayEvents` | `Bool` | `false` | Hide all-day events |
+| `autoScrollToNextEvent` | `Bool` | `true` | Auto-scroll to next event |
+
+### Advanced
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `useCustomAccentColor` | `Bool` | `false` | Override system accent color |
+| `customAccentColorData` | `?Data` | `nil` | NSKeyedArchived color data |
+| `hideTitleBar` | `Bool` | `true` | Hide window title bar |
+| `hideNotchOption` | `HideNotchOption` | `.nowPlayingOnly` | Auto-hide in fullscreen (`.always`, `.nowPlayingOnly`, `.never`) |
+
+---
+
+## Keyboard Shortcuts
+
+Defined in `ShortcutConstants.swift`:
+
+| Name | Default | Action |
+|------|---------|--------|
+| `toggleSneakPeek` | `⌘⇧H` | Toggle sneak peek overlay (inline mode) |
+| `toggleNotchOpen` | `⌘⇧I` | Toggle notch open/close |
+| `toggleMicrophone` | `F5` | Toggle microphone mute |
+| `decreaseBacklight` | `⌘F1` | Decrease keyboard backlight |
+| `increaseBacklight` | `⌘F2` | Increase keyboard backlight |
+| `clipboardHistoryPanel` | `⌘⇧C` | Toggle clipboard history panel (future) |
+
+---
+
+## Component Hierarchy
+
+### Notch Window Components (`components/Notch/`)
+
+| File | Description |
+|------|-------------|
+| `BoringNotchWindow.swift` | Base `NSPanel` subclass with borderless, floating, transparent configuration |
+| `BoringNotchSkyLightWindow.swift` | Extended variant with SkyLight support for lock-screen rendering |
+| `NotchShape.swift` | Physical notch mask shape (based on original DynamicNotchKit) |
+| `NotchHomeView.swift` | Main open-state content: music player + album art + controls + calendar + camera |
+| `BoringHeader.swift` | Notch header UI |
+| `BoringExtrasMenu.swift` | Additional menu actions |
+
+### Live Activities & HUD (`components/Live activities/`)
+
+| File | Description |
+|------|-------------|
+| `LiveActivityModifier.swift` | `ViewModifier` for overlay-based media playback indicators (compact notch view) |
+| `SystemEventIndicatorModifier.swift` | Overlay HUD (volume/brightness/backlight icons) |
+| `InlineHUD.swift` | Inside-notch HUD variant |
+| `OpenNotchHUD.swift` | HUD shown when notch is open |
+| `BoringBattery.swift` | Battery status live activity |
+| `DownloadView.swift` | Download progress live activity |
+| `MarqueeTextView.swift` | Scrolling text for long song titles |
+
+### Shelving (`components/Shelf/`)
+
+| File | Description |
+|------|-------------|
+| `Views/ShelfView.swift` | Main shelf container with drop handling, Quick Look integration |
+| `Views/ShelfItemView.swift` | Individual shelf item thumbnail/preview |
+| `Views/FileShareView.swift` | AirDrop / share sheet trigger button |
+| `Views/DragPreviewView.swift` | Drag thumbnail preview |
+| `Models/ShelfItem.swift` | `file` / `text` / `link` enum with Codable security-scoped bookmarks |
+| `Models/Bookmark.swift` | Bookmark data model |
+| `ViewModels/ShelfStateViewModel.swift` | `@Published` items array (persisted) |
+| `ViewModels/ShelfSelectionModel.swift` | Selection + Quick Look state |
+| `ViewModels/ShelfItemViewModel.swift` | Per-item observable state |
+| `Services/ShelfDropService.swift` | Handle file drop processing |
+| `Services/QuickShareService.swift` | Quick-share via share sheet |
+| `Services/QuickLookService.swift` | Quick Look preview panel |
+| `Services/ShelfPersistenceService.swift` | Load/shelf items from disk |
+| `Services/ShelfActionService.swift` | Copy/delete/open actions on shelf items |
+| `Services/TemporaryFileStorageService.swift` | Temp file management |
+| `Services/ImageProcessingService.swift` | Generate thumbnails/pre-processing |
+| `Services/ThumbnailService.swift` | Thumbnail generation |
+| `Services/ShareServiceFinder.swift` | Discover available share services |
+
+### Music Visualizer (`components/Music/`)
+
+| File | Description |
+|------|-------------|
+| `MusicVisualizer.swift` | Metal-based audio visualizer (spectrogram) |
+| `LottieAnimationView.swift` | Lottie-based custom visualizer playback |
+
+### Settings (`components/Settings/`)
+
+Tabs: General, Appearance, Media, Calendar, HUD, Battery, Shelf, Shortcuts, Advanced, About
+
+| File | Description |
+|------|-------------|
+| `SettingsView.swift` | `NavigationSplitView` settings layout |
+| `SettingsWindowController.swift` | `NSWindowController` managing the settings window |
+| `MusicSlotConfigurationView.swift` | Drag-to-reorder slot toolbar editor |
+| `EditPanelView.swift` | Inline slot edit panel |
+| `ListItemPopover.swift` | Popover for list editing |
+| `SoftwareUpdater.swift` | Sparkle update UI (`CheckForUpdatesView`) |
+
+### Other Components
+
+| File | Description |
+|------|-------------|
+| `components/Tabs/TabButton.swift` | Tab button component |
+| `components/Tabs/TabSelectionView.swift` | Tab selection bar |
+| `components/Calendar/BoringCalendar.swift` | Mini calendar week view |
+| `components/Webcam/WebcamView.swift` | Webcam mirror preview |
+| `components/Onboarding/OnboardingView.swift` | Onboarding flow (5 steps) |
+| `components/Onboarding/WelcomeView.swift` | Welcome step |
+| `components/Onboarding/PermissionsRequestView.swift` | Permission request step |
+| `components/Onboarding/MusicControllerSelectionView.swift` | Choose Now Playing vs Apple Music |
+| `components/Onboarding/OnboardingFinishView.swift` | Completion step |
+| `components/Onboarding/SparkleView.swift` | Sparkle effect view |
+| `components/Tips/TipStore.swift` | User tips store |
+| `components/AnimatedFace.swift` | "Not human face" animated SVG component |
+| `components/HoverButton.swift` | Hover-activated button |
+| `components/BottomRoundedRectangle.swift` | Shape helper |
+| `components/ProgressIndicator.swift` | Progress ring/bar |
+| `components/EmptyState.swift` | Empty state placeholder |
+| `components/LottieView.swift` | General Lottie animation wrapper |
+| `components/WhatsNewView.swift` | What's new in update |
+| `components/TestView.swift` | Debug test view |
+
+---
+
+## Models
+
+| Type | Description |
+|------|-------------|
+| `PlaybackState` | Codable struct: `bundleIdentifier`, `isPlaying`, `title`, `artist`, `album`, `currentTime`, `duration`, `playbackRate`, `isShuffled`, `repeatMode`, `artwork`, `volume`, `isFavorite` |
+| `EventModel` | Calendar event: `id`, `start`, `end`, `title`, `location`, `notes`, `url`, `isAllDay`, `type`, `calendar`, `participants`, `timeZone` |
+| `CalendarModel` | Calendar source: `id`, `account`, `title`, `color`, `isSubscribed`, `isReminder` |
+| `MusicControlButton` | Enum: shuffle, previous, playPause, next, repeatMode, volume, favorite, goBackward, goForward, none |
+| `ShelfItem` | Enum: `.file(bookmark:)`, `.text(string:)`, `.link(url:)` with Codable |
+| `CustomVisualizer` | `Codable` struct for user-added Lottie visualizers (`UUID`, `name`, `url`, `speed`) |
+| `SharingStateManager` | Tracks active share sessions, prevents notch close during sharing |
+
+---
+
+## Enums (enums/generic.swift)
+
+```swift
+public enum Style { case notch, floating }
+public enum ContentType: Int { case normal, menu, settings }
+public enum NotchState { case closed, open }
+public enum NotchViews { case home, shelf }
+enum SettingsEnum { case general, about, charge, download, mediaPlayback, hud, shelf, extensions }
+enum DownloadIndicatorStyle { case progress, percentage }
+enum DownloadIconStyle { case onlyAppIcon, onlyIcon, iconAndAppIcon }
+enum MirrorShapeEnum { case rectangle, circle }
+enum WindowHeightMode { case matchMenuBar, matchRealNotchSize, custom }
+enum SliderColorEnum { case white, albumArt, accent }
+enum SneakPeekStyle { case standard, inline }
+enum OptionKeyAction { case openSettings, showHUD, none }
+enum MediaControllerType { case nowPlaying, appleMusic, spotify, youtubeMusic }
+enum HideNotchOption { case always, nowPlayingOnly, never }
+enum CalendarSelectionState { case all, selected(Set<String>) }
+```
+
+---
+
+## XPC Helper Architecture
+
+Used for privileged operations (brightness, backlight, media key interception):
+
+- **`BoringNotchXPCHelperProtocol.swift`** — Protocol defining XPC surface.
+- **`XPCHelperClient.swift`** — Manages `NSXPCConnection`, retries, and accessibility authorization monitoring.
+- **`BoringNotchXPCHelper.swift`** — Helper tool main.
+- **`main.swift`** — XPC listener setup.
+
+---
+
+## Window Sizing & Geometry
+
+From `sizing/matters.swift`:
+
+```swift
+let openNotchSize = CGSize(width: 640, height: 190)
+let windowSize = CGSize(width: openNotchSize.width, height: openNotchSize.height + shadowPadding) // +20 for shadow
+let shadowPadding: CGFloat = 20
+let cornerRadiusInsets = (
+    opened: (top: 19.0, bottom: 24.0),
+    closed: (top: 6.0, bottom: 14.0)
+)
+let MusicPlayerImageSizes.size = (
+    opened: CGSize(width: 90, height: 90),
+    closed: CGSize(width: 20, height: 20)
+)
+
+func getClosedNotchSize(screenUUID: String?) -> CGSize  // Computes width from safeAreaInsets
+func getScreenFrame(_ screenUUID: String?) -> CGRect?
+```
+
+Closed notch height:
+- Notch screen + `matchRealNotchSize` → `screen.safeAreaInsets.top`
+- Notch screen + `matchMenuBar` → menubar height
+- Notch screen + `custom` → `Defaults[.notchHeight]`
+- Non-notch screen + `matchMenuBar` → menubar height
+- Non-notch screen + `custom` → `Defaults[.nonNotchHeight]`
+
+Closed notch width: `screen.frame.width - auxiliaryTopLeftArea.width - auxiliaryTopRightArea.width + 4`
+
+---
+
+## Key Technical SkyLight Details
+
+The app uses private `SkyLight.framework` APIs via `dlopen`/`dlsym`:
+
+- `SLSCreateSpace`, `SLSAddWindowsToSpaces`, `SLSRemoveWindowsFromSpaces`, `SLSSetWindowLevel` etc.
+- Used to create a dedicated "notch space" at level `Int32.max` so the notch floats above everything.
+- `BoringNotchSkyLightWindow.enableSkyLight()` / `disableSkyLight()` toggle visibility on the lock screen.
+- `NotchSpaceManager` encapsulates the `CGSSpace` handle.
+
+---
+
+## Notifications
+
+| Name | Description |
+|------|-------------|
+| ` Notification.Name.selectedScreenChanged` | User changed preferred display |
+| `Notification.Name.notchHeightChanged` | Notch height setting changed |
+| `Notification.Name.showOnAllDisplaysChanged` | Toggle multi-screen mode |
+| `Notification.Name.automaticallySwitchDisplayChanged` | Toggle auto-switch |
+| `Notification.Name.expandedDragDetectionChanged` | Shelf drag detection toggled |
+| `Notification.Name.mediaControllerChanged` | Music source preference changed |
+| `Notification.Name.accessibilityAuthorizationChanged` | XCP accessibility permission changed |
+| `Notification.Name.sharingDidFinish` | Share session ended |
+
+---
+
+## Dependencies
+
+| Framework | Purpose |
+|-----------|---------|
+| SwiftUI | UI framework |
+| AppKit (NSPanel, NSWindow, NSMenu) | Window management, status bar |
+| AVFoundation | Audio playback, webcam capture |
+| IOKit.ps | Battery status monitoring |
+| CoreAudio | Volume control |
+| EventKit | Calendar & reminders |
+| Sparkle | Auto-update |
+| Defaults | Type-safe `UserDefaults` |
+| KeyboardShortcuts | Global hotkey registration |
+| LaunchAtLogin | Start at login |
+| SwiftUIIntrospect | UIKit introspection |
+| Metal | Music visualizer |
+| Lottie | Custom visualizer animations |
+| SkyLight (private) | Notch overlay above everything |
+| XPC (private helpers) | Brightness/backlight/media key interception |
+
+---
+
+## Important Implementation Notes
+
+1. **No Notch on Non-Notch Macs:** The app uses a fallback floating style (`Style.floating`) for Macs without a physical notch.
+2. **Bypass Gatekeeper:** First launch from DMG requires running `xattr -dr com.apple.quarantine`.
+3. **First Launch:** Triggers onboarding + welcome sound (`boring.m4a`).
+4. **Multi-Screen:** `showOnAllDisplays` creates independent `BoringViewModel` + `NSWindow` per screen, indexed by `displayUUID`.
+5. **Media Sources:** `MusicManager` auto-detects if Now Playing is deprecated (macOS 15.4+) and falls back to `MPRemoteCommandCenter`.
+6. **Accessibility Authorization:** HUD replacement requires accessibility permissions via the XPC helper.
+7. **Drag Detection:** File drags over the notch region auto-open the shelf (`expandedDragDetection`).
+8. **Lyrics:** Fetched synced (LRC) or unsynced lyrics lines matched to `elapsedTime`.
+
+---
+
+## Contributing
+
+1. Fork → Clone → `git checkout dev`
+2. Branch: `feature/<name>` or `fix/<name>`
+3. Open PR against `dev` (code) or `main` (docs)
+4. Localizations via [Crowdin](https://crowdin.com/project/boring-notch)
