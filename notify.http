@@ -1,132 +1,22 @@
-### 发送一条成功通知 (REST API)
-POST http://127.0.0.1:18080/notify
-Content-Type: application/json
-# X-Mac-Desktop-Notify-Token: set MAC_DESKTOP_NOTIFY_TOKEN to require this header
+### ============================================================
+### MacDesktopNotify 调用示例
+###
+### 注意：项目已改用 URL Scheme 协议，不再使用 HTTP。
+### 以下为通过 `open` 命令触发推送的等效脚本。
+### 每条命令可以直接在终端运行，或嵌入到 CI/CD 脚本中。
+### ============================================================
 
-{
-  "title": "构建完成",
-  "body": "项目 MacDesktopNotify 编译成功",
-  "type": "success",
-  "icon": "checkmark.seal.fill",
-  "timeout": 10
-}
+### 推送通知 — 构建完成
+exec: open 'notch-notify://push?title=构建完成&body=项目 MacDesktopNotify 编译成功&urgency=normal&timeout=10'
 
-### 发送警告通知
-POST http://127.0.0.1:18080/notify
-Content-Type: application/json
+### 推送警告通知 — 耗资源
+exec: open 'notch-notify://push?title=CPU 使用率过高&body=当前 CPU 使用率已达 85%&urgency=critical&timeout=15'
 
-{
-  "title": "CPU 使用率过高",
-  "body": "当前 CPU 使用率已达 85%，请注意散热",
-  "type": "warning",
-  "icon": "cpu",
-  "timeout": 0
-}
+### 推送信息通知 — 新消息
+exec: open 'notch-notify://push?title=新消息&body=来自自动化脚本的实时推送&urgency=low'
 
-### 发送错误通知 (不自动消失)
-POST http://127.0.0.1:18080/notify
-Content-Type: application/json
+### 推送带 Markdown 的通知 — 部署报告
+exec: open 'notch-notify://push?title=部署报告&body=## 部署摘要%0A%0A项目 %7C 状态 %7C 耗时%0A------ %7C ------ %7C ------%0AAPI Server %7C ✅ %7C 1m 23s%0AWeb App %7C ✅ %7C 2m 05s%0AWorker %7C ❌ %7C 0m 45s&urgency=normal&timeout=15'
 
-{
-  "title": "部署失败",
-  "body": "生产环境部署脚本返回非零状态码",
-  "type": "error",
-  "timeout": 0
-}
-
-### 发送信息通知
-POST http://127.0.0.1:18080/notify
-Content-Type: application/json
-
-{
-  "title": "新消息",
-  "body": "来自 WebSocket 的实时推送测试",
-  "type": "info",
-  "icon": "bell.badge.fill",
-  "timeout": 6
-}
-
-### 发送带 Webhook Action 的通知
-POST http://127.0.0.1:18080/notify
-Content-Type: application/json
-
-{
-  "title": "部署审批",
-  "body": "是否继续发布到 staging？",
-  "type": "warning",
-  "timeout": 0,
-  "actions": [
-    {
-      "id": "approve",
-      "title": "批准",
-      "style": "primary",
-      "callback": {
-        "type": "webhook",
-        "url": "http://127.0.0.1:3000/deploy/approve",
-        "method": "POST"
-      }
-    },
-    {
-      "id": "reject",
-      "title": "拒绝",
-      "style": "destructive",
-      "callback": {
-        "type": "webhook",
-        "url": "http://127.0.0.1:3000/deploy/reject",
-        "method": "POST"
-      }
-    }
-  ]
-}
-
-### 发送带 Command Action 的通知
-POST http://127.0.0.1:18080/notify
-Content-Type: application/json
-
-{
-  "title": "本地任务",
-  "body": "点击后在本机执行一个简单命令",
-  "type": "info",
-  "timeout": 0,
-  "actions": [
-    {
-      "id": "say-done",
-      "title": "播报完成",
-      "callback": {
-        "type": "command",
-        "command": "say",
-        "arguments": ["done"]
-      }
-    }
-  ]
-}
-
-### 阻塞 POST，等待用户点击后返回选择
-POST http://127.0.0.1:18080/notify
-Content-Type: application/json
-
-{
-  "title": "需要选择",
-  "body": "这个 HTTP 请求会等待你点击一个按钮",
-  "type": "info",
-  "timeout": 0,
-  "waitForAction": true,
-  "actionTimeout": 300,
-  "actions": [
-    {
-      "id": "yes",
-      "title": "是",
-      "style": "primary"
-    },
-    {
-      "id": "no",
-      "title": "否"
-    }
-  ]
-}
-
-### 获取当前通知列表
-GET http://127.0.0.1:18080/notifications
-
-### 健康检查
-GET http://127.0.0.1:18080/health
+### 清除所有通知
+exec: open 'notch-notify://clear'
