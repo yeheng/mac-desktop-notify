@@ -7,6 +7,7 @@ enum MarkdownBlock: Equatable {
 
 enum MarkdownRenderer {
     static func parse(_ body: String) -> [MarkdownBlock] {
+        let body = body.replacingOccurrences(of: "\r\n", with: "\n")
         var blocks: [MarkdownBlock] = []
         var proseBuffer: [String] = []
         var codeBuffer: [String] = []

@@ -37,4 +37,15 @@ final class MarkdownRendererTests: XCTestCase {
     func testEmptyBodyReturnsNoBlocks() {
         XCTAssertEqual(MarkdownRenderer.parse(""), [])
     }
+
+    func testCRLFLineEndingsNormalizedInProse() {
+        let blocks = MarkdownRenderer.parse("line1\r\nline2")
+        XCTAssertEqual(blocks.count, 1)
+        XCTAssertEqual(proseText(blocks.first), "line1\nline2")
+    }
+
+    func testCRLFNormalizedInCodeBlock() {
+        let blocks = MarkdownRenderer.parse("```\r\na\r\nb\r\n```")
+        XCTAssertEqual(blocks, [.code("a\nb")])
+    }
 }
