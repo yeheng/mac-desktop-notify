@@ -2,11 +2,19 @@
 
 - **Date:** 2026-07-14
 - **Branch:** `v2`
-- **Status:** Approved design — ready for implementation plan
+- **Status:** ✅ Implemented (2026-07-14). See [README.md](../../README.md) for the current state of the project.
 - **Source of truth:** `overall.md` (the "Linus good taste" manifesto), applied literally
 - **Reference:** `DynamicNotchKit-llms.txt` (bundled API reference for the new UI dependency)
 
 ## 1. Context & motivation
+
+> **Note:** The minimalist rewrite described here has been **fully implemented**. The current app matches this design with the following additions beyond the original spec:
+> - **Layout modes** (Normal / Clean / Detailed) for the compact island
+> - **Sound feedback** using macOS system sounds
+> - **Full settings window** with 6 categories (General / Display / Notifications / Sound / Shortcuts / About)
+> - **Login launch** support via `SMAppService`
+> - **History list** shown when no active notification is present
+> - **Adjustable panel dimensions** and content font size
 
 The current app (`MacDesktopNotify`, ~8,300 LOC) is a full menu-bar notification
 *server*: HTTP + WebSocket API (swifter), a Unix domain socket, a `macdesktopnotify://`

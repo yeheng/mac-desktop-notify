@@ -1,6 +1,8 @@
 # NotchNotify Minimalist v2 Rewrite — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Status:** ✅ All tasks completed (2026-07-14). This plan has been fully implemented. See [README.md](../../README.md) for the current project state.
 
 **Goal:** Replace the ~8,300-LOC MacDesktopNotify server with a minimal ephemeral notch-popup app driven only by a `notch-notify://` URL scheme, per the approved spec.
 

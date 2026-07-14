@@ -12,9 +12,11 @@
 - 🔗 **URL Scheme 推送** — 通过 `notch-notify://` 协议从任何语言/脚本发送通知
 - 📝 **Markdown 渲染** — 通知正文支持 Markdown（行内格式 + 代码块）
 - ⏱️ **智能收起** — 普通消息按停留时间收起，悬停暂停，Critical 消息保持展开
-- 👆 **手势关闭** — 下拉手势关闭当前通知
-- 🎯 **消息历史** — 最多保留 10 条消息，收起后再次悬停仍可查看
-- 🎨 **紧急度颜色** — 低/中/高三级紧急度对应不同颜色指示点
+- 👆 **手势关闭** — 下拉拖拽手势关闭当前通知
+- 📜 **消息历史** — 最多保留 10 条消息，无活跃消息时展示历史列表
+- 🎨 **紧急度颜色** — 低/中/高三级紧急度对应不同颜色和图标指示
+- 🔇 **全屏隐藏** — 检测到全屏应用时自动隐藏，避免干扰
+- 🔔 **声音反馈** — macOS 系统通知音，可在设置中关闭
 - ⚙️ **完整设置** — 行为、显示、通知、声音、快捷键和登录启动配置
 
 ---
@@ -24,7 +26,7 @@
 ### 构建
 
 ```bash
-git clone https://github.com/user/mac-desktop-notify.git
+git clone https://github.com/yeheng/mac-desktop-notify.git
 cd mac-desktop-notify
 swift build -c release
 ```
@@ -167,11 +169,11 @@ open 'notch-notify://clear'
 
 点击菜单栏铃铛图标可打开菜单：
 
-| 选项 | 说明 |
-|------|------|
-| **设置…** | 打开 Vibe Island 风格设置窗口 |
-| **清除消息** | 清除当前、待展示和历史消息 |
-| **退出 MacDesktopNotify** | 退出应用（快捷键 `q`） |
+| 选项 | 快捷键 | 说明 |
+|------|--------|------|
+| **设置…** | `⌘,` | 打开设置窗口（通用、显示、通知、声音、快捷键、关于） |
+| **清除消息** | `⌘Delete` | 清除当前、待展示和历史消息 |
+| **退出 MacDesktopNotify** | `q` | 退出应用 |
 
 ---
 
@@ -179,21 +181,26 @@ open 'notch-notify://clear'
 
 | 操作 | 说明 |
 |------|------|
-| 鼠标靠近刘海 | 延迟 150ms 后展开消息面板 |
+| 鼠标靠近刘海 | 延迟 150ms（可调）后展开消息面板 |
 | 悬停在通知上 | 暂停自动收起计时器 |
-| 下拉拖拽通知 | 关闭当前通知，自动展示下一条 |
+| 下拉拖拽通知 | 下拉超过 40pt 关闭当前通知，自动展示下一条 |
 | 超过停留时间 | 收起到摘要态或隐藏，历史消息仍然保留 |
+| 当前无活跃消息时 | 展开后显示历史消息列表 |
 | `⌘⇧N` | 切换展开/收起状态 |
 | `⌘,` | 打开设置 |
 | `⌘Delete` | 清除消息 |
 | `Esc` | 收起面板 |
+| 点击 `×` 按钮 | 收起面板 |
 
 ---
 
 ## 系统要求
 
 - macOS 14.0 (Sonoma) 或更高版本
-- Xcode 16.0+ / Swift 6.0+
+- Swift 6.0+（使用严格并发检查）
+- Xcode 16.0+（用于构建）
+
+> **注意：** 无物理刘海的 Mac（如 iMac、Mac mini）会自动降级为浮动窗口样式。
 
 ---
 
@@ -205,23 +212,46 @@ open 'notch-notify://clear'
 
 ---
 
+## 设置
+
+设置窗口包含以下分类：
+
+| 分类 | 配置项 |
+|------|--------|
+| **通用** | 悬停展开、鼠标离开收起、消息到达展开、空闲隐藏、全屏隐藏、悬停延迟、登录启动 |
+| **显示** | 布局模式（标准/简洁/详细）、面板宽度/高度、内容字号、刘海偏移、摘要栏指示器 |
+| **通知** | 自动展开、消息停留时长（1-30s） |
+| **声音** | 启用系统通知音 |
+| **快捷键** | 查看所有快捷键 |
+| **关于** | 版本、系统要求、项目链接 |
+
+### 布局模式
+
+| 模式 | 摘要栏显示 |
+|------|-----------|
+| **标准** | 紧急度图标 + 状态文本（"工作中…" / "已完成"） |
+| **简洁** | 仅状态文本 |
+| **详细** | 紧急度图标 + 当前消息标题 |
+
+---
+
 ## 项目结构
 
 ```
 Sources/MacDesktopNotify/
 ├── main.swift                          # 入口
-├── AppDelegate.swift                   # 应用代理，URL Scheme 处理，菜单
-├── AppSettings.swift                    # 类型化设置与持久化
-├── IslandDisplayState.swift             # 灵动岛展示状态
-├── IslandGeometry.swift                 # 刘海检测和悬停触发区
-├── NotificationManager.swift            # 消息历史、队列和展示状态机
-├── NotchNotification.swift              # 通知数据模型
-├── NotchPresenter.swift                 # DynamicNotchKit 桥接和全局悬停监控
-├── URLNotificationParser.swift          # URL Scheme 参数解析
-├── MarkdownNotificationView.swift       # Compact/Expanded/历史/Markdown UI
-├── SettingsView.swift                   # 设置页面
+├── AppDelegate.swift                   # 应用代理，URL Scheme 处理，菜单栏，快捷键
+├── AppSettings.swift                    # 类型化设置与持久化（@Observable）
+├── IslandDisplayState.swift             # 展示状态枚举（hidden/compact/expanded）
+├── IslandGeometry.swift                 # 刘海区域计算和触发区
+├── NotificationManager.swift            # 消息队列、历史、展示状态机（@MainActor）
+├── NotchNotification.swift              # 通知数据模型（标题/正文/紧急度/超时）
+├── NotchPresenter.swift                 # DynamicNotchKit 桥接和全局鼠标监控
+├── URLNotificationParser.swift          # URL Scheme 参数解析（含长度限制）
+├── MarkdownNotificationView.swift       # 展开视图、摘要视图、历史列表、通知卡片
+├── SettingsView.swift                   # 设置页面（NavigationSplitView）
 ├── SettingsWindowController.swift       # 设置窗口生命周期
-└── MarkdownRenderer.swift              # Markdown → AttributedString 简易解析器
+└── MarkdownRenderer.swift              # Markdown 解析器（正文/代码块分离）
 ```
 
 ---

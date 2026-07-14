@@ -1,22 +1,61 @@
 ### ============================================================
 ### MacDesktopNotify 调用示例
 ###
-### 注意：项目已改用 URL Scheme 协议，不再使用 HTTP。
-### 以下为通过 `open` 命令触发推送的等效脚本。
-### 每条命令可以直接在终端运行，或嵌入到 CI/CD 脚本中。
+### 本项目通过 macOS URL Scheme 接收通知。
+### 在终端中运行 `open` 命令即可触发推送，
+### 也可嵌入 CI/CD 脚本、Alfred/Raycast 工作流等。
 ### ============================================================
 
-### 推送通知 — 构建完成
-exec: open 'notch-notify://push?title=构建完成&body=项目 MacDesktopNotify 编译成功&urgency=normal&timeout=10'
+### --- 基础用法 ---
 
-### 推送警告通知 — 耗资源
-exec: open 'notch-notify://push?title=CPU 使用率过高&body=当前 CPU 使用率已达 85%&urgency=critical&timeout=15'
+### 简单通知
+exec: open 'notch-notify://push?title=任务完成&body=编译成功'
 
-### 推送信息通知 — 新消息
-exec: open 'notch-notify://push?title=新消息&body=来自自动化脚本的实时推送&urgency=low'
+### 带紧急度
+exec: open 'notch-notify://push?title=磁盘空间不足&body=剩余仅 2GB&urgency=critical'
 
-### 推送带 Markdown 的通知 — 部署报告
-exec: open 'notch-notify://push?title=部署报告&body=## 部署摘要%0A%0A项目 %7C 状态 %7C 耗时%0A------ %7C ------ %7C ------%0AAPI Server %7C ✅ %7C 1m 23s%0AWeb App %7C ✅ %7C 2m 05s%0AWorker %7C ❌ %7C 0m 45s&urgency=normal&timeout=15'
+### 自定义停留时间（秒）
+exec: open 'notch-notify://push?title=部署完成&body=所有服务已上线&urgency=normal&timeout=15'
+
+### --- Markdown 格式 ---
+
+### 列表格式
+exec: open 'notch-notify://push?title=构建报告&body=## 构建摘要%0A%0A- 状态%3A ✅%0A- 耗时%3A 2m 30s%0A- 产物%3A release.zip'
+
+### 代码块
+exec: open 'notch-notify://push?title=错误日志&body=```%0AError%3A connection refused%0A%2Fapi%2Fv1%2Fusers%0A```%0A请检查服务状态&urgency=critical'
+
+### --- 清除 ---
 
 ### 清除所有通知
 exec: open 'notch-notify://clear'
+
+### ============================================================
+### Shell 脚本封装示例
+### ============================================================
+
+### 用法：notch_notify "标题" "正文" ["low"|"normal"|"critical"] [timeout]
+```bash
+#!/bin/bash
+notch_notify() {
+    local title="$1"
+    local body="${2:-}"
+    local urgency="${3:-normal}"
+    local timeout="${4:-}"
+    
+    local params="title=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$title'''))")"
+    if [[ -n "$body" ]]; then
+        params+="&body=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$body'''))")"
+    fi
+    params+="&urgency=$urgency"
+    if [[ -n "$timeout" ]]; then
+        params+="&timeout=$timeout"
+    fi
+    
+    open "notch-notify://push?$params"
+}
+
+# 示例调用
+notch_notify "Git Push" "分支 main 已推送到远程" "low"
+notic_notify "CI 失败" "测试用例 userService ❌" "critical" 30
+```
