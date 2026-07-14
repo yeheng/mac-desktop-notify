@@ -85,6 +85,7 @@ final class NotificationManager {
     }
 
     private func scheduleDismiss(_ timeout: TimeInterval) {
+        guard !isHovering else { return }
         dismissTask?.cancel()
         dismissTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(timeout))

@@ -22,6 +22,7 @@ struct MarkdownNotificationView: View {
             }
         }
         .animation(.easeInOut(duration: 0.3), value: manager.current?.id)
+        .onHover { manager.setHovering($0) }
     }
 }
 
@@ -49,7 +50,6 @@ private struct NotificationCard: View {
         .frame(width: 320)
         .offset(y: dragOffset)
         .opacity(1 - min(1, abs(dragOffset) / 80) * 0.6)
-        .onHover { manager.setHovering($0) }
     }
 
     private var blocks: [MarkdownBlock] { MarkdownRenderer.parse(notification.bodyMarkdown) }
