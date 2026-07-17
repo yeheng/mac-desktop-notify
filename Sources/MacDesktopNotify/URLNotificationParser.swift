@@ -4,6 +4,14 @@ enum URLNotificationParser {
     static let maxBodyLength = 5000
     static let defaultTimeout: TimeInterval = 6
     static let timeoutRange: ClosedRange<TimeInterval> = 1...60
+    static let maxActions = 3
+    static let maxActionLabelLength = 24
+    static let maxActionsPayloadLength = 1000
+
+    private struct ActionDTO: Decodable {
+        let label: String
+        let url: String
+    }
 
     /// Parses a `notch-notify://push?...` URL. Returns `nil` when `title` is missing or blank.
     static func parsePush(_ url: URL) -> NotchNotification? {
@@ -34,7 +42,25 @@ enum URLNotificationParser {
             bodyMarkdown: body,
             urgency: urgency,
             timeout: timeout,
-            usesDefaultTimeout: usesDefaultTimeout
+            usesDefaultTimeout: usesDefaultTimeout,
+            actions: parseActions(value("actions"))
         )
+    }
+
+    /// Parses the `actions` parameter: a JSON array of `{"label": "...", "url": "..."}`.
+    /// Malformed payloads degrade to no actions instead of failing the push.
+    static func parseActions(_ raw: String?) -> [NotificationAction] {
+        guard let raw, raw.count <= maxActionsPayloadLength, let data = raw.data(using: .utf8) else {
+            return []
+        }
+        let dtos = (try? JSONDecoder().decode([ActionDTO].self, from: data)) ?? []
+        let actions = dtos.compactMap { dto -> NotificationAction? in
+            let label = dto.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !label.isEmpty, let url = URL(string: dto.url), url.scheme != nil else {
+                return nil
+            }
+            return NotificationAction(label: String(label.prefix(maxActionLabelLength)), url: url)
+        }
+        return Array(actions.prefix(maxActions))
     }
 }

@@ -169,7 +169,7 @@ private struct DisplaySettingsPane: View {
 
             SettingsGroup(title: "摘要栏") {
                 Toggle("显示紧急度图标", isOn: $settings.showUrgency)
-                Toggle("显示消息数量", isOn: $settings.showHistoryCount)
+                Toggle("显示未读数量", isOn: $settings.showHistoryCount)
             }
         }
     }

@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsController: SettingsWindowController?
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
+    private var lastSoundAt: Date = .distantPast
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -33,15 +34,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "push":
             if let notification = URLNotificationParser.parsePush(url) {
                 NotificationManager.shared.push(notification)
-                if AppSettings.shared.soundEnabled {
-                    NSSound(named: "Glass")?.play()
-                }
+                playSound(for: notification)
             }
         case "clear":
             NotificationManager.shared.clear()
         default:
             break
         }
+    }
+
+    // MARK: - Sound
+
+    /// Low-urgency pushes stay silent; critical uses a heavier system sound. Rapid-fire
+    /// pushes are throttled so a chatty script cannot stack overlapping sounds.
+    private func playSound(for notification: NotchNotification) {
+        guard AppSettings.shared.soundEnabled, notification.urgency != .low else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastSoundAt) > 0.6 else { return }
+        lastSoundAt = now
+        NSSound(named: notification.urgency == .critical ? "Basso" : "Glass")?.play()
     }
 
     // MARK: - Menu bar

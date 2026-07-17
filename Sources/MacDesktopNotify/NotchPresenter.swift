@@ -45,22 +45,25 @@ final class NotchPresenter: NotchPresenting {
 
     private func installMouseMonitors() {
         let mouseMask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDown]
-        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseMask) { [weak self] _ in
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseMask) { [weak self] event in
+            let clicked = event.type == .leftMouseDown
             Task { @MainActor [weak self] in
-                self?.updatePointerState()
+                self?.updatePointerState(clicked: clicked)
             }
         }
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseMask) { [weak self] event in
+            let clicked = event.type == .leftMouseDown
             Task { @MainActor [weak self] in
-                self?.updatePointerState()
+                self?.updatePointerState(clicked: clicked)
             }
             return event
         }
     }
 
-    private func updatePointerState() {
+    private func updatePointerState(clicked: Bool = false) {
         let location = NSEvent.mouseLocation
-        if let lastPointerLocation,
+        // Clicks bypass the movement dedupe: a stationary click must still reach the island.
+        if !clicked, let lastPointerLocation,
            abs(lastPointerLocation.x - location.x) < 1,
            abs(lastPointerLocation.y - location.y) < 1 {
             return
@@ -80,9 +83,16 @@ final class NotchPresenter: NotchPresenting {
             return
         }
 
-        let notchFrame = IslandGeometry.notchFrame(for: screen)
-        let activationFrame = notchFrame.insetBy(dx: -26, dy: -20)
-        manager.setPointerNearIsland(activationFrame.contains(location))
+        let activationFrame = IslandGeometry.compactActivationFrame(
+            for: screen,
+            leadingContentWidth: manager.compactLeadingWidth,
+            trailingContentWidth: manager.compactTrailingWidth
+        )
+        let inside = activationFrame.contains(location)
+        manager.setPointerNearIsland(inside)
+        if clicked, inside {
+            manager.islandClicked()
+        }
     }
 
     private func frontmostWindowIsFullscreen(on screen: NSScreen) -> Bool {

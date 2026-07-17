@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -16,13 +17,18 @@ final class NotificationManager {
 
     private(set) var current: NotchNotification?
     private(set) var history: [NotchNotification] = []
+    private(set) var queue: [NotchNotification] = []
     private(set) var displayState: IslandDisplayState = .hidden
+    private(set) var unreadCount = 0
 
-    @ObservationIgnored private var queue: [NotchNotification] = []
     @ObservationIgnored private var isHovering = false
     @ObservationIgnored private var pointerNearIsland = false
+    @ObservationIgnored private(set) var compactLeadingWidth: CGFloat = 0
+    @ObservationIgnored private(set) var compactTrailingWidth: CGFloat = 0
     @ObservationIgnored private var manualExpanded = false
     @ObservationIgnored private var displaySuppressed = false
+    @ObservationIgnored private var hoverSuppressedUntilExit = false
+    @ObservationIgnored private var readIDs: Set<UUID> = []
     @ObservationIgnored private var dwellTask: Task<Void, Never>?
     @ObservationIgnored private var hoverTask: Task<Void, Never>?
     @ObservationIgnored private var collapseTask: Task<Void, Never>?
@@ -30,6 +36,8 @@ final class NotificationManager {
     @ObservationIgnored private var remainingDwell: Duration = .zero
     @ObservationIgnored private let clock = ContinuousClock()
     @ObservationIgnored private weak var presenter: NotchPresenting?
+    /// Test seam for `performAction`; production leaves this nil and opens via NSWorkspace.
+    @ObservationIgnored var urlOpener: ((URL) -> Void)?
 
     init() {}
 
@@ -46,11 +54,22 @@ final class NotificationManager {
     var hasContent: Bool { current != nil || !queue.isEmpty || !history.isEmpty }
     var latestNotification: NotchNotification? { history.last }
 
+    /// History items that are neither currently shown nor waiting in the queue.
+    var pastHistory: [NotchNotification] {
+        var skip = Set(queue.map(\.id))
+        if let current { skip.insert(current.id) }
+        return history.filter { !skip.contains($0.id) }
+    }
+
     var compactStatus: String {
         if let current {
-            return current.urgency == .critical ? "需要注意" : "工作中…"
+            return current.urgency == .critical ? "需要注意" : "新消息"
         }
-        return history.isEmpty ? "" : "已完成"
+        return unreadCount > 0 ? "\(unreadCount) 条未读" : ""
+    }
+
+    func isRead(_ notification: NotchNotification) -> Bool {
+        readIDs.contains(notification.id)
     }
 
     // MARK: - Ingress
@@ -60,6 +79,7 @@ final class NotificationManager {
         if history.count > Self.maxQueue {
             history.removeFirst(history.count - Self.maxQueue)
         }
+        recomputeUnread()
 
         queue.append(notification)
         if queue.count > Self.maxQueue {
@@ -82,6 +102,8 @@ final class NotificationManager {
         cancelTimers()
         queue.removeAll()
         history.removeAll()
+        readIDs.removeAll()
+        recomputeUnread()
         current = nil
         displayState = .hidden
         manualExpanded = false
@@ -105,7 +127,7 @@ final class NotificationManager {
         }
     }
 
-    /// Called by the global mouse monitor for the physical notch activation zone.
+    /// Called by the global mouse monitor for the full compact island activation zone.
     func setPointerNearIsland(_ near: Bool) {
         guard near != pointerNearIsland else { return }
         pointerNearIsland = near
@@ -113,7 +135,7 @@ final class NotificationManager {
         if near {
             collapseTask?.cancel()
             collapseTask = nil
-            guard AppSettings.shared.hoverToExpand, hasContent, !displaySuppressed else { return }
+            guard AppSettings.shared.hoverToExpand, hasContent, !displaySuppressed, !hoverSuppressedUntilExit else { return }
             hoverTask?.cancel()
             hoverTask = Task { [weak self] in
                 guard let self else { return }
@@ -122,26 +144,47 @@ final class NotificationManager {
                 guard !Task.isCancelled, self.pointerNearIsland else { return }
                 self.manualExpanded = true
                 self.displayState = .manualExpanded
-                await self.presenter?.expand()
+                self.presentExpanded()
             }
         } else {
             hoverTask?.cancel()
             hoverTask = nil
+            // Pointer left the activation zone: re-arm hover expansion after a manual dismissal.
+            hoverSuppressedUntilExit = false
             guard manualExpanded, AppSettings.shared.autoCollapseOnLeave else { return }
             scheduleManualCollapse()
         }
     }
 
+    /// Clicking the compact island opens the panel immediately, skipping the hover delay.
+    func islandClicked() {
+        guard !displaySuppressed, hasContent, !displayState.isExpanded else { return }
+        hoverTask?.cancel()
+        hoverTask = nil
+        hoverSuppressedUntilExit = false
+        manualExpanded = true
+        displayState = .manualExpanded
+        presentExpanded()
+    }
+
+    func setCompactContentWidth(_ width: CGFloat, for side: CompactIslandSide) {
+        switch side {
+        case .leading:
+            compactLeadingWidth = width
+        case .trailing:
+            compactTrailingWidth = width
+        }
+    }
+
     func togglePanel() {
         guard !displaySuppressed else { return }
-        switch displayState {
-        case .manualExpanded, .transientExpanded, .blockingExpanded:
+        if displayState.isExpanded {
             dismissPanel()
-        case .hidden, .compact:
+        } else {
             guard hasContent else { return }
             manualExpanded = true
             displayState = .manualExpanded
-            Task { await presenter?.expand() }
+            presentExpanded()
         }
     }
 
@@ -168,6 +211,9 @@ final class NotificationManager {
     func dismissPanel() {
         manualExpanded = false
         pointerNearIsland = false
+        // Keep hover expansion suppressed until the pointer leaves the zone,
+        // so the panel does not pop back open from a 1px mouse jiggle.
+        hoverSuppressedUntilExit = true
         collapseTask?.cancel()
         collapseTask = nil
         let shouldHide = history.isEmpty || (current == nil && AppSettings.shared.hideWhenIdle)
@@ -178,6 +224,18 @@ final class NotificationManager {
             } else {
                 await presenter?.compact()
             }
+        }
+    }
+
+    /// Opens an action's callback URL. Acting on the current message dismisses it and advances the queue.
+    func performAction(_ action: NotificationAction, for notification: NotchNotification) {
+        if let urlOpener {
+            urlOpener(action.url)
+        } else {
+            NSWorkspace.shared.open(action.url)
+        }
+        if notification.id == current?.id {
+            dismissCurrent()
         }
     }
 
@@ -216,6 +274,8 @@ final class NotificationManager {
         current = next
         displayState = next.urgency == .critical ? .blockingExpanded : .transientExpanded
         manualExpanded = false
+        // Becoming current means the message is surfaced (expanded or in the compact status), so it counts as read.
+        markRead(next.id)
 
         if next.urgency == .critical {
             cancelDwell()
@@ -226,7 +286,7 @@ final class NotificationManager {
         }
 
         if autoExpand {
-            Task { await presenter?.expand() }
+            presentExpanded()
         }
     }
 
@@ -239,13 +299,36 @@ final class NotificationManager {
         current = notification
         manualExpanded = false
         displayState = .blockingExpanded
+        markRead(notification.id)
         if !displaySuppressed {
-            Task { await presenter?.expand() }
+            presentExpanded()
         }
     }
 
     private func dequeue() -> NotchNotification? {
         queue.isEmpty ? nil : queue.removeFirst()
+    }
+
+    /// Presents the expanded panel; everything visible there counts as read.
+    private func presentExpanded() {
+        markAllRead()
+        Task { await presenter?.expand() }
+    }
+
+    // MARK: - Read state
+
+    private func markRead(_ id: UUID) {
+        readIDs.insert(id)
+        recomputeUnread()
+    }
+
+    private func markAllRead() {
+        readIDs.formUnion(history.map(\.id))
+        recomputeUnread()
+    }
+
+    private func recomputeUnread() {
+        unreadCount = history.reduce(0) { $0 + (readIDs.contains($1.id) ? 0 : 1) }
     }
 
     // MARK: - Timers

@@ -55,4 +55,19 @@ final class IslandStateTests: XCTestCase {
         XCTAssertEqual(reloaded.panelWidth, 460)
         defaults.removePersistentDomain(forName: suiteName)
     }
+
+    func testCompactActivationFrameIncludesBothSummarySections() {
+        let notchFrame = CGRect(x: 100, y: 900, width: 200, height: 32)
+
+        let activationFrame = IslandGeometry.compactActivationFrame(
+            notchFrame: notchFrame,
+            leadingContentWidth: 70,
+            trailingContentWidth: 50
+        )
+
+        XCTAssertEqual(activationFrame.minX, 4)
+        XCTAssertEqual(activationFrame.maxX, 376)
+        XCTAssertEqual(activationFrame.minY, 880)
+        XCTAssertEqual(activationFrame.maxY, 952)
+    }
 }

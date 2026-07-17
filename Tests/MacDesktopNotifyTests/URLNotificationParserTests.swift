@@ -55,4 +55,41 @@ final class URLNotificationParserTests: XCTestCase {
         // %E4%BD%A0%E5%A5%BD == 你好
         XCTAssertEqual(parse("notch-notify://push?title=%E4%BD%A0%E5%A5%BD")?.title, "你好")
     }
+
+    // MARK: - Actions
+
+    private func encodedActions(_ json: String) -> String {
+        json.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!
+    }
+
+    func testParsesActions() {
+        let json = #"[{"label":"允许","url":"http://localhost:8080/approve"},{"label":"拒绝","url":"http://localhost:8080/deny"}]"#
+        let n = parse("notch-notify://push?title=Hi&actions=\(encodedActions(json))")
+        XCTAssertEqual(n?.actions.count, 2)
+        XCTAssertEqual(n?.actions.first?.label, "允许")
+        XCTAssertEqual(n?.actions.first?.url.absoluteString, "http://localhost:8080/approve")
+    }
+
+    func testActionsDefaultToEmpty() {
+        XCTAssertEqual(parse("notch-notify://push?title=Hi")?.actions, [])
+    }
+
+    func testInvalidActionsJSONYieldsNoActions() {
+        XCTAssertEqual(parse("notch-notify://push?title=Hi&actions=notjson")?.actions, [])
+    }
+
+    func testActionsCappedAtThree() {
+        let json = #"[{"label":"1","url":"https://a.com"},{"label":"2","url":"https://b.com"},{"label":"3","url":"https://c.com"},{"label":"4","url":"https://d.com"}]"#
+        XCTAssertEqual(parse("notch-notify://push?title=Hi&actions=\(encodedActions(json))")?.actions.count, 3)
+    }
+
+    func testActionWithoutURLSchemeIsDropped() {
+        let json = #"[{"label":"x","url":"justtext"}]"#
+        XCTAssertEqual(parse("notch-notify://push?title=Hi&actions=\(encodedActions(json))")?.actions, [])
+    }
+
+    func testActionWithBlankLabelIsDropped() {
+        let json = #"[{"label":"  ","url":"https://a.com"}]"#
+        XCTAssertEqual(parse("notch-notify://push?title=Hi&actions=\(encodedActions(json))")?.actions, [])
+    }
 }
