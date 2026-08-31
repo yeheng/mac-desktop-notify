@@ -7,6 +7,7 @@ enum URLNotificationParser {
     static let maxActions = 3
     static let maxActionLabelLength = 24
     static let maxActionsPayloadLength = 1000
+    static let maxGroupLength = 64
 
     private struct ActionDTO: Decodable {
         let label: String
@@ -43,8 +44,42 @@ enum URLNotificationParser {
             urgency: urgency,
             timeout: timeout,
             usesDefaultTimeout: usesDefaultTimeout,
-            actions: parseActions(value("actions"))
+            actions: parseActions(value("actions")),
+            group: parseGroup(value("group"))
         )
+    }
+
+    /// Parses the `group` parameter: a sender-defined key that collapses repeat
+    /// messages (the same CI job, the same file watcher) into one entry.
+    static func parseGroup(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return String(trimmed.prefix(maxGroupLength))
+    }
+
+    /// Parses `notch-notify://ack?token=...&label=...`, the loopback URL that turns a
+    /// button click into a receipt on disk instead of opening a browser.
+    ///
+    /// The sender picks the token so it can poll for the result afterwards. Tokens are
+    /// filtered to a filename-safe set, since they end up in a path.
+    static func parseAck(_ url: URL) -> (token: String, label: String)? {
+        guard url.scheme?.lowercased() == "notch-notify",
+              url.host()?.lowercased() == "ack" else { return nil }
+
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
+
+        guard let raw = value("token") else { return nil }
+        let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard NotificationAckStore.isAcceptedToken(token) else { return nil }
+        return (token, value("label") ?? "")
+    }
+
+    /// Reads `group` from a `clear` URL. Returns `nil` when the whole history should be cleared.
+    static func parseClearGroup(_ url: URL) -> String? {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        return parseGroup(items.first { $0.name == "group" }?.value)
     }
 
     /// Parses the `actions` parameter: a JSON array of `{"label": "...", "url": "..."}`.

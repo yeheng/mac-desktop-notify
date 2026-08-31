@@ -9,13 +9,35 @@ protocol NotchPresenting: AnyObject {
     func hide() async
 }
 
+/// A message that is being presented, bundled with the dwell budget it still has.
+///
+/// Keeping the two together is what stops a message from outliving the countdown
+/// meant to retire it: there is no way to hold a message here without also holding
+/// the answer to "how long until it goes away".
+///
+/// `remaining == nil` means the message blocks (critical) and never expires on its
+/// own, so a missing countdown is a deliberate state rather than an oversight.
+struct Presentation: Equatable, Sendable {
+    let item: NotchNotification
+    var remaining: Duration?
+}
+
 @MainActor
 @Observable
 final class NotificationManager {
     static let shared = NotificationManager()
-    static let maxQueue = 10
+    /// How much history is kept. This is also what gets persisted, so it is the
+    /// number of messages you can still read after a restart.
+    static let maxHistoryCount = 50
+    static let maxPendingCount = 10
 
-    private(set) var current: NotchNotification?
+    /// Writes are debounced so a burst of pushes costs one save, not one per message.
+    static let persistDebounce: Duration = .milliseconds(500)
+
+    /// The live message together with the dwell budget that retires it.
+    /// Observed storage: `current` reads it, so the UI invalidates when it changes.
+    private(set) var presentation: Presentation?
+
     private(set) var history: [NotchNotification] = []
     private(set) var queue: [NotchNotification] = []
     private(set) var displayState: IslandDisplayState = .hidden
@@ -32,12 +54,24 @@ final class NotificationManager {
     @ObservationIgnored private var dwellTask: Task<Void, Never>?
     @ObservationIgnored private var hoverTask: Task<Void, Never>?
     @ObservationIgnored private var collapseTask: Task<Void, Never>?
-    @ObservationIgnored private var dwellDeadline: ContinuousClock.Instant?
-    @ObservationIgnored private var remainingDwell: Duration = .zero
+    /// Set only while the countdown is actually running; nil while it is held.
+    @ObservationIgnored private(set) var dwellDeadline: ContinuousClock.Instant?
+    /// Nil until the app hands over a store, which keeps tests off the real disk.
+    @ObservationIgnored private var historyStore: NotificationHistoryStore?
+    @ObservationIgnored private var persistTask: Task<Void, Never>?
+    /// Nil until the app hands over a store; see `attachAckStore`.
+    @ObservationIgnored private var ackStore: NotificationAckStore?
+    /// Test seam for receipts. Production leaves this nil and writes through `ackStore`.
+    @ObservationIgnored var ackWriter: ((NotificationAck) -> Void)?
     @ObservationIgnored private let clock = ContinuousClock()
     @ObservationIgnored private weak var presenter: NotchPresenting?
     /// Test seam for `performAction`; production leaves this nil and opens via NSWorkspace.
     @ObservationIgnored var urlOpener: ((URL) -> Void)?
+    /// Retained so the observers outlive the launch scope that installed them.
+    @ObservationIgnored private var presenceMonitor: PresenceMonitor?
+    /// Backing store for `isAway`. The public setter runs the return transition,
+    /// so nothing can flip the flag without the rest of the state following.
+    @ObservationIgnored private var awayFromPresence = false
 
     init() {}
 
@@ -49,6 +83,8 @@ final class NotificationManager {
         self.presenter = presenter
     }
 
+    /// The message on screen, derived from `presentation` so the two cannot disagree.
+    var current: NotchNotification? { presentation?.item }
     var pendingCount: Int { queue.count }
     var historyCount: Int { history.count }
     var hasContent: Bool { current != nil || !queue.isEmpty || !history.isEmpty }
@@ -72,41 +108,176 @@ final class NotificationManager {
         readIDs.contains(notification.id)
     }
 
+    /// True while the pointer is over the expanded panel or inside the compact
+    /// activation zone. Used to scope Esc so it cannot fire from other apps.
+    var pointerNearPanel: Bool { isHovering || pointerNearIsland }
+
     // MARK: - Ingress
 
-    func push(_ notification: NotchNotification) {
-        history.append(notification)
-        if history.count > Self.maxQueue {
-            history.removeFirst(history.count - Self.maxQueue)
+    /// Records a message and, unless the user is away, surfaces it.
+    ///
+    /// Returns whether the message was actually shown. A withheld message is still
+    /// recorded, so `false` means "stored, not shown" — never "dropped".
+    @discardableResult
+    func push(_ notification: NotchNotification) -> Bool {
+        let incoming = collapseGroup(notification)
+
+        history.append(incoming)
+        if history.count > Self.maxHistoryCount {
+            history.removeFirst(history.count - Self.maxHistoryCount)
         }
         recomputeUnread()
+        schedulePersist()
 
-        queue.append(notification)
-        if queue.count > Self.maxQueue {
-            queue.removeFirst(queue.count - Self.maxQueue)
+        if isQuiet(for: incoming) {
+            // Collapsing a group may have retired the message that was on screen.
+            // Nothing replaces it, so the display has to settle on its own.
+            settleAfterWithdrawal()
+            return false
         }
 
-        if notification.urgency == .critical {
-            promoteCritical(notification)
-        } else if current == nil {
-            let shouldExpand = AppSettings.shared.autoExpandOnMessage && !displaySuppressed
-            promoteNext(autoExpand: shouldExpand)
-            if !shouldExpand, !displaySuppressed {
-                displayState = .compact
-                Task { await presenter?.compact() }
+        queue.append(incoming)
+        if queue.count > Self.maxPendingCount {
+            queue.removeFirst(queue.count - Self.maxPendingCount)
+        }
+
+        if incoming.urgency == .critical {
+            promoteCritical(incoming)
+            return true
+        }
+
+        guard presentation == nil else {
+            // Something is already live, and its countdown is what will retire it.
+            // Re-asserting the invariant here is cheap insurance: a collapsed panel
+            // must never be left holding a message that nothing will ever clear.
+            reconcileDwell()
+            return true
+        }
+
+        let shouldExpand = AppSettings.shared.autoExpandOnMessage && !displaySuppressed
+        promoteNext(autoExpand: shouldExpand)
+        if !shouldExpand, !displaySuppressed {
+            displayState = .compact
+            Task { await presenter?.compact() }
+        }
+        reconcileDwell()
+        return true
+    }
+
+    // MARK: - Quiet hours
+
+    /// Whether the user is away from the machine.
+    ///
+    /// The setter is the transition: coming back is when a backlog of unread
+    /// messages gets announced, so it cannot be a plain assignment.
+    var isAway: Bool {
+        get { awayFromPresence }
+        set { setAway(newValue) }
+    }
+
+    /// Installs the presence monitor and adopts whatever it already knows.
+    ///
+    /// Kept separate from `attach` because tests run without a session and drive
+    /// `isAway` directly instead.
+    func attachPresenceMonitor(_ monitor: PresenceMonitor) {
+        presenceMonitor = monitor
+        monitor.onReturn = { [weak self] in self?.setAway(false) }
+        setAway(monitor.isAway)
+    }
+
+    func setAway(_ away: Bool) {
+        guard away != awayFromPresence else { return }
+        awayFromPresence = away
+        guard !away else { return }
+
+        // Coming back. The backlog stays in history — unfolding a dozen messages
+        // on top of someone who just unlocked their screen would be hostile — so
+        // the return is announced with a pill they can open if they want to.
+        guard presentation == nil, !displaySuppressed, unreadCount > 0 else { return }
+        displayState = .compact
+        Task { await presenter?.compact() }
+    }
+
+    /// Whether this message should be withheld because the user is away.
+    func isQuiet(for notification: NotchNotification) -> Bool {
+        guard isAway else { return false }
+        switch AppSettings.shared.quietMode {
+        case .off: return false
+        case .historyOnly: return true          // everything lands in history, critical included
+        case .criticalOnly: return notification.urgency != .critical
+        }
+    }
+
+    /// Re-settles the display after a message was withheld.
+    ///
+    /// Only group collapsing can punch a hole: it retires the message that was on
+    /// screen, and a withheld replacement will not fill it. An expanded panel with
+    /// no message behind it is the one state that must be repaired.
+    ///
+    /// Everything else is left strictly alone. Retiring to a compact pill here
+    /// would light up the pill on a locked screen, which is the opposite of quiet.
+    private func settleAfterWithdrawal() {
+        guard presentation == nil, displayState.isExpanded else { return }
+        advance()
+    }
+
+    /// Collapses `notification` onto any earlier message in the same group, so a
+    /// repeating job updates one entry instead of stacking a fresh one every run.
+    private func collapseGroup(_ notification: NotchNotification) -> NotchNotification {
+        guard let key = notification.groupingKey else { return notification }
+
+        // Collect ids before removing, so read state can be pruned alongside.
+        let superseded = Set(history.filter { $0.groupingKey == key }.map(\.id))
+        history.removeAll { $0.groupingKey == key }
+        queue.removeAll { $0.groupingKey == key }
+        readIDs.subtract(superseded)
+
+        // The on-screen message carried the same group: drop it so `push` promotes
+        // the replacement, which updates the panel instead of queueing behind it.
+        if presentation?.item.groupingKey == key {
+            presentation = nil
+        }
+        return notification
+    }
+
+    /// Clears one sender-defined group, leaving the rest of the history alone.
+    func clear(group: String) {
+        let key = group.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+
+        let removed = Set(history.filter { $0.groupingKey == key }.map(\.id))
+        guard !removed.isEmpty else { return }
+
+        history.removeAll { removed.contains($0.id) }
+        queue.removeAll { removed.contains($0.id) }
+        readIDs.subtract(removed)
+
+        if let itemID = presentation?.item.id, removed.contains(itemID) {
+            advance()                       // retire what is on screen and move on
+        } else {
+            recomputeUnread()
+            if !hasContent {
+                displayState = .hidden
+                Task { await presenter?.hide() }
             }
         }
+        schedulePersist()
     }
 
     func clear() {
         cancelTimers()
+        persistTask?.cancel()
+        persistTask = nil
         queue.removeAll()
         history.removeAll()
         readIDs.removeAll()
         recomputeUnread()
-        current = nil
+        presentation = nil
         displayState = .hidden
         manualExpanded = false
+        pointerNearIsland = false
+        hoverSuppressedUntilExit = false
+        historyStore?.delete()
         Task { await presenter?.hide() }
     }
 
@@ -117,14 +288,12 @@ final class NotificationManager {
         guard hovering != isHovering else { return }
         isHovering = hovering
         if hovering {
-            pauseDwell()
             collapseTask?.cancel()
             collapseTask = nil
-        } else if current?.urgency != .critical, displayState == .transientExpanded {
-            scheduleDwell(remainingDwell)
         } else if manualExpanded, !pointerNearIsland, AppSettings.shared.autoCollapseOnLeave {
             scheduleManualCollapse()
         }
+        reconcileDwell()
     }
 
     /// Called by the global mouse monitor for the full compact island activation zone.
@@ -145,6 +314,7 @@ final class NotificationManager {
                 self.manualExpanded = true
                 self.displayState = .manualExpanded
                 self.presentExpanded()
+                self.reconcileDwell()
             }
         } else {
             hoverTask?.cancel()
@@ -165,6 +335,7 @@ final class NotificationManager {
         manualExpanded = true
         displayState = .manualExpanded
         presentExpanded()
+        reconcileDwell()
     }
 
     func setCompactContentWidth(_ width: CGFloat, for side: CompactIslandSide) {
@@ -185,6 +356,7 @@ final class NotificationManager {
             manualExpanded = true
             displayState = .manualExpanded
             presentExpanded()
+            reconcileDwell()
         }
     }
 
@@ -196,14 +368,18 @@ final class NotificationManager {
             hoverTask?.cancel()
             collapseTask?.cancel()
             Task { await presenter?.hide() }
+        } else if let current, current.urgency == .critical {
+            // A critical that arrived while suppressed must return to blocking, not a compact pill.
+            displayState = .blockingExpanded
+            presentExpanded()
         } else if hasContent {
             displayState = .compact
             Task { await presenter?.compact() }
         }
+        reconcileDwell()
     }
 
     func dismissCurrent() {
-        cancelDwell()
         manualExpanded = false
         advance()
     }
@@ -218,6 +394,9 @@ final class NotificationManager {
         collapseTask = nil
         let shouldHide = history.isEmpty || (current == nil && AppSettings.shared.hideWhenIdle)
         displayState = shouldHide ? .hidden : .compact
+        // Once the panel is gone there is nothing left to hover, so the dwell resumes
+        // even if the pointer is still sitting where the panel used to be.
+        reconcileDwell()
         Task {
             if shouldHide {
                 await presenter?.hide()
@@ -227,9 +406,25 @@ final class NotificationManager {
         }
     }
 
-    /// Opens an action's callback URL. Acting on the current message dismisses it and advances the queue.
+    /// Routes where an action's callback URL goes.
+    ///
+    /// A `notch-notify://ack` URL is a loopback: the click is recorded as a receipt
+    /// instead of being handed to the system, so the sender can learn what was chosen.
+    /// Anything else is opened as before.
     func performAction(_ action: NotificationAction, for notification: NotchNotification) {
-        if let urlOpener {
+        if let ack = URLNotificationParser.parseAck(action.url) {
+            let receipt = NotificationAck(
+                token: ack.token,
+                label: ack.label.isEmpty ? action.label : ack.label,
+                notificationID: notification.id,
+                decidedAt: Date()
+            )
+            if let ackWriter {
+                ackWriter(receipt)
+            } else if let ackStore {
+                try? ackStore.write(receipt)
+            }
+        } else if let urlOpener {
             urlOpener(action.url)
         } else {
             NSWorkspace.shared.open(action.url)
@@ -239,15 +434,20 @@ final class NotificationManager {
         }
     }
 
+    func attachAckStore(_ store: NotificationAckStore) {
+        ackStore = store
+        store.pruneStale()
+    }
+
     // MARK: - Presentation loop
 
     /// Promotes the next pending item. The method remains synchronous for deterministic tests.
     func advance() {
-        cancelDwell()
+        stopDwell()
         manualExpanded = false
 
         if queue.isEmpty {
-            current = nil
+            presentation = nil
             let shouldHide = history.isEmpty || AppSettings.shared.hideWhenIdle
             displayState = shouldHide ? .hidden : .compact
             Task {
@@ -263,43 +463,41 @@ final class NotificationManager {
         promoteNext(autoExpand: displayState == .hidden || displayState == .compact)
     }
 
+    /// The only way a message becomes live. It publishes the message and its dwell
+    /// budget as one value, then hands the countdown to `reconcileDwell`.
+    private func beginPresenting(_ item: NotchNotification, as state: IslandDisplayState) {
+        let budget: Duration? = item.urgency == .critical
+            ? nil
+            : .seconds(max(0.1, item.usesDefaultTimeout ? AppSettings.shared.messageDwellSeconds : item.timeout))
+        stopDwell()
+        presentation = Presentation(item: item, remaining: budget)
+        displayState = state
+        manualExpanded = false
+        // Becoming current means the message is surfaced (expanded or in the compact status), so it counts as read.
+        markRead(item.id)
+        reconcileDwell()
+    }
+
     private func promoteNext(autoExpand: Bool) {
         guard let next = dequeue() else {
-            current = nil
+            presentation = nil
             displayState = history.isEmpty ? .hidden : .compact
+            reconcileDwell()
             Task { await presenter?.compact() }
             return
         }
-
-        current = next
-        displayState = next.urgency == .critical ? .blockingExpanded : .transientExpanded
-        manualExpanded = false
-        // Becoming current means the message is surfaced (expanded or in the compact status), so it counts as read.
-        markRead(next.id)
-
-        if next.urgency == .critical {
-            cancelDwell()
-        } else {
-            let dwell = next.usesDefaultTimeout ? AppSettings.shared.messageDwellSeconds : next.timeout
-            remainingDwell = .seconds(max(0.1, dwell))
-            scheduleDwell(remainingDwell)
-        }
-
+        beginPresenting(next, as: next.urgency == .critical ? .blockingExpanded : .transientExpanded)
         if autoExpand {
             presentExpanded()
         }
     }
 
     private func promoteCritical(_ notification: NotchNotification) {
-        if let current, current.id != notification.id {
-            queue.insert(current, at: 0)
+        if let previous = presentation?.item, previous.id != notification.id {
+            queue.insert(previous, at: 0)
         }
         queue.removeAll { $0.id == notification.id }
-        cancelDwell()
-        current = notification
-        manualExpanded = false
-        displayState = .blockingExpanded
-        markRead(notification.id)
+        beginPresenting(notification, as: .blockingExpanded)
         if !displaySuppressed {
             presentExpanded()
         }
@@ -315,62 +513,115 @@ final class NotificationManager {
         Task { await presenter?.expand() }
     }
 
+    // MARK: - Dwell countdown
+    //
+    // `reconcileDwell` is the single authority on whether the countdown is running.
+    // Every state transition ends by calling it, so no call site has to remember to
+    // arm or resume a timer. The previous design scattered that responsibility across
+    // five call sites; one of them silently no-opped behind an `isHovering` guard and
+    // left the message on screen forever, which also starved every later push.
+
+    /// Whether the countdown should be paused. Hovering only counts while there is
+    /// still a panel to hover — a stale `isHovering` after the panel collapses must
+    /// not strand the message.
+    private var dwellHeldOpen: Bool {
+        (isHovering && displayState.isExpanded) || displaySuppressed || displayState == .manualExpanded
+    }
+
+    private func reconcileDwell() {
+        guard let live = presentation, let budget = live.remaining else {
+            // Nothing live, or the live message blocks and never expires on its own.
+            stopDwell()
+            return
+        }
+
+        if dwellHeldOpen {
+            pauseDwell()
+        } else if dwellTask == nil {
+            startDwell(budget)
+        }
+    }
+
+    private func startDwell(_ budget: Duration) {
+        guard let live = presentation else { return }
+        dwellTask?.cancel()
+        dwellDeadline = clock.now.advanced(by: budget)
+        let itemID = live.item.id
+        dwellTask = Task { [weak self] in
+            try? await Task.sleep(for: budget)
+            guard !Task.isCancelled, let self else { return }
+            guard self.presentation?.item.id == itemID else { return }
+            self.advance()
+        }
+    }
+
+    /// Banks whatever is left of the budget so it can resume when the hold is released.
+    private func pauseDwell() {
+        if let deadline = dwellDeadline, var live = presentation, live.remaining != nil {
+            // Never bank a zero budget: an exhausted countdown would strand the message.
+            live.remaining = max(.milliseconds(100), clock.now.duration(to: deadline))
+            presentation = live
+        }
+        stopDwell()
+    }
+
+    private func stopDwell() {
+        dwellTask?.cancel()
+        dwellTask = nil
+        dwellDeadline = nil
+    }
+
+    // MARK: - Persistence
+
+    /// Restores history and read state from disk. Called once at launch; a missing
+    /// or unreadable store simply leaves the session empty.
+    func restoreHistory(using store: NotificationHistoryStore) {
+        historyStore = store
+        guard AppSettings.shared.persistHistory, let snapshot = store.load() else { return }
+
+        history = Array(snapshot.items.suffix(Self.maxHistoryCount))
+        readIDs = Set(snapshot.readIDs)
+        recomputeUnread()
+
+        // Unread messages are the reason to surface anything at launch; if
+        // everything was already read, stay out of the way.
+        if unreadCount > 0, !displaySuppressed {
+            displayState = .compact
+            Task { await presenter?.compact() }
+        }
+    }
+
+    private func schedulePersist() {
+        guard historyStore != nil, AppSettings.shared.persistHistory else { return }
+        persistTask?.cancel()
+        persistTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.persistDebounce)
+            guard let self, let store = self.historyStore else { return }
+            self.persistTask = nil
+            try? store.save(HistorySnapshot(items: self.history, readIDs: self.readIDs))
+        }
+    }
+
     // MARK: - Read state
 
     private func markRead(_ id: UUID) {
         readIDs.insert(id)
         recomputeUnread()
+        schedulePersist()
     }
 
     private func markAllRead() {
         readIDs.formUnion(history.map(\.id))
         recomputeUnread()
+        schedulePersist()
     }
 
     private func recomputeUnread() {
+        readIDs.formIntersection(Set(history.map(\.id)))
         unreadCount = history.reduce(0) { $0 + (readIDs.contains($1.id) ? 0 : 1) }
     }
 
     // MARK: - Timers
-
-    private func scheduleDwell(_ duration: Duration) {
-        guard duration > .zero, current?.urgency != .critical, !isHovering else { return }
-        dwellTask?.cancel()
-        remainingDwell = duration
-        dwellDeadline = clock.now.advanced(by: duration)
-        dwellTask = Task { [weak self] in
-            try? await Task.sleep(for: duration)
-            guard !Task.isCancelled else { return }
-            guard let self, self.current?.urgency != .critical else { return }
-            self.current = nil
-            self.displayState = self.history.isEmpty || AppSettings.shared.hideWhenIdle ? .hidden : .compact
-            self.dwellDeadline = nil
-            if self.queue.isEmpty {
-                if AppSettings.shared.hideWhenIdle {
-                    await self.presenter?.hide()
-                } else {
-                    await self.presenter?.compact()
-                }
-            } else {
-                self.promoteNext(autoExpand: false)
-            }
-        }
-    }
-
-    private func pauseDwell() {
-        guard let deadline = dwellDeadline else { return }
-        remainingDwell = max(.zero, clock.now.duration(to: deadline))
-        dwellTask?.cancel()
-        dwellTask = nil
-        dwellDeadline = nil
-    }
-
-    private func cancelDwell() {
-        dwellTask?.cancel()
-        dwellTask = nil
-        dwellDeadline = nil
-        remainingDwell = .zero
-    }
 
     private func scheduleManualCollapse() {
         collapseTask?.cancel()
@@ -381,6 +632,7 @@ final class NotificationManager {
             self.manualExpanded = false
             let shouldHide = self.current == nil && (self.history.isEmpty || AppSettings.shared.hideWhenIdle)
             self.displayState = shouldHide ? .hidden : .compact
+            self.reconcileDwell()
             if shouldHide {
                 await self.presenter?.hide()
             } else {
@@ -390,13 +642,10 @@ final class NotificationManager {
     }
 
     private func cancelTimers() {
-        dwellTask?.cancel()
+        stopDwell()
         hoverTask?.cancel()
         collapseTask?.cancel()
-        dwellTask = nil
         hoverTask = nil
         collapseTask = nil
-        dwellDeadline = nil
-        remainingDwell = .zero
     }
 }

@@ -61,7 +61,7 @@ struct SettingsView: View {
                 case .display: DisplaySettingsPane(settings: settings)
                 case .notifications: NotificationSettingsPane(settings: settings)
                 case .sound: SoundSettingsPane(settings: settings)
-                case .shortcuts: ShortcutSettingsPane()
+                case .shortcuts: ShortcutSettingsPane(settings: settings)
                 case .about: AboutSettingsPane()
                 }
             }
@@ -139,9 +139,9 @@ private struct DisplaySettingsPane: View {
             }
 
             SettingsGroup(title: "面板尺寸") {
-                Slider(value: $settings.panelWidth, in: 320...620, step: 10) {
+                Slider(value: $settings.panelWidth, in: 320...720, step: 10) {
                     Text("宽度")
-                } minimumValueLabel: { Text("320") } maximumValueLabel: { Text("620") }
+                } minimumValueLabel: { Text("320") } maximumValueLabel: { Text("720") }
                 SettingsValueLabel(value: "宽度 \(Int(settings.panelWidth)) pt")
 
                 Slider(value: $settings.panelHeight, in: 220...620, step: 10) {
@@ -192,6 +192,23 @@ private struct NotificationSettingsPane: View {
                 Text("普通消息会在停留时间结束后收起到摘要栏。Critical 消息会保持展开，直到手动收起或清除。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                Toggle("退出后保留历史消息", isOn: $settings.persistHistory)
+            }
+
+            SettingsGroup(title: "离开时") {
+                Picker("屏幕锁定或系统睡眠时", selection: $settings.quietMode) {
+                    ForEach(QuietMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 420)
+                Text(settings.quietMode.detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text("依据系统公开的锁屏、屏幕保护与睡眠信号判断，不依赖任何私有状态。无论选择哪一项，消息都不会丢失。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -213,13 +230,25 @@ private struct SoundSettingsPane: View {
 }
 
 private struct ShortcutSettingsPane: View {
+    @Bindable var settings: AppSettings
+
     var body: some View {
         SettingsScrollView(title: "快捷键", subtitle: "面板展开后可以使用这些操作。") {
+            SettingsGroup(title: "全局生效") {
+                Toggle("在任意 App 中启用快捷键", isOn: $settings.globalShortcutsEnabled)
+                Text("默认只在本 App 激活时生效。开启后全局生效，但 ⌘, 与多数 App 的“设置”冲突，⌘⇧N 与 Finder“新建文件夹”冲突，⌘Delete 与“移到废纸篓”冲突。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
             SettingsGroup(title: "面板") {
                 ShortcutRow(title: "收起面板", shortcut: "Esc")
                 ShortcutRow(title: "清除消息", shortcut: "⌘ Delete")
                 ShortcutRow(title: "切换面板", shortcut: "⌘ ⇧ N")
                 ShortcutRow(title: "打开设置", shortcut: "⌘ ,")
+                Text("Esc 仅在指针停留在面板或刘海区域时生效。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

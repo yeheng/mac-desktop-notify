@@ -4,6 +4,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var presenter: NotchPresenter?
+    private var presenceMonitor: PresenceMonitor?
     private var settingsController: SettingsWindowController?
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
@@ -17,6 +18,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let presenter = NotchPresenter()
         self.presenter = presenter                 // retain (manager holds it weakly)
         NotificationManager.shared.attach(presenter)
+        NotificationManager.shared.restoreHistory(using: .default)
+        NotificationManager.shared.attachAckStore(.default)
+
+        let presence = PresenceMonitor()
+        presenceMonitor = presence                 // retain; the manager also holds it
+        NotificationManager.shared.attachPresenceMonitor(presence)
+        presence.start()
+
         settingsController = SettingsWindowController()
         installShortcutMonitors()
         setupStatusItem()
@@ -33,11 +42,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch url.host()?.lowercased() {
         case "push":
             if let notification = URLNotificationParser.parsePush(url) {
-                NotificationManager.shared.push(notification)
-                playSound(for: notification)
+                // A withheld message is stored but never shown, and "静默" has to
+                // mean silent too.
+                if NotificationManager.shared.push(notification) {
+                    playSound(for: notification)
+                }
             }
         case "clear":
-            NotificationManager.shared.clear()
+            if let group = URLNotificationParser.parseClearGroup(url) {
+                NotificationManager.shared.clear(group: group)
+            } else {
+                NotificationManager.shared.clear()
+            }
         default:
             break
         }
@@ -85,6 +101,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installShortcutMonitors() {
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             Task { @MainActor [weak self] in
+                // Global shortcuts are opt-in: ⌘, / ⌘⇧N / ⌘Delete collide with
+                // Finder and most apps' own menus, so they stay off until enabled.
+                guard AppSettings.shared.globalShortcutsEnabled else { return }
                 _ = self?.handleShortcut(event)
             }
         }
@@ -107,7 +126,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NotificationManager.shared.clear()
             return true
         }
-        if event.keyCode == 53 {
+        // Esc only counts while the pointer is on the panel: firing from the global
+        // monitor otherwise would collapse the panel on every Esc press in vim & co.
+        if event.keyCode == 53, NotificationManager.shared.displayState.isExpanded,
+           NotificationManager.shared.pointerNearPanel {
             NotificationManager.shared.dismissPanel()
             return true
         }

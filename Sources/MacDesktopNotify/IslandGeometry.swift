@@ -1,5 +1,17 @@
 import AppKit
 
+extension NSScreen {
+    /// The display's stable identifier.
+    ///
+    /// `NSScreen` instances are recreated whenever the screen parameters change,
+    /// so they cannot be used as dictionary keys that survive a reconfiguration.
+    /// `CGDirectDisplayID` does, which is what both the per-screen notch map and
+    /// the fullscreen cache need.
+    var displayID: CGDirectDisplayID {
+        deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
+    }
+}
+
 @MainActor
 enum IslandGeometry {
     private static let horizontalHoverPadding: CGFloat = 26

@@ -41,6 +41,9 @@ final class AppSettings {
     var showHistoryCount: Bool { didSet { save(showHistoryCount, key: Keys.showHistoryCount) } }
     var soundEnabled: Bool { didSet { save(soundEnabled, key: Keys.soundEnabled) } }
     var launchAtLogin: Bool { didSet { save(launchAtLogin, key: Keys.launchAtLogin) } }
+    var globalShortcutsEnabled: Bool { didSet { save(globalShortcutsEnabled, key: Keys.globalShortcutsEnabled) } }
+    var persistHistory: Bool { didSet { save(persistHistory, key: Keys.persistHistory) } }
+    var quietMode: QuietMode { didSet { save(quietMode.rawValue, key: Keys.quietMode) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -53,7 +56,7 @@ final class AppSettings {
         hideInFullscreen = defaults.object(forKey: Keys.hideInFullscreen) as? Bool ?? false
         layoutMode = IslandLayoutMode(rawValue: defaults.string(forKey: Keys.layoutMode) ?? "normal") ?? .normal
         contentFontSize = defaults.object(forKey: Keys.contentFontSize) as? Double ?? 12
-        panelWidth = defaults.object(forKey: Keys.panelWidth) as? Double ?? 380
+        panelWidth = defaults.object(forKey: Keys.panelWidth) as? Double ?? 460
         panelHeight = defaults.object(forKey: Keys.panelHeight) as? Double ?? 360
         notchWidthOffset = defaults.object(forKey: Keys.notchWidthOffset) as? Double ?? 0
         notchHeightOffset = defaults.object(forKey: Keys.notchHeightOffset) as? Double ?? 0
@@ -61,12 +64,15 @@ final class AppSettings {
         showHistoryCount = defaults.object(forKey: Keys.showHistoryCount) as? Bool ?? true
         soundEnabled = defaults.object(forKey: Keys.soundEnabled) as? Bool ?? true
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
+        globalShortcutsEnabled = defaults.object(forKey: Keys.globalShortcutsEnabled) as? Bool ?? false
+        persistHistory = defaults.object(forKey: Keys.persistHistory) as? Bool ?? true
+        quietMode = QuietMode(rawValue: defaults.string(forKey: Keys.quietMode) ?? "") ?? .off
     }
 
     func resetDisplayDefaults() {
         layoutMode = .normal
         contentFontSize = 12
-        panelWidth = 380
+        panelWidth = 460
         panelHeight = 360
         notchWidthOffset = 0
         notchHeightOffset = 0
@@ -94,5 +100,33 @@ final class AppSettings {
         static let showHistoryCount = "island.showHistoryCount"
         static let soundEnabled = "island.soundEnabled"
         static let launchAtLogin = "island.launchAtLogin"
+        static let globalShortcutsEnabled = "island.globalShortcutsEnabled"
+        static let persistHistory = "island.persistHistory"
+        static let quietMode = "island.quietMode"
+    }
+}
+
+/// What happens to a message that arrives while the user is away or focused.
+enum QuietMode: String, CaseIterable, Identifiable {
+    case off
+    case historyOnly
+    case criticalOnly
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: "照常显示"
+        case .historyOnly: "静默存入历史"
+        case .criticalOnly: "仅紧急消息穿透"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .off: "消息照常弹出，不受锁定与睡眠影响。"
+        case .historyOnly: "离开期间的消息只进入历史，回来后用未读数量提示。"
+        case .criticalOnly: "critical 消息照常弹出，其余静默进入历史。"
+        }
     }
 }

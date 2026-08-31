@@ -104,6 +104,19 @@ struct IslandExpandedView: View {
             Spacer(minLength: 12)
 
             Button {
+                manager.clear()
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.65))
+                    .frame(width: 22, height: 22)
+                    .background(.white.opacity(0.08), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("清空全部消息")
+
+            Button {
+                manager.dismissCurrent()
                 manager.dismissPanel()
             } label: {
                 Image(systemName: "xmark")
@@ -113,7 +126,7 @@ struct IslandExpandedView: View {
                     .background(.white.opacity(0.08), in: Circle())
             }
             .buttonStyle(.plain)
-            .help("收起面板")
+            .help("清除当前消息并收起")
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)
@@ -295,7 +308,7 @@ private struct HistoryRow: View {
     private var previewText: AttributedString {
         guard !notification.bodyMarkdown.isEmpty else { return AttributedString("无正文") }
         let flat = notification.bodyMarkdown.replacingOccurrences(of: "\n", with: " ")
-        return MarkdownRenderer.inlineAttributed(flat)
+        return MarkdownCache.shared.inline(flat)
     }
 }
 
@@ -328,7 +341,7 @@ private struct NotificationBodyView: View {
     }
 
     private var blocks: [MarkdownBlock] {
-        MarkdownRenderer.parse(bodyMarkdown)
+        MarkdownCache.shared.blocks(for: bodyMarkdown)
     }
 }
 
