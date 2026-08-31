@@ -8,7 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsController: SettingsWindowController?
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
-    private var lastSoundAt: Date = .distantPast
+    /// Throttled per urgency: a chatty normal sender must not silence a critical
+    /// that lands inside the same window.
+    private var lastSoundAt: [UrgencyLevel: Date] = [:]
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -43,8 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "push":
             if let notification = URLNotificationParser.parsePush(url) {
                 // A withheld message is stored but never shown, and "静默" has to
-                // mean silent too.
-                if NotificationManager.shared.push(notification) {
+                // mean silent too. A queued one stays silent as well: it surfaces
+                // only when the live message retires, and that transition — not a
+                // sound arriving seconds early — is what tells the user.
+                if NotificationManager.shared.push(notification) == .displayed {
                     playSound(for: notification)
                 }
             }
@@ -62,12 +66,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Sound
 
     /// Low-urgency pushes stay silent; critical uses a heavier system sound. Rapid-fire
-    /// pushes are throttled so a chatty script cannot stack overlapping sounds.
+    /// pushes of the same urgency are throttled so a chatty script cannot stack
+    /// overlapping sounds.
     private func playSound(for notification: NotchNotification) {
         guard AppSettings.shared.soundEnabled, notification.urgency != .low else { return }
         let now = Date()
-        guard now.timeIntervalSince(lastSoundAt) > 0.6 else { return }
-        lastSoundAt = now
+        if let last = lastSoundAt[notification.urgency], now.timeIntervalSince(last) <= 0.6 { return }
+        lastSoundAt[notification.urgency] = now
         NSSound(named: notification.urgency == .critical ? "Basso" : "Glass")?.play()
     }
 

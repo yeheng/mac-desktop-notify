@@ -2,7 +2,6 @@ import Foundation
 
 enum URLNotificationParser {
     static let maxBodyLength = 5000
-    static let defaultTimeout: TimeInterval = 6
     static let timeoutRange: ClosedRange<TimeInterval> = 1...60
     static let maxActions = 3
     static let maxActionLabelLength = 24
@@ -28,22 +27,16 @@ enum URLNotificationParser {
 
         let urgency = UrgencyLevel(rawValue: value("urgency") ?? "") ?? .normal
 
-        let timeout: TimeInterval
-        let usesDefaultTimeout: Bool
-        if let raw = value("timeout"), let parsed = TimeInterval(raw) {
-            timeout = min(max(parsed, timeoutRange.lowerBound), timeoutRange.upperBound)
-            usesDefaultTimeout = false
-        } else {
-            timeout = defaultTimeout
-            usesDefaultTimeout = true
-        }
+        // A missing or unparseable timeout stays nil: the dwell setting owns it.
+        let timeout = value("timeout")
+            .flatMap { TimeInterval($0) }
+            .map { min(max($0, timeoutRange.lowerBound), timeoutRange.upperBound) }
 
         return NotchNotification(
             title: title,
             bodyMarkdown: body,
             urgency: urgency,
             timeout: timeout,
-            usesDefaultTimeout: usesDefaultTimeout,
             actions: parseActions(value("actions")),
             group: parseGroup(value("group"))
         )

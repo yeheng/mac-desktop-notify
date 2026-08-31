@@ -64,6 +64,17 @@ final class NotchPresenter: NotchPresenting {
         await applyToScreens(active: { await $0.compact(on: $1) }, inactive: { await $0.hide() })
     }
 
+    /// Re-derives suppression for the island's current screen.
+    ///
+    /// The mouse-driven path only runs when the pointer moves, and the
+    /// workspace observers only invalidate the cache - neither guarantees a
+    /// probe at the moment something wants to expand. This is that probe: one
+    /// cached lookup in the common case, one window-list walk when stale.
+    func probeDisplaySuppressed() async -> Bool {
+        guard let screen = targetScreen else { return false }
+        return fullscreenSuppressed(on: screen)
+    }
+
     func hide() async {
         for notch in notches.instances.values { await notch.hide() }
     }
@@ -241,8 +252,12 @@ final class NotchPresenter: NotchPresenting {
         )
         let inside = activationFrame.contains(location)
         manager.setPointerNearIsland(inside)
-        if clicked, inside {
-            manager.islandClicked()
+        if clicked {
+            if inside {
+                manager.islandClicked()
+            } else {
+                manager.clickedOutsideIsland()
+            }
         }
     }
 

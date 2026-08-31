@@ -34,9 +34,9 @@ struct CompactIslandView: View {
             case .leading:
                 HStack(spacing: 5) {
                     if settings.showUrgency {
-                        Image(systemName: manager.latestNotification?.urgency.symbolName ?? "sparkles")
+                        Image(systemName: manager.displayUrgency?.symbolName ?? "sparkles")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(manager.latestNotification?.urgency.color ?? .blue)
+                            .foregroundStyle(manager.displayUrgency?.color ?? .blue)
                     }
                     if settings.layoutMode != .clean {
                         Text(settings.layoutMode == .detailed ? (manager.current?.title ?? manager.compactStatus) : manager.compactStatus)
@@ -87,9 +87,9 @@ struct IslandExpandedView: View {
         HStack(spacing: 9) {
             if settings.showUrgency {
                 Circle()
-                    .fill(manager.latestNotification?.urgency.color ?? .blue)
+                    .fill(manager.displayUrgency?.color ?? .blue)
                     .frame(width: 7, height: 7)
-                    .shadow(color: manager.latestNotification?.urgency.color ?? .blue, radius: 4)
+                    .shadow(color: manager.displayUrgency?.color ?? .blue, radius: 4)
             }
 
             VStack(alignment: .leading, spacing: 2) {

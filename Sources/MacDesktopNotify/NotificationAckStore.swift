@@ -30,9 +30,12 @@ struct NotificationAckStore {
         )
     }
 
-    /// Only characters that are safe in a filename. Keeps tokens out of paths.
-    static let allowedTokenCharacters = CharacterSet.alphanumerics
-        .union(CharacterSet(charactersIn: "-_"))
+    /// Only ASCII that is safe in a filename. Keeps tokens out of paths and out
+    /// of Unicode-normalization surprises — `alphanumerics` would admit every
+    /// letter in every script, which is more than a filename promise can carry.
+    static let allowedTokenCharacters = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    )
 
     static func isAcceptedToken(_ token: String) -> Bool {
         !token.isEmpty

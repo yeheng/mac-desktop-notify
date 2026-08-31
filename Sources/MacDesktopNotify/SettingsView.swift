@@ -73,7 +73,7 @@ struct SettingsView: View {
 
 private struct GeneralSettingsPane: View {
     @Bindable var settings: AppSettings
-
+    @State private var loginError: String?
     var body: some View {
         SettingsScrollView(title: "通用", subtitle: "控制灵动岛何时出现，以及它如何响应鼠标。") {
             SettingsGroup(title: "行为") {
@@ -106,11 +106,19 @@ private struct GeneralSettingsPane: View {
                             } else {
                                 try SMAppService.mainApp.unregister()
                             }
+                            loginError = nil
                         } catch {
                             settings.launchAtLogin = false
+                            loginError = "登录时打开设置失败：\(error.localizedDescription)"
                         }
                     }
                 ))
+
+                if let loginError {
+                    Text(loginError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
         }
     }

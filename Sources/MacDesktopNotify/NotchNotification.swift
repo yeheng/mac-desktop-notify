@@ -17,8 +17,9 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
     let title: String
     let bodyMarkdown: String
     let urgency: UrgencyLevel
-    let timeout: TimeInterval
-    let usesDefaultTimeout: Bool
+    /// Seconds before the message retires itself. Nil means the sender left it
+    /// to the app's dwell setting, so there is no fake number to interpret.
+    let timeout: TimeInterval?
     let timestamp: Date
     let actions: [NotificationAction]
     /// Sender-defined grouping key. A push replaces any earlier message carrying
@@ -30,8 +31,7 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         title: String,
         bodyMarkdown: String,
         urgency: UrgencyLevel,
-        timeout: TimeInterval,
-        usesDefaultTimeout: Bool = false,
+        timeout: TimeInterval?,
         timestamp: Date = Date(),
         actions: [NotificationAction] = [],
         group: String? = nil
@@ -41,7 +41,6 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         self.bodyMarkdown = bodyMarkdown
         self.urgency = urgency
         self.timeout = timeout
-        self.usesDefaultTimeout = usesDefaultTimeout
         self.timestamp = timestamp
         self.actions = actions
         self.group = group

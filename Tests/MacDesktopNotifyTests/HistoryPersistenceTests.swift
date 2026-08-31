@@ -32,7 +32,6 @@ final class HistoryPersistenceTests: XCTestCase {
             bodyMarkdown: "## 摘要\n- ✅ 通过\n- `code`",
             urgency: .critical,
             timeout: 9,
-            usesDefaultTimeout: false,
             actions: [action],
             group: "ci-build"
         )

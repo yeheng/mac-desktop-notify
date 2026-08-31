@@ -12,8 +12,7 @@ final class URLNotificationParserTests: XCTestCase {
         XCTAssertEqual(n?.title, "Build")
         XCTAssertEqual(n?.bodyMarkdown, "done")
         XCTAssertEqual(n?.urgency, .critical)
-        XCTAssertEqual(n?.timeout, 10)
-        XCTAssertEqual(n?.usesDefaultTimeout, false)
+        XCTAssertEqual(n.flatMap(\.timeout), 10)
     }
 
     func testMissingTitleReturnsNil() {
@@ -28,8 +27,9 @@ final class URLNotificationParserTests: XCTestCase {
         let n = parse("notch-notify://push?title=Hi")
         XCTAssertEqual(n?.bodyMarkdown, "")
         XCTAssertEqual(n?.urgency, .normal)
-        XCTAssertEqual(n?.timeout, 6)
-        XCTAssertEqual(n?.usesDefaultTimeout, true)
+        // An omitted timeout stays nil: the dwell setting owns it, so there is
+        // no fake number stored in its place.
+        XCTAssertNil(n.flatMap(\.timeout))
     }
 
     func testUnknownUrgencyFallsBackToNormal() {
@@ -42,7 +42,8 @@ final class URLNotificationParserTests: XCTestCase {
     }
 
     func testInvalidTimeoutUsesDefault() {
-        XCTAssertEqual(parse("notch-notify://push?title=Hi&timeout=abc")?.timeout, 6)
+        let n = parse("notch-notify://push?title=Hi&timeout=abc")
+        XCTAssertNil(n.flatMap(\.timeout), "an unparseable timeout defers to the setting")
     }
 
     func testBodyCappedAt5000() {

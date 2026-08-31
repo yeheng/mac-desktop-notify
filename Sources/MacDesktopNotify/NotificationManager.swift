@@ -7,6 +7,15 @@ protocol NotchPresenting: AnyObject {
     func expand() async
     func compact() async
     func hide() async
+    /// A fresh answer to "does a fullscreen app own the screen right now".
+    /// Consulted before anything is presented, because suppression is
+    /// otherwise only re-derived when the pointer moves.
+    func probeDisplaySuppressed() async -> Bool
+}
+
+extension NotchPresenting {
+    /// Presenters with no fullscreen knowledge report "nothing to suppress".
+    func probeDisplaySuppressed() async -> Bool { false }
 }
 
 /// A message that is being presented, bundled with the dwell budget it still has.
@@ -20,6 +29,20 @@ protocol NotchPresenting: AnyObject {
 struct Presentation: Equatable, Sendable {
     let item: NotchNotification
     var remaining: Duration?
+}
+
+/// What happened to a pushed message. Every outcome implies the message is in
+/// history - the difference is only what the user saw.
+enum PushOutcome: Sendable, Equatable {
+    /// The push became the live message. "Displayed" here means it owns the
+    /// display state, not that pixels are guaranteed this instant: under
+    /// fullscreen suppression a critical still becomes live (and still sounds)
+    /// but holds its panel until suppression lifts.
+    case displayed
+    /// Waiting behind a live message; surfaces when that one retires.
+    case queued
+    /// Stored but not surfaced, because the user is away and quiet mode holds.
+    case withheld
 }
 
 @MainActor
@@ -90,6 +113,10 @@ final class NotificationManager {
     var hasContent: Bool { current != nil || !queue.isEmpty || !history.isEmpty }
     var latestNotification: NotchNotification? { history.last }
 
+    /// The urgency the pill and panel header should be tinted with: the live
+    /// message if there is one, otherwise the most recent history entry.
+    var displayUrgency: UrgencyLevel? { current?.urgency ?? latestNotification?.urgency }
+
     /// History items that are neither currently shown nor waiting in the queue.
     var pastHistory: [NotchNotification] {
         var skip = Set(queue.map(\.id))
@@ -116,10 +143,11 @@ final class NotificationManager {
 
     /// Records a message and, unless the user is away, surfaces it.
     ///
-    /// Returns whether the message was actually shown. A withheld message is still
-    /// recorded, so `false` means "stored, not shown" — never "dropped".
+    /// The outcome is what the user saw, not whether the message survived:
+    /// every outcome leaves the message in history, so `.withheld` means
+    /// "stored, not shown" — never "dropped".
     @discardableResult
-    func push(_ notification: NotchNotification) -> Bool {
+    func push(_ notification: NotchNotification) -> PushOutcome {
         let incoming = collapseGroup(notification)
 
         history.append(incoming)
@@ -133,7 +161,7 @@ final class NotificationManager {
             // Collapsing a group may have retired the message that was on screen.
             // Nothing replaces it, so the display has to settle on its own.
             settleAfterWithdrawal()
-            return false
+            return .withheld
         }
 
         queue.append(incoming)
@@ -143,7 +171,7 @@ final class NotificationManager {
 
         if incoming.urgency == .critical {
             promoteCritical(incoming)
-            return true
+            return .displayed
         }
 
         guard presentation == nil else {
@@ -151,17 +179,17 @@ final class NotificationManager {
             // Re-asserting the invariant here is cheap insurance: a collapsed panel
             // must never be left holding a message that nothing will ever clear.
             reconcileDwell()
-            return true
+            return .queued
         }
 
         let shouldExpand = AppSettings.shared.autoExpandOnMessage && !displaySuppressed
         promoteNext(autoExpand: shouldExpand)
         if !shouldExpand, !displaySuppressed {
             displayState = .compact
-            Task { await presenter?.compact() }
+            presentCompact()
         }
         reconcileDwell()
-        return true
+        return .displayed
     }
 
     // MARK: - Quiet hours
@@ -195,7 +223,7 @@ final class NotificationManager {
         // the return is announced with a pill they can open if they want to.
         guard presentation == nil, !displaySuppressed, unreadCount > 0 else { return }
         displayState = .compact
-        Task { await presenter?.compact() }
+        presentCompact()
     }
 
     /// Whether this message should be withheld because the user is away.
@@ -236,6 +264,9 @@ final class NotificationManager {
         // the replacement, which updates the panel instead of queueing behind it.
         if presentation?.item.groupingKey == key {
             presentation = nil
+            // Cancel the retired countdown outright rather than relying on the
+            // id guard in `startDwell` to ignore it later.
+            stopDwell()
         }
         return notification
     }
@@ -251,15 +282,13 @@ final class NotificationManager {
         history.removeAll { removed.contains($0.id) }
         queue.removeAll { removed.contains($0.id) }
         readIDs.subtract(removed)
+        recomputeUnread()
 
         if let itemID = presentation?.item.id, removed.contains(itemID) {
             advance()                       // retire what is on screen and move on
-        } else {
-            recomputeUnread()
-            if !hasContent {
-                displayState = .hidden
-                Task { await presenter?.hide() }
-            }
+        } else if !hasContent {
+            displayState = .hidden
+            Task { await presenter?.hide() }
         }
         schedulePersist()
     }
@@ -338,6 +367,16 @@ final class NotificationManager {
         reconcileDwell()
     }
 
+    /// A left click that landed outside the island while the panel is open.
+    /// Collapsing is the panel's own judgment call (it owns the dwell and
+    /// settle rules), so the presenter only reports the click.
+    func clickedOutsideIsland() {
+        // `isHovering` keeps clicks on the panel itself - its buttons sit
+        // outside the compact activation frame - from counting as "outside".
+        guard displayState.isExpanded, !isHovering, AppSettings.shared.autoCollapseOnLeave else { return }
+        dismissPanel()
+    }
+
     func setCompactContentWidth(_ width: CGFloat, for side: CompactIslandSide) {
         switch side {
         case .leading:
@@ -392,7 +431,7 @@ final class NotificationManager {
         hoverSuppressedUntilExit = true
         collapseTask?.cancel()
         collapseTask = nil
-        let shouldHide = history.isEmpty || (current == nil && AppSettings.shared.hideWhenIdle)
+        let shouldHide = settlesHidden(liveMessage: current != nil)
         displayState = shouldHide ? .hidden : .compact
         // Once the panel is gone there is nothing left to hover, so the dwell resumes
         // even if the pointer is still sitting where the panel used to be.
@@ -441,6 +480,16 @@ final class NotificationManager {
 
     // MARK: - Presentation loop
 
+    /// Where the display settles once nothing is expanded.
+    ///
+    /// One answer for every settle path (`advance`, `promoteNext`, `dismissPanel`,
+    /// manual collapse): empty history always hides, and idle-hiding only takes
+    /// the display down when no live message still needs the pill — a live
+    /// message's own dwell will settle the display when it retires.
+    private func settlesHidden(liveMessage: Bool) -> Bool {
+        history.isEmpty || (!liveMessage && AppSettings.shared.hideWhenIdle)
+    }
+
     /// Promotes the next pending item. The method remains synchronous for deterministic tests.
     func advance() {
         stopDwell()
@@ -448,7 +497,7 @@ final class NotificationManager {
 
         if queue.isEmpty {
             presentation = nil
-            let shouldHide = history.isEmpty || AppSettings.shared.hideWhenIdle
+            let shouldHide = settlesHidden(liveMessage: false)
             displayState = shouldHide ? .hidden : .compact
             Task {
                 if shouldHide {
@@ -468,7 +517,7 @@ final class NotificationManager {
     private func beginPresenting(_ item: NotchNotification, as state: IslandDisplayState) {
         let budget: Duration? = item.urgency == .critical
             ? nil
-            : .seconds(max(0.1, item.usesDefaultTimeout ? AppSettings.shared.messageDwellSeconds : item.timeout))
+            : .seconds(max(0.1, item.timeout ?? AppSettings.shared.messageDwellSeconds))
         stopDwell()
         presentation = Presentation(item: item, remaining: budget)
         displayState = state
@@ -481,9 +530,18 @@ final class NotificationManager {
     private func promoteNext(autoExpand: Bool) {
         guard let next = dequeue() else {
             presentation = nil
-            displayState = history.isEmpty ? .hidden : .compact
+            // Same rule as `advance`'s empty path, so an exhausted queue settles
+            // identically no matter which method drained it.
+            let shouldHide = settlesHidden(liveMessage: false)
+            displayState = shouldHide ? .hidden : .compact
             reconcileDwell()
-            Task { await presenter?.compact() }
+            Task {
+                if shouldHide {
+                    await presenter?.hide()
+                } else {
+                    await presenter?.compact()
+                }
+            }
             return
         }
         beginPresenting(next, as: next.urgency == .critical ? .blockingExpanded : .transientExpanded)
@@ -508,9 +566,33 @@ final class NotificationManager {
     }
 
     /// Presents the expanded panel; everything visible there counts as read.
+    ///
+    /// Suppression is re-derived first: the pointer may not have moved since a
+    /// fullscreen app took the screen, and without this check a push would
+    /// expand straight over it. The probe itself is cached in the presenter,
+    /// so the cost is one screen lookup, not a window-list walk.
     private func presentExpanded() {
         markAllRead()
-        Task { await presenter?.expand() }
+        Task {
+            if await presenter?.probeDisplaySuppressed() == true {
+                setDisplaySuppressed(true)
+                return
+            }
+            await presenter?.expand()
+        }
+    }
+
+    /// Shows the compact pill, re-deriving suppression first for the same
+    /// reason as `presentExpanded`: a stale answer must not put anything on
+    /// top of a fullscreen app.
+    private func presentCompact() {
+        Task {
+            if await presenter?.probeDisplaySuppressed() == true {
+                setDisplaySuppressed(true)
+                return
+            }
+            await presenter?.compact()
+        }
     }
 
     // MARK: - Dwell countdown
@@ -587,7 +669,7 @@ final class NotificationManager {
         // everything was already read, stay out of the way.
         if unreadCount > 0, !displaySuppressed {
             displayState = .compact
-            Task { await presenter?.compact() }
+            presentCompact()
         }
     }
 
@@ -630,7 +712,7 @@ final class NotificationManager {
             try? await Task.sleep(for: .milliseconds(260))
             guard !Task.isCancelled, !self.pointerNearIsland, !self.isHovering else { return }
             self.manualExpanded = false
-            let shouldHide = self.current == nil && (self.history.isEmpty || AppSettings.shared.hideWhenIdle)
+            let shouldHide = self.settlesHidden(liveMessage: self.current != nil)
             self.displayState = shouldHide ? .hidden : .compact
             self.reconcileDwell()
             if shouldHide {

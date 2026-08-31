@@ -7,10 +7,15 @@ final class IslandStateTests: XCTestCase {
         var expandCount = 0
         var compactCount = 0
         var hideCount = 0
+        /// What the suppression probe should report; nil never suppresses.
+        var probedSuppression: Bool?
 
         func expand() async { expandCount += 1 }
         func compact() async { compactCount += 1 }
         func hide() async { hideCount += 1 }
+        func probeDisplaySuppressed() async -> Bool {
+            probedSuppression ?? false
+        }
     }
 
     private func make(_ title: String, urgency: UrgencyLevel = .normal, timeout: TimeInterval = 60) -> NotchNotification {
@@ -195,6 +200,148 @@ final class IslandStateTests: XCTestCase {
 
         try await Task.sleep(for: .seconds(1))
         XCTAssertNil(m.current)
+    }
+
+    /// Regression: manual collapse with a live message on screen must keep the
+    /// compact pill - the message's own dwell settles the display when it
+    /// retires. `settlesHidden` used to receive the inverted `liveMessage`
+    /// argument, hiding the island while the message was still live and
+    /// parking the pill when nothing was.
+    func testManualCollapseKeepsPillWhileMessageIsLive() async throws {
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
+        let m = NotificationManager()
+        m.push(make("t", timeout: 60))
+        m.islandClicked()                               // manual expansion
+        m.setHovering(true)
+        m.setHovering(false)                            // schedules the manual collapse
+
+        try await Task.sleep(for: .seconds(1))          // 0.26 s collapse timer
+        XCTAssertEqual(m.current?.title, "t", "the message must still be live")
+        XCTAssertEqual(m.displayState, .compact, "a live message must keep the pill, not hide the island")
+    }
+
+    /// The same inverted argument in the other direction: with no live message,
+    /// manual collapse must respect hide-when-idle instead of parking the pill.
+    func testManualCollapseHidesWhenOnlyHistoryRemains() async throws {
+        let m = NotificationManager()
+        m.push(make("t", timeout: 0.1))
+        try await Task.sleep(for: .seconds(1))          // dwell retires it into history
+        m.islandClicked()                               // browsing pure history
+        m.setHovering(true)
+        m.setHovering(false)
+
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertNil(m.current)
+        XCTAssertEqual(m.displayState, .hidden, "no live message means idle rules apply")
+    }
+
+    /// Clicking outside the island collapses the open panel back to the pill,
+    /// mirroring the leave-the-zone collapse. The dwell resumes with the panel
+    /// gone, same as the close button.
+    func testClickOutsideCollapsesManualPanel() async throws {
+        let settings = AppSettings.shared
+        let oldAutoCollapse = settings.autoCollapseOnLeave
+        settings.autoCollapseOnLeave = true
+        defer { settings.autoCollapseOnLeave = oldAutoCollapse }
+
+        let m = NotificationManager()
+        m.push(make("t", timeout: 60))
+        m.islandClicked()
+        XCTAssertEqual(m.displayState, .manualExpanded)
+
+        m.clickedOutsideIsland()
+
+        XCTAssertEqual(m.displayState, .compact, "outside click collapses to the pill while a message is live")
+        XCTAssertNotNil(m.dwellDeadline, "collapse must resume the dwell")
+    }
+
+    /// The existing "auto-collapse on leave" toggle governs outside clicks too
+    /// - one setting, one meaning, no second knob.
+    func testClickOutsideRespectsAutoCollapseSetting() {
+        let settings = AppSettings.shared
+        let oldAutoCollapse = settings.autoCollapseOnLeave
+        settings.autoCollapseOnLeave = false
+        defer { settings.autoCollapseOnLeave = oldAutoCollapse }
+
+        let m = NotificationManager()
+        m.push(make("t", timeout: 60))
+        m.islandClicked()
+
+        m.clickedOutsideIsland()
+
+        XCTAssertEqual(m.displayState, .manualExpanded, "with auto-collapse off, an outside click must not close the panel")
+    }
+
+    /// A transient (push-expanded) panel must behave the same as a manual one:
+    /// the user clicking elsewhere is as clear a "I'm done" as moving away.
+    func testClickOutsideCollapsesTransientPanel() {
+        let settings = AppSettings.shared
+        let oldAutoCollapse = settings.autoCollapseOnLeave
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoCollapseOnLeave = true
+        settings.autoExpandOnMessage = true
+        defer {
+            settings.autoCollapseOnLeave = oldAutoCollapse
+            settings.autoExpandOnMessage = oldAutoExpand
+        }
+
+        let m = NotificationManager()
+        m.push(make("t", timeout: 60))                    // auto-expand path
+        XCTAssertEqual(m.displayState, .transientExpanded)
+
+        m.clickedOutsideIsland()
+
+        XCTAssertEqual(m.displayState, .compact)
+    }
+
+    /// Regression: suppression used to be re-derived only when the pointer
+    /// moved, so a push arriving while the user sat still in a fullscreen app
+    /// expanded straight over it. The expand path must re-probe and stand
+    /// down when suppression is found.
+    func testPushReprobesSuppressionBeforeExpanding() async {
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
+        let presenter = PresenterSpy()
+        let m = NotificationManager(presenter: presenter)
+
+        presenter.probedSuppression = true            // fullscreen discovered at probe time
+        m.push(make("t"))
+
+        XCTAssertEqual(m.displayState, .transientExpanded, "the message is live either way")
+        for _ in 0..<20 {
+            if presenter.hideCount > 0 { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(presenter.expandCount, 0, "nothing may expand over a fullscreen app")
+    }
+
+    /// The same probe guards the compact pill: a suppressed screen must not
+    /// light up a pill either.
+    func testCompactPillReprobesSuppression() async {
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
+        let presenter = PresenterSpy()
+        let m = NotificationManager(presenter: presenter)
+
+        presenter.probedSuppression = true
+        m.push(make("t"))
+
+        for _ in 0..<20 {
+            if presenter.hideCount > 0 { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(presenter.compactCount, 0, "no pill on a fullscreen screen")
+        XCTAssertEqual(presenter.expandCount, 0)
     }
 
 }

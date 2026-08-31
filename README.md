@@ -10,11 +10,16 @@
 
 - 🖥️ **Vibe Island 风格 UI** — 常驻摘要态、悬停/点击展开、消息自动展开和内容切换动画
 - 🔗 **URL Scheme 推送** — 通过 `notch-notify://` 协议从任何语言/脚本发送通知
+- 💾 **历史持久化** — 消息与已读状态原子写入磁盘，重启后仍在（防抖合并写，可在设置关闭）
+- 🧹 **分组去重** — 带 `group` 参数的重复推送顶掉旧消息，CI 这类高频任务不再刷屏
+- 📨 **动作回执** — `notch-notify://ack` 按钮把点击结果写回磁盘，脚本可轮询拿到审批结论
+- 🔕 **勿扰感知** — 锁屏/屏保/睡眠三档静默（照常显示 / 静默存入历史 / 仅紧急穿透），消息永不丢失
+- 🖥️ **多显示器** — 刘海跟随指针所在的屏幕，拔插显示器自动同步
 - ✅ **可操作通知** — 最多 3 个操作按钮，点击打开回调 URL，轻松实现审批流
-- 📝 **Markdown 渲染** — 通知正文支持 Markdown（行内格式 + 代码块）
+- 📝 **Markdown 渲染** — 通知正文支持 Markdown（行内格式 + 代码块），解析结果带缓存
 - ⏱️ **智能收起** — 普通消息按停留时间收起，悬停暂停，Critical 消息保持展开
 - 👆 **手势关闭** — 上滑拖拽手势关闭当前通知
-- 📜 **消息列表** — 当前消息、待显示队列和历史（最多 10 条）同屏展示，历史可点击展开
+- 📜 **消息列表** — 当前消息、待显示队列和历史（最多 50 条）同屏展示，历史可点击展开
 - 🔵 **未读指示** — 摘要栏显示未读数量，展开面板后自动标记已读
 - 🎨 **紧急度颜色** — 低/中/高三级紧急度对应不同颜色和图标指示
 - 🔇 **全屏隐藏** — 检测到全屏应用时自动隐藏，避免干扰
@@ -60,8 +65,9 @@ swift build -c release
 | `title` | `string` | ✅ | — | 通知标题 |
 | `body` | `string` | ❌ | _(空)_ | 通知正文，最大 5000 字符，支持 Markdown |
 | `urgency` | `string` | ❌ | `"normal"` | 紧急度：`"low"` / `"normal"` / `"critical"` |
-| `timeout` | `number` | ❌ | 设置值（默认 `5`） | 自动收起秒数，范围 1-60；传入后覆盖设置值 |
-| `actions` | `string` | ❌ | _(空)_ | 操作按钮，JSON 数组 `[{"label":"允许","url":"http://..."}]`，最多 3 个 |
+| `timeout` | `number` | ❌ | 设置值（默认 `5` 秒） | 自动收起秒数，范围 1-60；未传时使用「设置 → 通知」中的停留时长 |
+| `group` | `string` | ❌ | _(无)_ | 分组键，最长 64 字符。同组新消息**顶掉**旧消息（含历史与屏上），适合 CI 等重复任务；空白串视为无分组 |
+| `actions` | `string` | ❌ | _(空)_ | 操作按钮，JSON 数组 `[{"label":"允许","url":"http://..."}]`，最多 3 个。`url` 若为 `notch-notify://ack` 则记录回执而非打开浏览器（见下文） |
 
 #### 基础示例
 
@@ -121,6 +127,33 @@ params = urllib.parse.urlencode({
 subprocess.run(["open", f"notch-notify://push?{params}"])
 ```
 
+#### 分组去重
+
+给推送带同一个 `group`，后到的会**顶掉**先到的——历史、队列、屏上三者一并替换，已读状态不泄漏。适合 CI、文件监视器这类同一任务的重复报告：
+
+```bash
+open 'notch-notify://push?title=构建中&group=ci-build'
+open 'notch-notify://push?title=构建成功&group=ci-build'   # 顶掉上一条，不堆叠
+```
+
+#### 动作回执（脚本可读的审批结论）
+
+普通 `actions` 点击后只是打开一个 URL，发起方无从得知结果。把按钮的 `url` 换成 `notch-notify://ack`，点击会**写一个 JSON 文件到磁盘**而不是打开浏览器，脚本随后轮询即可拿到结论：
+
+```bash
+TOKEN="approve-$$"   # 自选，字母数字与 -_ 组成，最长 128
+open "notch-notify://push?title=部署审批&urgency=critical&actions=%5B%7B%22label%22%3A%22%E5%85%81%E8%AE%B8%22%2C%22url%22%3A%22notch-notify%3A%2F%2Fack%3Ftoken%3D${TOKEN}%26label%3Dapprove%22%7D%5D"
+
+# 轮询直到文件出现
+while [ ! -f "$HOME/Library/Application Support/MacDesktopNotify/acks/${TOKEN}.json" ]; do
+  sleep 1
+done
+cat "$HOME/Library/Application Support/MacDesktopNotify/acks/${TOKEN}.json"
+# {"token":"approve-123","label":"approve","notificationID":"...","decidedAt":"..."}
+```
+
+回执文件位于 `~/Library/Application Support/MacDesktopNotify/acks/<token>.json`，超过 24 小时自动清理。发起方拿完结果后自行删除该文件即可。
+
 #### 其他语言调用示例
 
 **Python:**
@@ -172,13 +205,15 @@ NSWorkspace.shared.open(components.url!)
 
 ---
 
-### `notch-notify://clear` — 清除所有通知
+### `notch-notify://clear` — 清除通知
 
 ```bash
+# 清除全部：当前展示、待展示队列和摘要历史
 open 'notch-notify://clear'
-```
 
-清除当前展示的通知、待展示队列和摘要历史。
+# 只清除某个分组（group 语义与 push 一致），其余历史不动
+open 'notch-notify://clear?group=ci-build'
+```
 
 ---
 
@@ -197,6 +232,17 @@ open 'notch-notify://clear'
 | 列表 | `- item` / `1. item` |
 
 代码块以独立卡片样式渲染，其余内容作行内 Markdown 渲染。
+
+---
+
+## 数据落盘
+
+| 数据 | 位置 | 说明 |
+|------|------|------|
+| 消息历史 | `~/Library/Application Support/MacDesktopNotify/history.json` | 含已读状态，写入防抖合并；删除该文件即清空历史 |
+| 动作回执 | `~/Library/Application Support/MacDesktopNotify/acks/<token>.json` | 24 小时后自动清理 |
+
+历史持久化可在「设置 → 通知」关闭；关闭后重启回到空会话，但运行期间一切正常。
 
 ---
 
@@ -261,7 +307,7 @@ open 'notch-notify://clear'
 |------|--------|
 | **通用** | 悬停展开、鼠标离开收起、消息到达展开、空闲隐藏、全屏隐藏、悬停延迟、登录启动 |
 | **显示** | 布局模式（标准/简洁/详细）、面板宽度/高度、内容字号、刘海偏移、摘要栏紧急度图标与未读数量 |
-| **通知** | 自动展开、消息停留时长（1-30s） |
+| **通知** | 自动展开、消息停留时长（1-30s）、退出后保留历史、离开时行为（照常显示 / 静默存入历史 / 仅紧急消息穿透） |
 | **声音** | 启用系统通知音 |
 | **快捷键** | 查看所有快捷键 |
 | **关于** | 版本、系统要求、项目链接 |
@@ -284,15 +330,20 @@ Sources/MacDesktopNotify/
 ├── AppDelegate.swift                   # 应用代理，URL Scheme 处理，菜单栏，快捷键，提示音
 ├── AppSettings.swift                    # 类型化设置与持久化（@Observable）
 ├── IslandDisplayState.swift             # 展示状态枚举（hidden/compact/expanded）
-├── IslandGeometry.swift                 # 刘海区域计算和触发区
-├── NotificationManager.swift            # 消息队列、历史、未读、展示状态机（@MainActor）
-├── NotchNotification.swift              # 通知数据模型（标题/正文/紧急度/超时/操作按钮）
-├── NotchPresenter.swift                 # DynamicNotchKit 桥接和全局鼠标监控
-├── URLNotificationParser.swift          # URL Scheme 参数解析（含长度限制）
+├── IslandGeometry.swift                 # 刘海区域计算、触发区、屏幕标识
+├── NotificationManager.swift            # 消息队列、历史、未读、dwell 状态机、静默闸门（@MainActor）
+├── NotchNotification.swift              # 通知数据模型（标题/正文/紧急度/超时/分组/操作按钮）
+├── NotificationHistoryStore.swift       # 历史持久化（原子写 + schemaVersion）
+├── NotificationAckStore.swift          # 动作回执（token 校验 + 落盘 + 过期清理）
+├── PresenceMonitor.swift                # 锁屏/屏保/睡眠感知（AwaySource 集合）
+├── NotchPresenter.swift                 # DynamicNotchKit 桥接、全屏探测缓存、指针监控
+├── PerScreenInstances.swift            # 每显示器一个 notch 实例的簿记
+├── URLNotificationParser.swift          # URL Scheme 参数解析（push/clear/ack，含长度限制）
 ├── MarkdownNotificationView.swift       # 展开视图、摘要视图、消息列表、操作按钮
+├── MarkdownCache.swift                  # Markdown 解析缓存（NSCache）
+├── MarkdownRenderer.swift              # Markdown 解析器（正文/代码块分离）
 ├── SettingsView.swift                   # 设置页面（NavigationSplitView）
-├── SettingsWindowController.swift       # 设置窗口生命周期
-└── MarkdownRenderer.swift              # Markdown 解析器（正文/代码块分离）
+└── SettingsWindowController.swift       # 设置窗口生命周期
 ```
 
 ---

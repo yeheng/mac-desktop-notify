@@ -47,7 +47,7 @@ final class QuietModeTests: XCTestCase {
 
             let shown = m.push(make("deploy"))
 
-            XCTAssertFalse(shown, "a withheld message must report that it was not shown")
+            XCTAssertEqual(shown, .withheld, "a withheld message must report that it was not shown")
             XCTAssertEqual(m.history.map(\.title), ["deploy"], "withheld must not mean dropped")
             XCTAssertEqual(m.unreadCount, 1, "the user must be told something arrived")
             XCTAssertNil(m.current, "nothing may be presented to a locked screen")
@@ -60,7 +60,7 @@ final class QuietModeTests: XCTestCase {
             let m = NotificationManager()
             m.setAway(true)
 
-            XCTAssertFalse(m.push(make("build finished")))
+            XCTAssertEqual(m.push(make("build finished")), .withheld)
             XCTAssertNil(m.current)
             XCTAssertEqual(m.historyCount, 1)
         }
@@ -71,7 +71,7 @@ final class QuietModeTests: XCTestCase {
             let m = NotificationManager()
             m.setAway(true)
 
-            XCTAssertTrue(m.push(make("磁盘将满", urgency: .critical)))
+            XCTAssertEqual(m.push(make("磁盘将满", urgency: .critical)), .displayed)
             XCTAssertEqual(m.current?.title, "磁盘将满")
         }
     }
@@ -84,7 +84,7 @@ final class QuietModeTests: XCTestCase {
             // The mode is named "everything goes to history". If critical punched
             // through here, the setting would mean two different things depending
             // on a field the user did not set.
-            XCTAssertFalse(m.push(make("urgent", urgency: .critical)))
+            XCTAssertEqual(m.push(make("urgent", urgency: .critical)), .withheld)
             XCTAssertNil(m.current)
             XCTAssertEqual(m.historyCount, 1)
         }
@@ -96,7 +96,7 @@ final class QuietModeTests: XCTestCase {
                 let m = NotificationManager()
                 m.setAway(true)
 
-                XCTAssertTrue(m.push(make("a")))
+                XCTAssertEqual(m.push(make("a")), .displayed)
                 XCTAssertEqual(m.current?.title, "a", "off must mean off, away or not")
             }
         }
@@ -134,7 +134,7 @@ final class QuietModeTests: XCTestCase {
         withQuietMode(.criticalOnly) {
             let m = NotificationManager()
             m.setAway(true)
-            XCTAssertTrue(m.push(make("critical", urgency: .critical)))
+            XCTAssertEqual(m.push(make("critical", urgency: .critical)), .displayed)
 
             m.setAway(false)
 
@@ -167,7 +167,7 @@ final class QuietModeTests: XCTestCase {
                 // The replacement collapses run-1 off the panel and is then withheld,
                 // which would otherwise leave an expanded panel with nothing in it.
                 m.setAway(true)
-                XCTAssertFalse(m.push(make("run-2", group: "ci")))
+                XCTAssertEqual(m.push(make("run-2", group: "ci")), .withheld)
 
                 XCTAssertNil(m.current)
                 XCTAssertFalse(m.displayState.isExpanded, "the hole left by the collapse must be repaired")

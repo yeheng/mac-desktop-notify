@@ -156,4 +156,24 @@ final class GroupDedupTests: XCTestCase {
 
         XCTAssertEqual(m.history.map(\.title), ["a"])
     }
+
+    /// Regression: the advance() branch of `clear(group:)` used to skip
+    /// `recomputeUnread`. It happened to be correct only because a live
+    /// message is always read - the invariant was never written down, let
+    /// alone tested. Clearing the live message must leave the unread count
+    /// consistent with what history actually holds.
+    func testClearGroupOnLiveMessageKeepsUnreadConsistent() {
+        let (m, old) = manager()
+        defer { AppSettings.shared.autoExpandOnMessage = old }
+
+        m.push(make("live", group: "ci"))     // becomes current -> read
+        m.push(make("queued", group: "deploy")) // waits behind -> unread
+        XCTAssertEqual(m.unreadCount, 1)
+
+        m.clear(group: "ci")                  // takes the advance() branch
+
+        XCTAssertEqual(m.current?.title, "queued", "the queued message is promoted")
+        XCTAssertEqual(m.unreadCount, 0, "promotion marks it read; nothing else may linger")
+        XCTAssertEqual(m.history.map(\.title), ["queued"])
+    }
 }
