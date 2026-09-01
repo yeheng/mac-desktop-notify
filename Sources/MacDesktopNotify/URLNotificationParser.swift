@@ -13,15 +13,38 @@ enum URLNotificationParser {
         let url: String
     }
 
-    /// Parses a `notch-notify://push?...` URL. Returns `nil` when `title` is missing or blank.
-    static func parsePush(_ url: URL) -> NotchNotification? {
+    /// Why a push URL was rejected. For a programmable tool, "silently dropped"
+    /// is the worst possible answer to a malformed request - the sender needs
+    /// something to debug against.
+    enum PushRejection: Error, Equatable, CustomStringConvertible {
+        case missingTitle
+
+        var description: String {
+            switch self {
+            case .missingTitle:
+                "title 参数缺失或为空"
+            }
+        }
+    }
+
+    /// Parses a `notch-notify://push?...` URL, reporting why it failed.
+    static func parsePushDetailed(_ url: URL) -> Result<NotchNotification, PushRejection> {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let items = components?.queryItems ?? []
         func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
 
         let title = (value("title") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return nil }
+        guard !title.isEmpty else { return .failure(.missingTitle) }
+        return .success(parse(title: title, value: value))
+    }
 
+    /// Parses a `notch-notify://push?...` URL. Returns `nil` when `title` is missing or blank.
+    static func parsePush(_ url: URL) -> NotchNotification? {
+        guard case .success(let notification) = parsePushDetailed(url) else { return nil }
+        return notification
+    }
+
+    private static func parse(title: String, value: (String) -> String?) -> NotchNotification {
         var body = value("body") ?? ""
         if body.count > maxBodyLength { body = String(body.prefix(maxBodyLength)) }
 

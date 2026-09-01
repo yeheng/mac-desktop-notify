@@ -2,7 +2,7 @@ import XCTest
 @testable import MacDesktopNotify
 
 @MainActor
-final class IslandStateTests: XCTestCase {
+final class IslandStateTests: SettingsIsolatedTestCase {
     private final class PresenterSpy: NotchPresenting {
         var expandCount = 0
         var compactCount = 0
@@ -245,8 +245,13 @@ final class IslandStateTests: XCTestCase {
     func testClickOutsideCollapsesManualPanel() async throws {
         let settings = AppSettings.shared
         let oldAutoCollapse = settings.autoCollapseOnLeave
+        let oldAutoExpand = settings.autoExpandOnMessage
         settings.autoCollapseOnLeave = true
-        defer { settings.autoCollapseOnLeave = oldAutoCollapse }
+        settings.autoExpandOnMessage = false           // manual panel, via an explicit click
+        defer {
+            settings.autoCollapseOnLeave = oldAutoCollapse
+            settings.autoExpandOnMessage = oldAutoExpand
+        }
 
         let m = NotificationManager()
         m.push(make("t", timeout: 60))
@@ -264,8 +269,13 @@ final class IslandStateTests: XCTestCase {
     func testClickOutsideRespectsAutoCollapseSetting() {
         let settings = AppSettings.shared
         let oldAutoCollapse = settings.autoCollapseOnLeave
+        let oldAutoExpand = settings.autoExpandOnMessage
         settings.autoCollapseOnLeave = false
-        defer { settings.autoCollapseOnLeave = oldAutoCollapse }
+        settings.autoExpandOnMessage = false
+        defer {
+            settings.autoCollapseOnLeave = oldAutoCollapse
+            settings.autoExpandOnMessage = oldAutoExpand
+        }
 
         let m = NotificationManager()
         m.push(make("t", timeout: 60))

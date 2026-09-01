@@ -3,6 +3,57 @@ import DynamicNotchKit
 import SwiftUI
 import os
 
+/// The calibration overlay content: the detected notch frame plus the hover
+/// activation zone around it, both in screen coordinates.
+private struct CalibrationOverlayView: View {
+    let notchFrame: NSRect
+    let activationFrame: NSRect
+
+    var body: some View {
+        ZStack {
+            GeometryReader { proxy in
+                // Convert AppKit screen coordinates (origin bottom-left) to
+                // SwiftUI local coordinates (origin top-left of this view, which
+                // spans the whole screen).
+                let height = proxy.size.height
+                let notch = CGRect(
+                    x: notchFrame.minX,
+                    y: height - notchFrame.maxY,
+                    width: notchFrame.width,
+                    height: notchFrame.height
+                )
+                let activation = CGRect(
+                    x: activationFrame.minX,
+                    y: height - activationFrame.maxY,
+                    width: activationFrame.width,
+                    height: activationFrame.height
+                )
+
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(Color.red, lineWidth: 1.5)
+                        .frame(width: notch.width, height: notch.height)
+                        .offset(x: notch.minX, y: notch.minY)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(Color.yellow, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                        .frame(width: activation.width, height: activation.height)
+                        .offset(x: activation.minX, y: activation.minY)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("刘海区域")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.red)
+                        Text("悬停触发区")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.yellow)
+                    }
+                    .offset(x: activation.minX + 8, y: activation.minY + activation.height + 6)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 /// Identifies the one question the fullscreen probe answers.
 ///
 /// The window list can only change because the frontmost app changed or the
@@ -25,6 +76,8 @@ final class NotchPresenter: NotchPresenting {
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var invalidationObservers: [NSObjectProtocol] = []
+    /// Owns the calibration overlay windows when the debug toggle is on.
+    private let calibrationOverlay = CalibrationOverlay()
 
     /// Sub-pixel jitter below this is not worth acting on.
     ///
@@ -48,6 +101,8 @@ final class NotchPresenter: NotchPresenting {
         syncScreens()
         installMouseMonitors()
         installInvalidationObservers()
+        installCalibrationObserver()
+        syncCalibrationOverlay()
     }
 
     // No deinit: Swift 6 will not let it touch this actor's state, and the
@@ -150,8 +205,19 @@ final class NotchPresenter: NotchPresenting {
 
     /// Re-applies the current display state, after the island has moved screens or
     /// the displays themselves changed.
+    ///
+    /// Suppression is checked first, and without a probe: a screen reconfiguration
+    /// can land while a fullscreen app still owns the display, and re-applying an
+    /// expanded state here would put a `level = .screenSaver` panel on top of it.
+    /// The cached answer in `fullscreenResult` is good enough for this decision -
+    /// it is invalidated by the same observers that fire alongside this path.
     private func reapplyDisplayState() {
-        let state = NotificationManager.shared.displayState
+        let manager = NotificationManager.shared
+        if manager.displaySuppressed {
+            Task { await hide() }
+            return
+        }
+        let state = manager.displayState
         Task {
             if state.isExpanded {
                 await expand()
@@ -218,6 +284,7 @@ final class NotchPresenter: NotchPresenting {
                 // new set, and whatever was showing has to be placed again.
                 self?.syncScreens()
                 self?.reapplyDisplayState()
+                self?.syncCalibrationOverlay()
             }
         })
     }
@@ -230,16 +297,19 @@ final class NotchPresenter: NotchPresenting {
             return
         }
 
+        // Suppression is derived before any cross-display reapply so the
+        // crossing cannot put a panel on the new screen's fullscreen app.
+        let shouldSuppress = fullscreenSuppressed(on: screen)
+        manager.setDisplaySuppressed(shouldSuppress)
+
         // The island follows the pointer across displays, so a crossing has to
         // move it, not merely redraw it where it already was.
         let crossedDisplays = screen.displayID != activeScreenID
         activeScreenID = screen.displayID
-        if crossedDisplays, manager.hasContent {
+        if crossedDisplays, manager.hasContent, !shouldSuppress {
             reapplyDisplayState()
         }
 
-        let shouldSuppress = fullscreenSuppressed(on: screen)
-        manager.setDisplaySuppressed(shouldSuppress)
         guard !shouldSuppress else {
             manager.setPointerNearIsland(false)
             return
@@ -292,6 +362,76 @@ final class NotchPresenter: NotchPresenting {
         fullscreenResult = (key, suppressed)
         fullscreenProbedAt = Date()
         return suppressed
+    }
+
+    // MARK: - Notch calibration overlay
+
+    /// Draws the detected notch frame and hover activation zone on every screen,
+    /// so a user (or a new macOS release) can verify the geometry the island is
+    /// actually using. Off by default; toggled in Settings → 外观 → 高级.
+    @MainActor
+    private final class CalibrationOverlay {
+        var windows: [CGDirectDisplayID: NSWindow] = [:]
+
+        func update(screens: [NSScreen]) {
+            let current = Set(screens.map(\.displayID))
+            for (id, window) in windows where !current.contains(id) {
+                window.orderOut(nil)
+                windows.removeValue(forKey: id)
+            }
+            for screen in screens where windows[screen.displayID] == nil {
+                let notch = IslandGeometry.notchFrame(for: screen)
+                let activation = IslandGeometry.compactActivationFrame(
+                    notchFrame: notch,
+                    leadingContentWidth: NotificationManager.shared.compactLeadingWidth,
+                    trailingContentWidth: NotificationManager.shared.compactTrailingWidth
+                )
+                let overlay = CalibrationOverlayView(notchFrame: notch, activationFrame: activation)
+
+                let window = NSWindow(
+                    contentRect: screen.frame,
+                    styleMask: [.borderless],
+                    backing: .buffered,
+                    defer: false
+                )
+                window.contentView = NSHostingView(rootView: overlay)
+                window.isOpaque = false
+                window.backgroundColor = .clear
+                window.level = .screenSaver
+                window.ignoresMouseEvents = true
+                window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+                window.setFrame(screen.frame, display: true)
+                window.orderFrontRegardless()
+                windows[screen.displayID] = window
+            }
+        }
+
+        func removeAll() {
+            for window in windows.values { window.orderOut(nil) }
+            windows.removeAll()
+        }
+    }
+
+    /// Observes the calibration toggle: overlay follows the setting, not the
+    /// other way around, so a crashed overlay never leaves itself on screen.
+    private func installCalibrationObserver() {
+        calibrationObserver = NotificationCenter.default.addObserver(
+            forName: AppSettings.calibrationDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.syncCalibrationOverlay() }
+        }
+    }
+
+    private var calibrationObserver: NSObjectProtocol?
+
+    private func syncCalibrationOverlay() {
+        if AppSettings.shared.showNotchCalibration {
+            calibrationOverlay.update(screens: NSScreen.screens)
+        } else {
+            calibrationOverlay.removeAll()
+        }
     }
 
     private func frontmostWindowIsFullscreen(on screen: NSScreen) -> Bool {

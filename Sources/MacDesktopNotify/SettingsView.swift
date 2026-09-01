@@ -1,12 +1,11 @@
+import ApplicationServices
 import ServiceManagement
 import SwiftUI
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
     case general
-    case display
+    case appearance
     case notifications
-    case sound
-    case shortcuts
     case about
 
     var id: String { rawValue }
@@ -14,10 +13,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: "通用"
-        case .display: "显示"
+        case .appearance: "外观"
         case .notifications: "通知"
-        case .sound: "声音"
-        case .shortcuts: "快捷键"
         case .about: "关于"
         }
     }
@@ -25,10 +22,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: "gearshape"
-        case .display: "rectangle.inset.filled"
+        case .appearance: "paintbrush"
         case .notifications: "bell"
-        case .sound: "speaker.wave.2"
-        case .shortcuts: "command"
         case .about: "info.circle"
         }
     }
@@ -58,10 +53,8 @@ struct SettingsView: View {
             Group {
                 switch selection ?? .general {
                 case .general: GeneralSettingsPane(settings: settings)
-                case .display: DisplaySettingsPane(settings: settings)
+                case .appearance: AppearanceSettingsPane(settings: settings)
                 case .notifications: NotificationSettingsPane(settings: settings)
-                case .sound: SoundSettingsPane(settings: settings)
-                case .shortcuts: ShortcutSettingsPane(settings: settings)
                 case .about: AboutSettingsPane()
                 }
             }
@@ -71,6 +64,8 @@ struct SettingsView: View {
     }
 }
 
+// MARK: - 通用
+
 private struct GeneralSettingsPane: View {
     @Bindable var settings: AppSettings
     @State private var loginError: String?
@@ -79,7 +74,6 @@ private struct GeneralSettingsPane: View {
             SettingsGroup(title: "行为") {
                 Toggle("悬停时展开面板", isOn: $settings.hoverToExpand)
                 Toggle("鼠标离开时自动收起", isOn: $settings.autoCollapseOnLeave)
-                Toggle("消息到达时自动展开", isOn: $settings.autoExpandOnMessage)
                 Toggle("无活跃消息时自动隐藏", isOn: $settings.hideWhenIdle)
                 Toggle("全屏应用中隐藏", isOn: $settings.hideInFullscreen)
             }
@@ -109,7 +103,7 @@ private struct GeneralSettingsPane: View {
                             loginError = nil
                         } catch {
                             // Revert to the pre-change value, not a hardcoded
-                            // one: a failed *un*register must not claim the
+                            // one: a failed *un* register must not claim the
                             // login item is off while the system still has it.
                             settings.launchAtLogin = !value
                             loginError = "登录时打开设置失败：\(error.localizedDescription)"
@@ -123,15 +117,35 @@ private struct GeneralSettingsPane: View {
                         .foregroundStyle(.red)
                 }
             }
+
+            SettingsGroup(title: "辅助功能授权") {
+                if AXIsProcessTrusted() {
+                    Label("已授权，全局快捷键可以工作", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.callout)
+                } else {
+                    Text("未授权时「在任意 App 中启用快捷键」不会生效——事件监听收不到任何全局按键。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button("打开系统辅助功能设置") {
+                        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+                        _ = AXIsProcessTrustedWithOptions(options)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
         }
     }
 }
 
-private struct DisplaySettingsPane: View {
+// MARK: - 外观
+
+private struct AppearanceSettingsPane: View {
     @Bindable var settings: AppSettings
+    @State private var showAdvanced = false
 
     var body: some View {
-        SettingsScrollView(title: "显示", subtitle: "调整摘要栏、展开面板和内容密度。") {
+        SettingsScrollView(title: "外观", subtitle: "调整摘要栏、展开面板和内容密度。") {
             HStack {
                 Spacer()
                 Button("恢复默认") {
@@ -156,9 +170,13 @@ private struct DisplaySettingsPane: View {
                 SettingsValueLabel(value: "宽度 \(Int(settings.panelWidth)) pt")
 
                 Slider(value: $settings.panelHeight, in: 220...620, step: 10) {
-                    Text("高度")
+                    Text("高度上限")
                 } minimumValueLabel: { Text("220") } maximumValueLabel: { Text("620") }
-                SettingsValueLabel(value: "高度 \(Int(settings.panelHeight)) pt")
+                SettingsValueLabel(value: "高度上限 \(Int(settings.panelHeight)) pt")
+
+                Text("面板会随内容收缩，这里是它能长到的最大值。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 Slider(value: $settings.contentFontSize, in: 10...18, step: 1) {
                     Text("内容字号")
@@ -166,31 +184,39 @@ private struct DisplaySettingsPane: View {
                 SettingsValueLabel(value: "字号 \(Int(settings.contentFontSize)) pt")
             }
 
-            SettingsGroup(title: "刘海微调") {
-                Slider(value: $settings.notchWidthOffset, in: -20...20, step: 1) {
-                    Text("宽度偏移")
-                } minimumValueLabel: { Text("-20") } maximumValueLabel: { Text("20") }
-                Slider(value: $settings.notchHeightOffset, in: -20...20, step: 1) {
-                    Text("高度偏移")
-                } minimumValueLabel: { Text("-20") } maximumValueLabel: { Text("20") }
-                Text("0 表示使用 macOS 检测到的默认值。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             SettingsGroup(title: "摘要栏") {
                 Toggle("显示紧急度图标", isOn: $settings.showUrgency)
                 Toggle("显示未读数量", isOn: $settings.showHistoryCount)
+            }
+
+            SettingsGroup(title: "高级") {
+                DisclosureGroup("刘海几何微调", isExpanded: $showAdvanced) {
+                    Slider(value: $settings.notchWidthOffset, in: -20...20, step: 1) {
+                        Text("宽度偏移")
+                    } minimumValueLabel: { Text("-20") } maximumValueLabel: { Text("20") }
+                    Slider(value: $settings.notchHeightOffset, in: -20...20, step: 1) {
+                        Text("高度偏移")
+                    } minimumValueLabel: { Text("-20") } maximumValueLabel: { Text("20") }
+                    Text("0 表示使用 macOS 检测到的默认值。若系统更新后刘海区域错位，在此微调。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Toggle("显示刘海校准框", isOn: $settings.showNotchCalibration)
+                    Text("将当前检测到的刘海命中区域画出来，用于核对几何是否正确。核对完请关闭。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
 }
 
+// MARK: - 通知
+
 private struct NotificationSettingsPane: View {
     @Bindable var settings: AppSettings
 
     var body: some View {
-        SettingsScrollView(title: "通知", subtitle: "控制消息自动展开和停留时间。") {
+        SettingsScrollView(title: "通知", subtitle: "控制消息展开、停留、声音与离开策略。") {
             SettingsGroup(title: "自动提醒") {
                 Toggle("消息到达时自动展开", isOn: $settings.autoExpandOnMessage)
                 Slider(value: $settings.messageDwellSeconds, in: 1...30, step: 1) {
@@ -199,11 +225,44 @@ private struct NotificationSettingsPane: View {
                 SettingsValueLabel(value: "\(Int(settings.messageDwellSeconds)) 秒")
             }
 
-            SettingsGroup(title: "消息策略") {
-                Text("普通消息会在停留时间结束后收起到摘要栏。Critical 消息会保持展开，直到手动收起或清除。")
+            SettingsGroup(title: "紧急消息") {
+                Text("Critical 消息保持展开，直到手动收起或清除。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                Toggle("长时间未处理自动降级", isOn: $settings.ageOutCriticals)
+                Text("开启后，5 分钟内无人理会的 critical 会收起到摘要栏（仍保留在历史与未读中）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            SettingsGroup(title: "消息策略") {
                 Toggle("退出后保留历史消息", isOn: $settings.persistHistory)
+            }
+
+            SettingsGroup(title: "声音") {
+                Toggle("启用声音效果", isOn: $settings.soundEnabled)
+                Text("使用 macOS 系统通知音。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            SettingsGroup(title: "快捷键") {
+                Toggle("⌃⌥N 全局切换面板", isOn: $settings.globalPanelHotkeyEnabled)
+                Text("系统级热键，无需辅助功能授权，任何 App 中可用。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("在任意 App 中启用 ⌘ 快捷键", isOn: $settings.globalShortcutsEnabled)
+                Text("需要辅助功能授权（见「通用」页）。开启后 ⌘, 与多数 App 的“设置”冲突，⌘⇧N 与 Finder“新建文件夹”冲突，⌘Delete 与“移到废纸篓”冲突。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                ShortcutRow(title: "全局切换面板", shortcut: "⌃ ⌥ N")
+                ShortcutRow(title: "收起面板", shortcut: "Esc")
+                ShortcutRow(title: "清除消息", shortcut: "⌘ Delete")
+                ShortcutRow(title: "切换面板（本 App）", shortcut: "⌘ ⇧ N")
+                ShortcutRow(title: "打开设置", shortcut: "⌘ ,")
+                Text("Esc 在指针停留于面板或手动打开面板时生效。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             SettingsGroup(title: "离开时") {
@@ -225,57 +284,37 @@ private struct NotificationSettingsPane: View {
     }
 }
 
-private struct SoundSettingsPane: View {
-    @Bindable var settings: AppSettings
-
-    var body: some View {
-        SettingsScrollView(title: "声音", subtitle: "为消息和状态变化提供轻量反馈。") {
-            SettingsGroup(title: "交互") {
-                Toggle("启用声音效果", isOn: $settings.soundEnabled)
-                Text("使用 macOS 系统通知音。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
-private struct ShortcutSettingsPane: View {
-    @Bindable var settings: AppSettings
-
-    var body: some View {
-        SettingsScrollView(title: "快捷键", subtitle: "面板展开后可以使用这些操作。") {
-            SettingsGroup(title: "全局生效") {
-                Toggle("在任意 App 中启用快捷键", isOn: $settings.globalShortcutsEnabled)
-                Text("默认只在本 App 激活时生效。开启后全局生效，但 ⌘, 与多数 App 的“设置”冲突，⌘⇧N 与 Finder“新建文件夹”冲突，⌘Delete 与“移到废纸篓”冲突。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            SettingsGroup(title: "面板") {
-                ShortcutRow(title: "收起面板", shortcut: "Esc")
-                ShortcutRow(title: "清除消息", shortcut: "⌘ Delete")
-                ShortcutRow(title: "切换面板", shortcut: "⌘ ⇧ N")
-                ShortcutRow(title: "打开设置", shortcut: "⌘ ,")
-                Text("Esc 仅在指针停留在面板或刘海区域时生效。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-}
+// MARK: - 关于
 
 private struct AboutSettingsPane: View {
+    @Environment(\.openWindow) private var openWindow
     var body: some View {
         SettingsScrollView(title: "关于", subtitle: "MacDesktopNotify") {
             SettingsGroup(title: "版本") {
-                LabeledContent("版本", value: "1.0.0")
+                LabeledContent("版本", value: "1.1.0")
                 LabeledContent("系统", value: "macOS 14+")
                 Link("打开项目主页", destination: URL(string: "https://github.com/yeheng/mac-desktop-notify")!)
+            }
+
+            SettingsGroup(title: "接入示例") {
+                CodeSnippetView(code: "open 'notch-notify://push?title=构建完成&body=全部通过'")
+                CodeSnippetView(code: "open 'notch-notify://push?title=部署审批&urgency=critical&actions=[…]'", subtitle: "带动作按钮（README 有完整协议）")
+            }
+
+            SettingsGroup(title: "引导") {
+                Button("重新运行首次引导") {
+                    NotificationCenter.default.post(
+                        name: .init("MacDesktopNotify.reopenOnboarding"),
+                        object: nil
+                    )
+                }
+                .buttonStyle(.bordered)
             }
         }
     }
 }
+
+// MARK: - 复用组件
 
 private struct SettingsScrollView<Content: View>: View {
     let title: String
@@ -355,5 +394,6 @@ private struct ShortcutRow: View {
                 .padding(.vertical, 4)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
         }
+        .accessibilityElement(children: .combine)
     }
 }

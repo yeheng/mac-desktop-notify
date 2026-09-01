@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -6,8 +7,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var presenter: NotchPresenter?
     private var presenceMonitor: PresenceMonitor?
     private var settingsController: SettingsWindowController?
+    private var onboardingController: OnboardingWindowController?
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
+    /// System ⌃⌥N - registered via Carbon, needs no Accessibility trust.
+    private var panelHotkey: SystemHotkey?
     /// Throttled per urgency: a chatty normal sender must not silence a critical
     /// that lands inside the same window.
     private var lastSoundAt: [UrgencyLevel: Date] = [:]
@@ -31,6 +35,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsController = SettingsWindowController()
         installShortcutMonitors()
         setupStatusItem()
+        syncPanelHotkey()
+        NotificationCenter.default.addObserver(
+            forName: AppSettings.panelHotkeyDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.syncPanelHotkey() }
+        }
+
+        // "重新运行首次引导" from Settings → 关于 lands here.
+        NotificationCenter.default.addObserver(
+            forName: .init("MacDesktopNotify.reopenOnboarding"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.onboardingController == nil {
+                    self.onboardingController = OnboardingWindowController()
+                }
+                self.onboardingController?.show()
+            }
+        }
+
+        // The app is inert until something calls it. A first run that ends with
+        // "now what?" is a first run that ends; the guide makes the first call.
+        if !AppSettings.shared.onboardingCompleted {
+            let controller = OnboardingWindowController()
+            onboardingController = controller
+            controller.show()
+        }
     }
 
     // MARK: - URL ingress
@@ -43,7 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard url.scheme?.lowercased() == "notch-notify" else { return }
         switch url.host()?.lowercased() {
         case "push":
-            if let notification = URLNotificationParser.parsePush(url) {
+            switch URLNotificationParser.parsePushDetailed(url) {
+            case .success(let notification):
                 // A withheld message is stored but never shown, and "静默" has to
                 // mean silent too. A queued one stays silent as well: it surfaces
                 // only when the live message retires, and that transition — not a
@@ -51,6 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if NotificationManager.shared.push(notification) == .displayed {
                     playSound(for: notification)
                 }
+            case .failure(let rejection):
+                reportPushRejection(rejection, url: url)
             }
         case "clear":
             if let group = URLNotificationParser.parseClearGroup(url) {
@@ -61,6 +99,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             break
         }
+    }
+
+    /// A malformed push must not vanish. `open` swallows stderr from the caller's
+    /// perspective only sometimes, so both channels are used: stderr for scripts
+    /// (it lands wherever the sender redirected it), and a visible pill for
+    /// humans poking at the URL by hand.
+    private func reportPushRejection(_ rejection: URLNotificationParser.PushRejection, url: URL) {
+        FileHandle.standardError.write(Data("notch-notify: push 被拒绝：\(rejection.description)（\(url.absoluteString)）\n".utf8))
+        NotificationManager.shared.push(
+            NotchNotification(
+                title: "推送格式错误",
+                bodyMarkdown: "**\(rejection.description)**\n\n发送方：`\(url.host() ?? "push")`\n\n请检查 URL 参数后重试。",
+                urgency: .critical,
+                timeout: nil
+            )
+        )
     }
 
     // MARK: - Sound
@@ -76,32 +130,124 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSSound(named: notification.urgency == .critical ? "Basso" : "Glass")?.play()
     }
 
+    // MARK: - System hotkey
+
+    /// ⌃⌥N via RegisterEventHotKey: no permission prompt, no conflicts with the
+    /// ⌘-family, consumes the event before any app sees it.
+    private func syncPanelHotkey() {
+        panelHotkey?.unregister()
+        panelHotkey = nil
+        guard AppSettings.shared.globalPanelHotkeyEnabled else { return }
+        panelHotkey = SystemHotkey.register(
+            keyCode: SystemHotkey.nKeyCode,
+            carbonModifiers: SystemHotkey.controlOptionModifiers,
+            signature: 0x4E4F5443,      // 'NOTC'
+            id: 1
+        ) {
+            NotificationManager.shared.togglePanel()
+        }
+    }
+
     // MARK: - Menu bar
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(systemSymbolName: "bell.badge", accessibilityDescription: "NotchNotify")
+        item.button?.image = NSImage(systemSymbolName: "bell", accessibilityDescription: "NotchNotify")
         item.button?.image?.isTemplate = true
 
         let menu = NSMenu()
-        let clear = NSMenuItem(title: "清除消息", action: #selector(clearAll), keyEquivalent: "")
+        let panel = NSMenuItem(title: "打开面板", action: #selector(togglePanelFromMenu), keyEquivalent: "")
+        let clear = NSMenuItem(title: "清除消息…", action: #selector(confirmClearAll), keyEquivalent: "")
         let settings = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
         let quit = NSMenuItem(title: "退出 MacDesktopNotify", action: #selector(quitApp), keyEquivalent: "q")
+        panel.target = self
         clear.target = self
         settings.target = self
         quit.target = self
-        menu.addItem(settings)
-        menu.addItem(.separator())
+        menu.delegate = self
+        menu.addItem(panel)
         menu.addItem(clear)
+        menu.addItem(.separator())
+        let silence = NSMenuItem(
+            title: "静默 1 小时",
+            action: #selector(toggleSilence),
+            keyEquivalent: ""
+        )
+        silence.target = self
+        menu.addItem(silence)
+        menu.addItem(.separator())
+        menu.addItem(settings)
         menu.addItem(.separator())
         menu.addItem(quit)
         item.menu = menu
         statusItem = item
+        recentItemsMenuRoot = menu
+        silenceMenuItem = silence
+        // Refresh silence state whenever the menu is about to show; the
+        // delegate below already rebuilds the recents section there.
+        NotificationCenter.default.addObserver(
+            forName: NotificationManager.unreadCountDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.updateStatusIcon() }
+        }
+        updateStatusIcon()
     }
 
-    @objc private func clearAll() { NotificationManager.shared.clear() }
+    @MainActor private var silenceMenuItem: NSMenuItem?
+
+    @objc private func toggleSilence() {
+        let manager = NotificationManager.shared
+        if manager.isSilenced {
+            manager.resumeFromSilence()
+        } else {
+            manager.silence(until: Date().addingTimeInterval(3600))
+        }
+        updateSilenceMenuItem()
+    }
+
+    private func updateSilenceMenuItem() {
+        let silenced = NotificationManager.shared.isSilenced
+        silenceMenuItem?.title = silenced ? "取消静默" : "静默 1 小时"
+        silenceMenuItem?.state = silenced ? .on : .off
+    }
+
+    /// Where the "最近" section is inserted when the menu is about to open;
+    /// rebuilt each time so entries never go stale.
+    @MainActor private var recentItemsMenuRoot: NSMenu?
+
+    private func updateStatusIcon() {
+        let unread = NotificationManager.shared.unreadCount
+        let symbol = unread > 0 ? "bell.badge" : "bell"
+        statusItem?.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: unread > 0 ? "NotchNotify，\(unread) 条未读" : "NotchNotify")
+        statusItem?.button?.image?.isTemplate = true
+    }
+
+    @objc private func togglePanelFromMenu() { NotificationManager.shared.togglePanel() }
     @objc private func openSettings() { settingsController?.show() }
     @objc private func quitApp() { NSApplication.shared.terminate(nil) }
+
+    /// Clearing deletes the on-disk history too, so every destructive path
+    /// (menu item, ⌘Delete) funnels through one confirmation. The panel's trash
+    /// button has its own inline confirmationDialog; this is the same contract
+    /// for the places that cannot present one.
+    private func requestClearAll(reason: String) {
+        guard NotificationManager.shared.hasContent else { return }
+        let alert = NSAlert()
+        alert.messageText = "清空全部消息？"
+        alert.informativeText = "当前、待显示和历史消息都会被清除（\(reason)），此操作不可撤销。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "清空全部")
+        alert.addButton(withTitle: "取消")
+        // Non-activating: raising a regular panel would steal focus from whatever
+        // the user was doing when they pressed the shortcut.
+        if alert.runModal() == .alertFirstButtonReturn {
+            NotificationManager.shared.clear()
+        }
+    }
+
+    @objc private func confirmClearAll() { requestClearAll(reason: "菜单栏清除") }
 
     private func installShortcutMonitors() {
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -128,16 +274,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
         if event.keyCode == 51, modifiers.contains(.command) {
-            NotificationManager.shared.clear()
+            requestClearAll(reason: "快捷键 ⌘Delete")
             return true
         }
-        // Esc only counts while the pointer is on the panel: firing from the global
-        // monitor otherwise would collapse the panel on every Esc press in vim & co.
+        // Esc only counts when the panel is a deliberate focus of attention:
+        // the pointer is on it, or the user opened it themselves (click, hover,
+        // or keyboard). Firing from the global monitor otherwise would collapse
+        // the panel on every Esc press in vim & co.
         if event.keyCode == 53, NotificationManager.shared.displayState.isExpanded,
-           NotificationManager.shared.pointerNearPanel {
+           NotificationManager.shared.canDismissWithEscape {
             NotificationManager.shared.dismissPanel()
             return true
         }
         return false
     }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    /// Rebuilds the "最近" section just before the menu opens, so its entries
+    /// always name the current history - never a stale snapshot.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu == recentItemsMenuRoot else { return }
+        updateSilenceMenuItem()
+
+        // Drop any previous "最近" section: header, entries, and the separator
+        // that sat right after them (inserted below at index 2).
+        while let index = menu.items.firstIndex(where: { $0.representedObject is RecentMessageMarker }) {
+            menu.removeItem(at: index)
+        }
+
+        let history = NotificationManager.shared.history
+        let recents = history.suffix(5).reversed()
+        guard recents.first != nil else { return }
+
+        let header = NSMenuItem(title: "最近", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        header.representedObject = RecentMessageMarker.header
+        menu.insertItem(header, at: 1)
+
+        for notification in recents {
+            let item = NSMenuItem(
+                title: notification.title,
+                action: #selector(openRecentMessage(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = RecentMessageMarker.entry(notification.id)
+            menu.insertItem(item, at: 2)
+        }
+        // Close the section with a separator so it reads as a block.
+        let sectionEnd = NSMenuItem.separator()
+        sectionEnd.representedObject = RecentMessageMarker.header()
+        menu.insertItem(sectionEnd, at: 2)
+    }
+
+    @objc private func openRecentMessage(_ sender: NSMenuItem) {
+        guard let marker = sender.representedObject as? RecentMessageMarker,
+              case let .entry(id) = marker.kind else { return }
+        NotificationManager.shared.revealNotification(id: id)
+    }
+}
+
+/// Tags menu items that belong to the rebuilt "最近" section.
+private final class RecentMessageMarker {
+    enum Kind {
+        case header
+        case entry(UUID)
+    }
+    let kind: Kind
+
+    private init(kind: Kind) { self.kind = kind }
+
+    static func header() -> RecentMessageMarker { RecentMessageMarker(kind: .header) }
+    static func entry(_ id: UUID) -> RecentMessageMarker { RecentMessageMarker(kind: .entry(id)) }
 }

@@ -2,7 +2,7 @@ import XCTest
 @testable import MacDesktopNotify
 
 @MainActor
-final class GroupDedupTests: XCTestCase {
+final class GroupDedupTests: SettingsIsolatedTestCase {
 
     private func make(_ title: String, group: String? = nil, urgency: UrgencyLevel = .normal) -> NotchNotification {
         NotchNotification(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60, group: group)

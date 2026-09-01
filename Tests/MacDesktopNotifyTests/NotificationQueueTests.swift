@@ -2,11 +2,11 @@ import XCTest
 @testable import MacDesktopNotify
 
 @MainActor
-final class NotificationQueueTests: XCTestCase {
+final class NotificationQueueTests: SettingsIsolatedTestCase {
 
-    private func make(_ title: String) -> NotchNotification {
+    private func make(_ title: String, urgency: UrgencyLevel = .normal) -> NotchNotification {
         // Large timeout so the real dismiss timer never fires during a fast test.
-        NotchNotification(title: title, bodyMarkdown: "", urgency: .normal, timeout: 60)
+        NotchNotification(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60)
     }
 
     func testFirstPushBecomesCurrent() {
@@ -69,7 +69,10 @@ final class NotificationQueueTests: XCTestCase {
 
     // MARK: - Read state
 
-    func testSurfacedMessageStaysUnreadUntilPanelSettles() async throws {
+    /// Read is attention, not pixels: an automatically expanded panel that
+    /// nobody looked at must not clear the unread count. Presence is latched
+    /// on pointer edges, so there is no timer to race here.
+    func testAutoExpandedPanelWithoutPointerStaysUnread() {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
         settings.autoExpandOnMessage = true
@@ -78,13 +81,10 @@ final class NotificationQueueTests: XCTestCase {
         let m = NotificationManager()
         m.push(make("a"))
         XCTAssertEqual(m.displayState, .transientExpanded)
-        XCTAssertEqual(m.unreadCount, 1, "being surfaced is not the same as being seen")
-
-        try await Task.sleep(for: .milliseconds(1200))
-        XCTAssertEqual(m.unreadCount, 0, "once the panel has actually stayed up, the message counts as read")
+        XCTAssertEqual(m.unreadCount, 1, "a panel that nobody looked at must not clear unread state")
     }
 
-    func testCollapsingBeforeSettleKeepsMessageUnread() async throws {
+    func testPointerAtPanelForSettleDelayMarksReadOnCollapse() async throws {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
         settings.autoExpandOnMessage = true
@@ -92,16 +92,137 @@ final class NotificationQueueTests: XCTestCase {
 
         let m = NotificationManager()
         m.push(make("a"))
-        m.dismissPanel()           // panel gone well inside the settle window
-        try await Task.sleep(for: .milliseconds(1200))
-        XCTAssertEqual(m.unreadCount, 1, "a panel that never stayed up must not mark anything read")
+        m.setPointerNearIsland(true)                    // pointer arrives at the panel
+        try await Task.sleep(for: .milliseconds(1200))  // past the settle delay
+        m.dismissPanel()                                // collapse settles the read state
+
+        XCTAssertEqual(m.unreadCount, 0, "a looked-at panel marks everything read when it closes")
+    }
+
+    /// A brush past the notch is not attention either: presence shorter than
+    /// the settle delay banks nothing.
+    func testBriefPointerVisitDoesNotMarkRead() async throws {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = old }
+
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.setPointerNearIsland(true)
+        try await Task.sleep(for: .milliseconds(150))   // well under the settle delay
+        m.setPointerNearIsland(false)
+        try await Task.sleep(for: .milliseconds(100))
+        m.dismissPanel()
+
+        XCTAssertEqual(m.unreadCount, 1, "a brush past the notch is not attention")
     }
 
     func testQueuedMessageCountsAsUnread() {
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))          // waiting in queue → unread
-        XCTAssertEqual(m.unreadCount, 2, "a is surfaced but not yet seen; b never surfaced")
+        XCTAssertEqual(m.unreadCount, 2, "a is surfaced but not seen; b never surfaced")
+    }
+
+    // MARK: - Critical queue semantics
+
+    /// Regression (2026-09-02 review §7.3 #1): the displaced critical used to be
+    /// re-inserted at the front while overflow dropped the front first — so the
+    /// most recently displaced critical was always the first thing thrown away.
+    func testOverflowNeverPrefersCriticalsForDisposal() {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = old }
+
+        let m = NotificationManager()
+        // One normal live + enough pending to be at the cap.
+        m.push(make("live"))
+        for i in 0..<9 { m.push(make("n\(i)")) }        // pending = 9
+        // Three criticals: each preempts the screen, displacing whatever was live.
+        m.push(make("c1", urgency: .critical))
+        m.push(make("c2", urgency: .critical))
+        m.push(make("c3", urgency: .critical))          // cap exceeded: something drops
+
+        // Whatever was dropped, it must not be a critical.
+        let survivors = m.queue + (m.current.map { [$0] } ?? [])
+        let criticalTitles = survivors.filter { $0.urgency == .critical }.map(\.title)
+        XCTAssertTrue(criticalTitles.contains("c1"), "oldest critical must survive overflow")
+        XCTAssertTrue(criticalTitles.contains("c2"), "second critical must survive overflow")
+        XCTAssertTrue(criticalTitles.contains("c3"), "newest critical owns the screen or the queue")
+    }
+
+    /// The queue drains on urgency, FIFO within a priority: a critical waiting
+    /// behind normals comes up as soon as the screen is free. The displaced live
+    /// message rejoins at the back of the normals *at the moment it was
+    /// displaced*, so anything queued after that point still follows arrival
+    /// order — a stable, time-ordered drain with no starvation.
+    func testDequeuePrefersCriticalFIFO() {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = old }
+
+        let m = NotificationManager()
+        m.push(make("live"))
+        m.push(make("n1"))
+        m.push(make("c1", urgency: .critical))          // preempts "live" → rejoins after n1
+        m.push(make("n2"))
+        m.push(make("c2", urgency: .critical))          // preempts "c1" → rejoins after n2
+
+        XCTAssertEqual(m.current?.title, "c2")
+        m.dismissCurrent()
+        XCTAssertEqual(m.current?.title, "c1", "waiting critical outranks waiting normals")
+        m.dismissCurrent()
+        XCTAssertEqual(m.current?.title, "n1")
+        m.dismissCurrent()
+        XCTAssertEqual(m.current?.title, "live", "displaced message retook its turn at its displacement time")
+        m.dismissCurrent()
+        XCTAssertEqual(m.current?.title, "n2")
+        m.dismissCurrent()
+        XCTAssertNil(m.current)
+    }
+
+    // MARK: - Escape semantics
+
+    /// Regression (2026-09-02 review §4-A2): a panel opened by keyboard (no
+    /// pointer involvement) must be closable with Esc.
+    func testKeyboardOpenedPanelCanBeDismissedWithEscape() {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = old }
+
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.dismissPanel()                                  // start collapsed: the keyboard-only world
+        XCTAssertEqual(m.displayState, .compact)
+        m.togglePanel()                                   // keyboard path: no pointer anywhere
+        XCTAssertEqual(m.displayState, .manualExpanded)
+        XCTAssertTrue(m.canDismissWithEscape, "a deliberately opened panel is Esc-able")
+    }
+
+    func testSelfExpandedPanelWithoutPointerIsNotEscAble() {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = old }
+
+        let m = NotificationManager()
+        m.push(make("a"))                                // auto-expanded, pointer never arrived
+        XCTAssertEqual(m.displayState, .transientExpanded)
+        XCTAssertFalse(m.canDismissWithEscape, "Esc must not reach into an untouched screen from other apps")
+    }
+
+    func testTogglePanelCycles() {
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.dismissPanel()                                  // collapsed world: toggle means open
+        m.togglePanel()
+        XCTAssertEqual(m.displayState, .manualExpanded)
+        m.togglePanel()
+        XCTAssertEqual(m.displayState, .compact, "second toggle collapses to the pill while the message is live")
     }
 
     func testIslandClickedExpandsAndMarksAllRead() {

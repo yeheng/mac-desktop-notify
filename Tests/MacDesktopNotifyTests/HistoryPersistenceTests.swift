@@ -2,7 +2,7 @@ import XCTest
 @testable import MacDesktopNotify
 
 @MainActor
-final class HistoryPersistenceTests: XCTestCase {
+final class HistoryPersistenceTests: SettingsIsolatedTestCase {
 
     private var tempDirs: [URL] = []
 
@@ -131,9 +131,8 @@ final class HistoryPersistenceTests: XCTestCase {
 
     func testPersistenceDisabledSkipsRestore() throws {
         let settings = AppSettings.shared
-        let oldValue = settings.persistHistory
         settings.persistHistory = false
-        defer { settings.persistHistory = oldValue }
+        defer { settings.persistHistory = true }
 
         let store = makeStore()
         try store.save(HistorySnapshot(items: [make("a")], readIDs: []))

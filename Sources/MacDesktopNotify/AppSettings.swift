@@ -21,6 +21,10 @@ enum IslandLayoutMode: String, CaseIterable, Identifiable {
 @Observable
 final class AppSettings {
     static let shared = AppSettings()
+    /// Posted when the calibration toggle flips, so the overlay can follow it.
+    static let calibrationDidChange = Notification.Name("MacDesktopNotify.calibrationDidChange")
+    /// Posted when the ⌃⌥N registration should follow its toggle.
+    static let panelHotkeyDidChange = Notification.Name("MacDesktopNotify.panelHotkeyDidChange")
 
     @ObservationIgnored private let defaults: UserDefaults
 
@@ -44,6 +48,33 @@ final class AppSettings {
     var globalShortcutsEnabled: Bool { didSet { save(globalShortcutsEnabled, key: Keys.globalShortcutsEnabled) } }
     var persistHistory: Bool { didSet { save(persistHistory, key: Keys.persistHistory) } }
     var quietMode: QuietMode { didSet { save(quietMode.rawValue, key: Keys.quietMode) } }
+    /// Critical messages block until dismissed; with this on, an untouched one
+    /// demotes itself to the pill after five minutes so the screen is not held
+    /// hostage. The message stays in history either way.
+    var ageOutCriticals: Bool { didSet { save(ageOutCriticals, key: Keys.ageOutCriticals) } }
+    /// Whether the first-run guide has been completed (or skipped).
+    var onboardingCompleted: Bool { didSet { save(onboardingCompleted, key: Keys.onboardingCompleted) } }
+    /// Set while the user picked an onboarding preset, so the guide can mark it.
+    var onboardingPreset: String? {
+        didSet { save(onboardingPreset, key: Keys.onboardingPreset) }
+    }
+    /// Show a debug overlay of the detected notch frame; the geometry escape
+    /// hatch for OS releases that move the menu bar.
+    var showNotchCalibration: Bool {
+        didSet {
+            save(showNotchCalibration, key: Keys.showNotchCalibration)
+            NotificationCenter.default.post(name: Self.calibrationDidChange, object: nil)
+        }
+    }
+    /// System-level ⌃⌥N toggle. Registered via RegisterEventHotKey, so it needs
+    /// no Accessibility trust and works in any app - unlike the ⌘-family
+    /// shortcuts, which stay opt-in.
+    var globalPanelHotkeyEnabled: Bool {
+        didSet {
+            save(globalPanelHotkeyEnabled, key: Keys.globalPanelHotkeyEnabled)
+            NotificationCenter.default.post(name: Self.panelHotkeyDidChange, object: nil)
+        }
+    }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -67,6 +98,32 @@ final class AppSettings {
         globalShortcutsEnabled = defaults.object(forKey: Keys.globalShortcutsEnabled) as? Bool ?? false
         persistHistory = defaults.object(forKey: Keys.persistHistory) as? Bool ?? true
         quietMode = QuietMode(rawValue: defaults.string(forKey: Keys.quietMode) ?? "") ?? .off
+        ageOutCriticals = defaults.object(forKey: Keys.ageOutCriticals) as? Bool ?? true
+        onboardingCompleted = defaults.object(forKey: Keys.onboardingCompleted) as? Bool ?? false
+        onboardingPreset = defaults.string(forKey: Keys.onboardingPreset)
+        showNotchCalibration = defaults.object(forKey: Keys.showNotchCalibration) as? Bool ?? false
+        globalPanelHotkeyEnabled = defaults.object(forKey: Keys.globalPanelHotkeyEnabled) as? Bool ?? true
+    }
+
+    /// Test seam: the singleton is backed by `.standard`, which inside the test
+    /// runner is the `com.apple.dt.xctest.tool` domain - a domain that
+    /// cfprefsd caches across test runs. Mutating `AppSettings.shared` from a
+    /// test therefore leaks into every later run on the same machine. This
+    /// removes every persisted key so the next `AppSettings(defaults:)` read
+    /// falls back to factory defaults. Production never calls it.
+    func resetAllForTesting() {
+        for key in [
+            Keys.hoverToExpand, Keys.hoverDelayMilliseconds, Keys.autoCollapseOnLeave,
+            Keys.autoExpandOnMessage, Keys.messageDwellSeconds, Keys.hideWhenIdle,
+            Keys.hideInFullscreen, Keys.layoutMode, Keys.contentFontSize,
+            Keys.panelWidth, Keys.panelHeight, Keys.notchWidthOffset, Keys.notchHeightOffset,
+            Keys.showUrgency, Keys.showHistoryCount, Keys.soundEnabled,
+            Keys.launchAtLogin, Keys.globalShortcutsEnabled, Keys.persistHistory,
+            Keys.quietMode, Keys.ageOutCriticals, Keys.onboardingCompleted,
+            Keys.onboardingPreset, Keys.showNotchCalibration, Keys.globalPanelHotkeyEnabled,
+        ] {
+            defaults.removeObject(forKey: key)
+        }
     }
 
     func resetDisplayDefaults() {
@@ -103,6 +160,11 @@ final class AppSettings {
         static let globalShortcutsEnabled = "island.globalShortcutsEnabled"
         static let persistHistory = "island.persistHistory"
         static let quietMode = "island.quietMode"
+        static let ageOutCriticals = "island.ageOutCriticals"
+        static let onboardingCompleted = "island.onboardingCompleted"
+        static let onboardingPreset = "island.onboardingPreset"
+        static let showNotchCalibration = "island.showNotchCalibration"
+        static let globalPanelHotkeyEnabled = "island.globalPanelHotkeyEnabled"
     }
 }
 

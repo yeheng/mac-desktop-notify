@@ -21,11 +21,22 @@ extension UrgencyLevel {
         case .critical: "exclamationmark.triangle.fill"
         }
     }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .low: "低紧急度"
+        case .normal: "普通紧急度"
+        case .critical: "紧急"
+        }
+    }
 }
 
 /// Circular icon button on the dark panel: the fill lightens on hover and the
 /// glyph sinks while pressed. `.plain` alone gives no feedback at all, which
 /// makes the header buttons feel dead.
+///
+/// 28×28: macOS's hard floor is 20×20, but comfort starts higher, and these
+/// buttons sit above a scroll view where a mis-click costs a scroll, not a tap.
 private struct PanelIconButtonStyle: ButtonStyle {
     @State private var hovering = false
 
@@ -60,6 +71,14 @@ private struct ActionCapsuleStyle: ButtonStyle {
     }
 }
 
+/// Text opacities on the black panel, chosen against WCAG AA (4.5:1 for body,
+/// 3:1 for large text). The old 0.35/0.42 values measured ~3.0:1/4.0:1.
+private enum PanelTextOpacity {
+    static let timestamp: Double = 0.62
+    static let pending: Double = 0.62
+    static let subtle: Double = 0.66
+}
+
 struct CompactIslandView: View {
     let side: CompactIslandSide
     private var manager: NotificationManager { .shared }
@@ -76,6 +95,7 @@ struct CompactIslandView: View {
                         Image(systemName: manager.displayUrgency?.symbolName ?? "sparkles")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(manager.displayUrgency?.color ?? .blue)
+                            .accessibilityHidden(true)
                     }
                     Text(settings.layoutMode == .detailed ? (manager.current?.title ?? manager.compactStatus) : manager.compactStatus)
                         .lineLimit(1)
@@ -107,6 +127,8 @@ struct CompactIslandView: View {
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
             manager.setCompactContentWidth(width, for: side)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(manager.current.map { "通知：\($0.title)" } ?? "通知中心")
     }
 }
 
@@ -114,6 +136,7 @@ struct IslandExpandedView: View {
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
     @State private var confirmClearAll = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -128,12 +151,18 @@ struct IslandExpandedView: View {
             MessageListView()
         }
         .frame(width: max(320, settings.panelWidth))
+        // The outer frame already clamps to `minHeight...maxHeight`, so the list
+        // only needs an upper bound: with a fixed height here, a one-line message
+        // rendered inside a 360pt-tall scroll view - every arrival looked like a
+        // popup regardless of how much content it had.
         .frame(minHeight: 190, maxHeight: max(220, settings.panelHeight), alignment: .top)
         .background(Color.black)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .foregroundStyle(.white)
-        .animation(.easeInOut(duration: 0.18), value: manager.current?.id)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: manager.current?.id)
         .onHover { manager.setHovering($0) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("通知面板")
     }
 
     private var header: some View {
@@ -143,6 +172,7 @@ struct IslandExpandedView: View {
                     .fill(manager.displayUrgency?.color ?? .blue)
                     .frame(width: 7, height: 7)
                     .shadow(color: manager.displayUrgency?.color ?? .blue, radius: 4)
+                    .accessibilityHidden(true)
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -151,7 +181,7 @@ struct IslandExpandedView: View {
                     .lineLimit(1)
                 Text(manager.current == nil ? "最近消息" : manager.compactStatus)
                     .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.white.opacity(0.66))
             }
 
             Spacer(minLength: 12)
@@ -161,11 +191,12 @@ struct IslandExpandedView: View {
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.65))
-                    .frame(width: 22, height: 22)
+                    .foregroundStyle(.white.opacity(0.75))
+                    .frame(width: 28, height: 28)
             }
             .buttonStyle(PanelIconButtonStyle())
             .help("清空全部消息")
+            .accessibilityLabel("清空全部消息")
             .confirmationDialog("清空全部消息？", isPresented: $confirmClearAll) {
                 Button("清空全部", role: .destructive) { manager.clear() }
                 Button("取消", role: .cancel) {}
@@ -174,16 +205,28 @@ struct IslandExpandedView: View {
             }
 
             Button {
-                manager.dismissCurrent()
                 manager.dismissPanel()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(PanelIconButtonStyle())
+            .help("收起面板")
+            .accessibilityLabel("收起面板")
+
+            Button {
+                manager.dismissCurrent()
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.65))
-                    .frame(width: 22, height: 22)
+                    .foregroundStyle(.white.opacity(0.75))
+                    .frame(width: 28, height: 28)
             }
             .buttonStyle(PanelIconButtonStyle())
-            .help("清除当前消息并收起")
+            .help("清除当前消息")
+            .accessibilityLabel("清除当前消息")
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)
@@ -210,7 +253,14 @@ private struct MessageListView: View {
                         ))
                 }
 
-                ForEach(manager.queue) { notification in
+                if manager.pendingCount > manager.shownPendingCap {
+                    Text("还有 \(manager.pendingCount - manager.shownPendingCap) 条未展示")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .padding(.horizontal, 4)
+                }
+
+                ForEach(manager.queue.prefix(manager.shownPendingCap)) { notification in
                     PendingRow(notification: notification)
                 }
 
@@ -232,10 +282,10 @@ private struct MessageListView: View {
             .animation(.easeInOut(duration: 0.2), value: manager.pastHistory)
         }
         .scrollIndicators(.hidden)
-        // Follows the panel-height setting across its whole range; the header
-        // above costs ~75pt. (A fixed cap here used to make anything past
-        // ~395pt of panel height a dead zone.)
-        .frame(height: max(160, settings.panelHeight - 75))
+        // Upper bound only, so the panel shrinks to its content (see the outer
+        // frame's note). The header above costs ~75pt, which is the only fixed
+        // tax on the panel's height.
+        .frame(maxHeight: max(160, settings.panelHeight - 75))
     }
 }
 
@@ -243,6 +293,7 @@ private struct MessageListView: View {
 private struct CurrentCard: View {
     let notification: NotchNotification
     @State private var dragOffset: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var manager: NotificationManager { .shared }
 
     var body: some View {
@@ -251,13 +302,14 @@ private struct CurrentCard: View {
                 Image(systemName: notification.urgency.symbolName)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(notification.urgency.color)
+                    .accessibilityLabel(notification.urgency.accessibilityLabel)
                 Text(notification.urgency == .critical ? "需要注意" : "新消息")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.62))
+                    .foregroundStyle(.white.opacity(0.66))
                 Spacer()
                 Text(notification.timestamp, style: .time)
                     .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.42))
+                    .foregroundStyle(.white.opacity(PanelTextOpacity.timestamp))
             }
             // The swipe-up-to-dismiss gesture lives on this header row only.
             // On the whole card it fought the body's text selection: dragging
@@ -272,11 +324,44 @@ private struct CurrentCard: View {
                     manager.performAction(action, for: notification)
                 }
             }
+
+            if notification.urgency == .critical {
+                criticalControls
+            }
         }
         .padding(12)
         .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .offset(y: dragOffset)
         .opacity(1 - min(1, abs(dragOffset) / 80) * 0.6)
+        .animation(reduceMotion ? nil : .default, value: dragOffset)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("当前消息：\(notification.title)")
+    }
+
+    /// Critical-specific affordances: snooze (it stays, but stops hogging the
+    /// screen) and, when the backlog piles up, a path to all of them.
+    @ViewBuilder
+    private var criticalControls: some View {
+        HStack(spacing: 8) {
+            Button {
+                manager.snoozeCurrentCritical()
+            } label: {
+                Text("稍后处理")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(ActionCapsuleStyle(primary: false))
+            .help("降级为普通消息，5 分钟后自动收起；消息保留在历史中")
+            .accessibilityLabel("稍后处理当前消息")
+
+            if manager.criticalBacklogCount > 3 {
+                Text("还有 \(manager.criticalBacklogCount - 1) 条紧急等待")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(PanelTextOpacity.subtle))
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     private var dismissDrag: some Gesture {
@@ -304,19 +389,22 @@ private struct PendingRow: View {
             // the trailing "待显示" label already says it is waiting.
             Image(systemName: notification.urgency.symbolName)
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(notification.urgency.color.opacity(0.8))
+                .foregroundStyle(notification.urgency.color.opacity(0.85))
                 .frame(width: 16, height: 16)
+                .accessibilityLabel(notification.urgency.accessibilityLabel)
             Text(notification.title)
                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(1)
             Spacer(minLength: 0)
             Text("待显示")
                 .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.35))
+                .foregroundStyle(.white.opacity(PanelTextOpacity.pending))
         }
         .padding(10)
         .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("等待中的消息：\(notification.title)")
     }
 }
 
@@ -337,6 +425,7 @@ private struct HistoryRow: View {
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(notification.urgency.color)
                         .frame(width: 16, height: 16)
+                        .accessibilityLabel(notification.urgency.accessibilityLabel)
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 5) {
                             Text(notification.title)
@@ -346,27 +435,31 @@ private struct HistoryRow: View {
                                 Circle()
                                     .fill(Color.blue)
                                     .frame(width: 5, height: 5)
+                                    .accessibilityHidden(true)
                             }
                         }
                         if !isExpanded, let previewText {
                             Text(previewText)
                                 .font(.system(size: 11, weight: .regular, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.62))
+                                .foregroundStyle(.white.opacity(0.68))
                                 .lineLimit(2)
                         }
                     }
                     Spacer(minLength: 0)
                     VStack(alignment: .trailing, spacing: 4) {
+                        // Relative time everywhere: absolute clock time made the
+                        // list read like a log file, not a message list.
                         Text(notification.timestamp.formatted(.relative(presentation: .named)))
                             .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.42))
+                            .foregroundStyle(.white.opacity(PanelTextOpacity.timestamp))
                             .lineLimit(1)
                         // Rows are tappable; without an affordance that was
                         // undiscoverable.
                         Image(systemName: "chevron.right")
                             .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.3))
+                            .foregroundStyle(.white.opacity(0.45))
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            .accessibilityHidden(true)
                     }
                 }
 
@@ -377,6 +470,19 @@ private struct HistoryRow: View {
                             manager.performAction(action, for: notification)
                         }
                     }
+                    HStack {
+                        Spacer()
+                        Button {
+                            manager.removeHistory(id: notification.id)
+                        } label: {
+                            Label("删除这条", systemImage: "trash")
+                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.75))
+                        }
+                        .buttonStyle(.borderless)
+                        .help("从历史中删除这条消息")
+                        .accessibilityLabel("删除历史消息 \(notification.title)")
+                    }
                 }
             }
             .padding(10)
@@ -386,6 +492,8 @@ private struct HistoryRow: View {
             .animation(.easeInOut(duration: 0.12), value: hovering)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(isUnread ? "未读消息" : "消息")：\(notification.title)")
+        .accessibilityHint(isExpanded ? "收起正文" : "展开正文")
     }
 
     /// Collapsed preview renders inline Markdown instead of showing raw source
@@ -448,6 +556,7 @@ private struct ActionRow: View {
                         .padding(.vertical, 6)
                 }
                 .buttonStyle(ActionCapsuleStyle(primary: index == 0))
+                .accessibilityLabel("操作：\(action.label)")
             }
             Spacer(minLength: 0)
         }

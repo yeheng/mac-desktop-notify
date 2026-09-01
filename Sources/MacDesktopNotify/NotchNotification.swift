@@ -2,6 +2,17 @@ import Foundation
 
 enum UrgencyLevel: String, Sendable, Codable {
     case low, normal, critical
+
+    /// Ordering used when the pending queue picks its next message. Higher
+    /// wins; equal priorities stay FIFO because the scan keeps the first
+    /// maximum it finds.
+    var queuePriority: Int {
+        switch self {
+        case .low: 0
+        case .normal: 1
+        case .critical: 2
+        }
+    }
 }
 
 /// A tappable action shown at the bottom of a notification card.
