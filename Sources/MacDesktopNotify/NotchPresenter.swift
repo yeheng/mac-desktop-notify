@@ -83,7 +83,7 @@ final class NotchPresenter: NotchPresenting {
 
     private func makeNotch() -> IslandNotch {
         let notch = IslandNotch(
-            hoverBehavior: [.hapticFeedback],
+            hoverBehavior: [.hapticFeedback, .increaseShadow],
             style: .auto
         ) {
             IslandExpandedView()

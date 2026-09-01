@@ -108,7 +108,10 @@ private struct GeneralSettingsPane: View {
                             }
                             loginError = nil
                         } catch {
-                            settings.launchAtLogin = false
+                            // Revert to the pre-change value, not a hardcoded
+                            // one: a failed *un*register must not claim the
+                            // login item is off while the system still has it.
+                            settings.launchAtLogin = !value
                             loginError = "登录时打开设置失败：\(error.localizedDescription)"
                         }
                     }

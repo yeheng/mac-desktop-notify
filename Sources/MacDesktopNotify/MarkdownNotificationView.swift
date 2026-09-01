@@ -23,6 +23,43 @@ extension UrgencyLevel {
     }
 }
 
+/// Circular icon button on the dark panel: the fill lightens on hover and the
+/// glyph sinks while pressed. `.plain` alone gives no feedback at all, which
+/// makes the header buttons feel dead.
+private struct PanelIconButtonStyle: ButtonStyle {
+    @State private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(.white.opacity(hovering ? 0.18 : 0.08), in: Circle())
+            .opacity(configuration.isPressed ? 0.55 : 1)
+            .onHover { hovering = $0 }
+            .animation(.easeInOut(duration: 0.12), value: hovering)
+    }
+}
+
+/// Capsule action button: primary is solid white, secondary a translucent
+/// fill; both respond to hover and press.
+private struct ActionCapsuleStyle: ButtonStyle {
+    let primary: Bool
+    @State private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(primary ? Color.black : Color.white)
+            .background(fill(pressed: configuration.isPressed), in: Capsule())
+            .onHover { hovering = $0 }
+            .animation(.easeInOut(duration: 0.12), value: hovering)
+    }
+
+    private func fill(pressed: Bool) -> Color {
+        if primary {
+            return .white.opacity(pressed ? 0.6 : (hovering ? 0.82 : 1))
+        }
+        return .white.opacity(pressed ? 0.08 : (hovering ? 0.22 : 0.12))
+    }
+}
+
 struct CompactIslandView: View {
     let side: CompactIslandSide
     private var manager: NotificationManager { .shared }
@@ -33,20 +70,28 @@ struct CompactIslandView: View {
             switch side {
             case .leading:
                 HStack(spacing: 5) {
-                    if settings.showUrgency {
+                    // Clean mode is text-only (see README's layout table); the
+                    // urgency icon belongs to normal and detailed.
+                    if settings.showUrgency, settings.layoutMode != .clean {
                         Image(systemName: manager.displayUrgency?.symbolName ?? "sparkles")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(manager.displayUrgency?.color ?? .blue)
                     }
-                    if settings.layoutMode != .clean {
-                        Text(settings.layoutMode == .detailed ? (manager.current?.title ?? manager.compactStatus) : manager.compactStatus)
-                            .lineLimit(1)
-                    }
+                    Text(settings.layoutMode == .detailed ? (manager.current?.title ?? manager.compactStatus) : manager.compactStatus)
+                        .lineLimit(1)
+                        .contentTransition(.opacity)
                 }
             case .trailing:
-                if settings.showHistoryCount, manager.unreadCount > 0 {
-                    Text("\(manager.unreadCount) 条未读")
-                        .lineLimit(1)
+                // The leading side already announces "N 条未读" when nothing is
+                // live, so the count only belongs here while a live message owns
+                // the leading text - and it excludes that message itself.
+                if settings.showHistoryCount, let current = manager.current {
+                    let backlog = manager.unreadCount - (manager.isRead(current) ? 0 : 1)
+                    if backlog > 0 {
+                        Text("\(backlog) 条未读")
+                            .lineLimit(1)
+                            .contentTransition(.numericText())
+                    }
                 }
             }
         }
@@ -55,6 +100,10 @@ struct CompactIslandView: View {
         .padding(.horizontal, max(4, 8 + settings.notchWidthOffset / 4))
         .padding(.vertical, max(2, 4 + settings.notchHeightOffset / 4))
         .fixedSize()
+        // Status and count changes shift the pill's width; animate so it glides
+        // instead of snapping.
+        .animation(.easeInOut(duration: 0.15), value: manager.compactStatus)
+        .animation(.easeInOut(duration: 0.15), value: manager.unreadCount)
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
             manager.setCompactContentWidth(width, for: side)
         }
@@ -64,12 +113,16 @@ struct CompactIslandView: View {
 struct IslandExpandedView: View {
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
+    @State private var confirmClearAll = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider()
-                .overlay(.white.opacity(0.12))
+            // A hairline, not a Divider: Divider already draws a line, and
+            // overlaying a tint on it double-draws.
+            Rectangle()
+                .fill(.white.opacity(0.12))
+                .frame(height: 1)
                 .padding(.horizontal, 16)
 
             MessageListView()
@@ -104,16 +157,21 @@ struct IslandExpandedView: View {
             Spacer(minLength: 12)
 
             Button {
-                manager.clear()
+                confirmClearAll = true
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.white.opacity(0.65))
                     .frame(width: 22, height: 22)
-                    .background(.white.opacity(0.08), in: Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PanelIconButtonStyle())
             .help("清空全部消息")
+            .confirmationDialog("清空全部消息？", isPresented: $confirmClearAll) {
+                Button("清空全部", role: .destructive) { manager.clear() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("当前、待显示和历史消息都会被清除，此操作不可撤销。")
+            }
 
             Button {
                 manager.dismissCurrent()
@@ -123,9 +181,8 @@ struct IslandExpandedView: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.white.opacity(0.65))
                     .frame(width: 22, height: 22)
-                    .background(.white.opacity(0.08), in: Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PanelIconButtonStyle())
             .help("清除当前消息并收起")
         }
         .padding(.horizontal, 16)
@@ -147,6 +204,10 @@ private struct MessageListView: View {
                 if let current = manager.current {
                     CurrentCard(notification: current)
                         .id(current.id)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .top).combined(with: .opacity),
+                            removal: .opacity
+                        ))
                 }
 
                 ForEach(manager.queue) { notification in
@@ -166,9 +227,15 @@ private struct MessageListView: View {
                 }
             }
             .padding(16)
+            // Animate queue/history churn so pushes slide in instead of popping.
+            .animation(.easeInOut(duration: 0.2), value: manager.queue)
+            .animation(.easeInOut(duration: 0.2), value: manager.pastHistory)
         }
         .scrollIndicators(.hidden)
-        .frame(height: min(320, max(160, settings.panelHeight - 75)))
+        // Follows the panel-height setting across its whole range; the header
+        // above costs ~75pt. (A fixed cap here used to make anything past
+        // ~395pt of panel height a dead zone.)
+        .frame(height: max(160, settings.panelHeight - 75))
     }
 }
 
@@ -184,7 +251,7 @@ private struct CurrentCard: View {
                 Image(systemName: notification.urgency.symbolName)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(notification.urgency.color)
-                Text(notification.urgency == .critical ? "需要处理" : "新消息")
+                Text(notification.urgency == .critical ? "需要注意" : "新消息")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.62))
                 Spacer()
@@ -192,6 +259,11 @@ private struct CurrentCard: View {
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.42))
             }
+            // The swipe-up-to-dismiss gesture lives on this header row only.
+            // On the whole card it fought the body's text selection: dragging
+            // to select upwards could dismiss the message mid-gesture.
+            .contentShape(Rectangle())
+            .gesture(dismissDrag)
 
             NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
 
@@ -205,7 +277,6 @@ private struct CurrentCard: View {
         .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .offset(y: dragOffset)
         .opacity(1 - min(1, abs(dragOffset) / 80) * 0.6)
-        .gesture(dismissDrag)
     }
 
     private var dismissDrag: some Gesture {
@@ -229,9 +300,11 @@ private struct PendingRow: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            Image(systemName: "clock")
+            // The urgency glyph carries more information than a generic clock;
+            // the trailing "待显示" label already says it is waiting.
+            Image(systemName: notification.urgency.symbolName)
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(notification.urgency.color.opacity(0.8))
                 .frame(width: 16, height: 16)
             Text(notification.title)
                 .font(.system(size: 12, weight: .medium, design: .rounded))
@@ -254,6 +327,7 @@ private struct HistoryRow: View {
     let isUnread: Bool
     let toggle: () -> Void
     private var manager: NotificationManager { .shared }
+    @State private var hovering = false
 
     var body: some View {
         Button(action: toggle) {
@@ -274,7 +348,7 @@ private struct HistoryRow: View {
                                     .frame(width: 5, height: 5)
                             }
                         }
-                        if !isExpanded {
+                        if !isExpanded, let previewText {
                             Text(previewText)
                                 .font(.system(size: 11, weight: .regular, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.62))
@@ -282,10 +356,18 @@ private struct HistoryRow: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    Text(notification.timestamp.formatted(.relative(presentation: .named)))
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.42))
-                        .lineLimit(1)
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(notification.timestamp.formatted(.relative(presentation: .named)))
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.42))
+                            .lineLimit(1)
+                        // Rows are tappable; without an affordance that was
+                        // undiscoverable.
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.3))
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
                 }
 
                 if isExpanded {
@@ -298,15 +380,19 @@ private struct HistoryRow: View {
                 }
             }
             .padding(10)
-            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(.white.opacity(hovering ? 0.12 : 0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .animation(.easeInOut(duration: 0.12), value: hovering)
         }
         .buttonStyle(.plain)
     }
 
-    /// Collapsed preview renders inline Markdown instead of showing raw source asterisks.
-    private var previewText: AttributedString {
-        guard !notification.bodyMarkdown.isEmpty else { return AttributedString("无正文") }
+    /// Collapsed preview renders inline Markdown instead of showing raw source
+    /// asterisks. A message with no body shows no preview rather than a
+    /// placeholder like "无正文".
+    private var previewText: AttributedString? {
+        guard !notification.bodyMarkdown.isEmpty else { return nil }
         let flat = notification.bodyMarkdown.replacingOccurrences(of: "\n", with: " ")
         return MarkdownCache.shared.inline(flat)
     }
@@ -358,12 +444,10 @@ private struct ActionRow: View {
                 } label: {
                     Text(action.label)
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(index == 0 ? Color.black : Color.white)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(index == 0 ? Color.white : Color.white.opacity(0.12), in: Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ActionCapsuleStyle(primary: index == 0))
             }
             Spacer(minLength: 0)
         }

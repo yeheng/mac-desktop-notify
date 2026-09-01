@@ -69,30 +69,52 @@ final class NotificationQueueTests: XCTestCase {
 
     // MARK: - Read state
 
-    func testSurfacedMessageCountsAsRead() {
+    func testSurfacedMessageStaysUnreadUntilPanelSettles() async throws {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = old }
+
         let m = NotificationManager()
-        m.push(make("a"))          // promoted to current → surfaced → read
-        XCTAssertEqual(m.unreadCount, 0)
+        m.push(make("a"))
+        XCTAssertEqual(m.displayState, .transientExpanded)
+        XCTAssertEqual(m.unreadCount, 1, "being surfaced is not the same as being seen")
+
+        try await Task.sleep(for: .milliseconds(1200))
+        XCTAssertEqual(m.unreadCount, 0, "once the panel has actually stayed up, the message counts as read")
+    }
+
+    func testCollapsingBeforeSettleKeepsMessageUnread() async throws {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = old }
+
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.dismissPanel()           // panel gone well inside the settle window
+        try await Task.sleep(for: .milliseconds(1200))
+        XCTAssertEqual(m.unreadCount, 1, "a panel that never stayed up must not mark anything read")
     }
 
     func testQueuedMessageCountsAsUnread() {
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))          // waiting in queue → unread
-        XCTAssertEqual(m.unreadCount, 1)
+        XCTAssertEqual(m.unreadCount, 2, "a is surfaced but not yet seen; b never surfaced")
     }
 
     func testIslandClickedExpandsAndMarksAllRead() {
         let m = NotificationManager()
         m.push(make("a"))
-        m.dismissPanel()           // → .compact
-        m.push(make("b"))          // queued, unread = 1
+        m.dismissPanel()           // → .compact, before the read-settle delay
+        m.push(make("b"))          // queued
         XCTAssertEqual(m.displayState, .compact)
-        XCTAssertEqual(m.unreadCount, 1)
+        XCTAssertEqual(m.unreadCount, 2, "a was dismissed unseen, b never surfaced")
 
         m.islandClicked()
         XCTAssertEqual(m.displayState, .manualExpanded)
-        XCTAssertEqual(m.unreadCount, 0)
+        XCTAssertEqual(m.unreadCount, 0, "an explicit click opens the panel to be read")
     }
 
     func testIslandClickedIgnoredWithoutContent() {

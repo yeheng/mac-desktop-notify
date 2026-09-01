@@ -63,7 +63,17 @@ final class NotificationManager {
 
     private(set) var history: [NotchNotification] = []
     private(set) var queue: [NotchNotification] = []
-    private(set) var displayState: IslandDisplayState = .hidden
+    private(set) var displayState: IslandDisplayState = .hidden {
+        didSet {
+            // The settle timer below only counts while the panel is actually up.
+            // Every collapse path funnels through this property, so the didSet is
+            // the single choke point that cancels it - no call site has to remember.
+            if !displayState.isExpanded {
+                readSettleTask?.cancel()
+                readSettleTask = nil
+            }
+        }
+    }
     private(set) var unreadCount = 0
 
     @ObservationIgnored private var isHovering = false
@@ -77,6 +87,8 @@ final class NotificationManager {
     @ObservationIgnored private var dwellTask: Task<Void, Never>?
     @ObservationIgnored private var hoverTask: Task<Void, Never>?
     @ObservationIgnored private var collapseTask: Task<Void, Never>?
+    /// Delayed "the user actually saw the panel" marker; see `scheduleReadSettle`.
+    @ObservationIgnored private var readSettleTask: Task<Void, Never>?
     /// Set only while the countdown is actually running; nil while it is held.
     @ObservationIgnored private(set) var dwellDeadline: ContinuousClock.Instant?
     /// Nil until the app hands over a store, which keeps tests off the real disk.
@@ -342,7 +354,7 @@ final class NotificationManager {
                 guard !Task.isCancelled, self.pointerNearIsland else { return }
                 self.manualExpanded = true
                 self.displayState = .manualExpanded
-                self.presentExpanded()
+                self.presentExpanded(marksRead: false)
                 self.reconcileDwell()
             }
         } else {
@@ -363,7 +375,7 @@ final class NotificationManager {
         hoverSuppressedUntilExit = false
         manualExpanded = true
         displayState = .manualExpanded
-        presentExpanded()
+        presentExpanded(marksRead: true)
         reconcileDwell()
     }
 
@@ -394,7 +406,7 @@ final class NotificationManager {
             guard hasContent else { return }
             manualExpanded = true
             displayState = .manualExpanded
-            presentExpanded()
+            presentExpanded(marksRead: true)
             reconcileDwell()
         }
     }
@@ -410,7 +422,7 @@ final class NotificationManager {
         } else if let current, current.urgency == .critical {
             // A critical that arrived while suppressed must return to blocking, not a compact pill.
             displayState = .blockingExpanded
-            presentExpanded()
+            presentExpanded(marksRead: false)
         } else if hasContent {
             displayState = .compact
             Task { await presenter?.compact() }
@@ -518,12 +530,18 @@ final class NotificationManager {
         let budget: Duration? = item.urgency == .critical
             ? nil
             : .seconds(max(0.1, item.timeout ?? AppSettings.shared.messageDwellSeconds))
+        // Read state is about what the user could have seen, not what the state
+        // machine surfaced. A message rotating into an already-open panel is
+        // visible immediately; anywhere else it stays unread until the panel is
+        // actually engaged (see `presentExpanded`).
+        let panelWasOpen = displayState.isExpanded
         stopDwell()
         presentation = Presentation(item: item, remaining: budget)
         displayState = state
         manualExpanded = false
-        // Becoming current means the message is surfaced (expanded or in the compact status), so it counts as read.
-        markRead(item.id)
+        if panelWasOpen {
+            markRead(item.id)
+        }
         reconcileDwell()
     }
 
@@ -546,7 +564,7 @@ final class NotificationManager {
         }
         beginPresenting(next, as: next.urgency == .critical ? .blockingExpanded : .transientExpanded)
         if autoExpand {
-            presentExpanded()
+            presentExpanded(marksRead: false)
         }
     }
 
@@ -557,7 +575,7 @@ final class NotificationManager {
         queue.removeAll { $0.id == notification.id }
         beginPresenting(notification, as: .blockingExpanded)
         if !displaySuppressed {
-            presentExpanded()
+            presentExpanded(marksRead: false)
         }
     }
 
@@ -565,20 +583,47 @@ final class NotificationManager {
         queue.isEmpty ? nil : queue.removeFirst()
     }
 
-    /// Presents the expanded panel; everything visible there counts as read.
+    /// Presents the expanded panel.
+    ///
+    /// Reading is acknowledged, not assumed. An explicit open (`marksRead: true` -
+    /// a click or the shortcut) marks everything read at once, because the user
+    /// just asked to see the list. Hover and automatic openings only count once
+    /// the panel has stayed up for a moment: a pointer brushing past the notch
+    /// must not wipe the unread state.
     ///
     /// Suppression is re-derived first: the pointer may not have moved since a
     /// fullscreen app took the screen, and without this check a push would
     /// expand straight over it. The probe itself is cached in the presenter,
     /// so the cost is one screen lookup, not a window-list walk.
-    private func presentExpanded() {
-        markAllRead()
+    private func presentExpanded(marksRead: Bool) {
+        if marksRead {
+            markAllRead()
+        } else {
+            scheduleReadSettle()
+        }
         Task {
             if await presenter?.probeDisplaySuppressed() == true {
                 setDisplaySuppressed(true)
                 return
             }
             await presenter?.expand()
+        }
+    }
+
+    /// How long the panel must stay up before an automatic/hover opening counts
+    /// as "seen". Long enough that an accidental brush never reaches it, short
+    /// enough that actually reading the header does.
+    private static let readSettleDelay: Duration = .seconds(1)
+
+    /// Marks everything read once the panel has visibly stayed open for a moment.
+    /// Collapsing before the delay cancels it via `displayState.didSet`.
+    private func scheduleReadSettle() {
+        readSettleTask?.cancel()
+        readSettleTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.readSettleDelay)
+            guard let self, !Task.isCancelled else { return }
+            guard self.displayState.isExpanded, !self.displaySuppressed else { return }
+            self.markAllRead()
         }
     }
 
