@@ -88,12 +88,17 @@ final class APIRouter {
     }
 
     private func clear(_ request: APIRequest) -> APIResponse {
-        var group: String?
-        if let body = request.body, !body.isEmpty,
-           let dto = try? JSONDecoder().decode(ClearDTO.self, from: body) {
-            group = PushValidator.normalizedGroup(dto.group)
+        // An absent or empty body means "clear everything". A present body
+        // must parse: garbage or a type mismatch is a 400, never a silent
+        // clear-all (spec §8 — same error shape as the push path).
+        guard let body = request.body, !body.isEmpty else {
+            manager.clear()
+            return .ok(["ok": true])
         }
-        if let group {
+        guard let dto = try? JSONDecoder().decode(ClearDTO.self, from: body) else {
+            return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
+        }
+        if let group = PushValidator.normalizedGroup(dto.group) {
             manager.clear(group: group)
         } else {
             manager.clear()
@@ -217,7 +222,9 @@ struct HistoryItemDTO: Codable {
     let body: String
     let urgency: String
     let timeout: Double?
-    let timestamp: Date
+    /// Unix epoch seconds. `Date` itself would serialize as Foundation's
+    /// reference-date seconds, which no client expects on the wire.
+    let timestamp: Double
     let actions: [NotificationAction]
     let group: String?
     let read: Bool
@@ -228,7 +235,7 @@ struct HistoryItemDTO: Codable {
         self.body = item.bodyMarkdown
         self.urgency = item.urgency.rawValue
         self.timeout = item.timeout
-        self.timestamp = item.timestamp
+        self.timestamp = item.timestamp.timeIntervalSince1970
         self.actions = item.actions
         self.group = item.group
         self.read = read
