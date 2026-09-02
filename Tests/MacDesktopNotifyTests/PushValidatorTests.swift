@@ -69,5 +69,14 @@ final class PushValidatorTests: XCTestCase {
         ).get()
         XCTAssertEqual(n.actions.count, 3, "max 3 kept")
         XCTAssertEqual(n.actions[0].label.count, 24, "label capped at 24")
+
+        // A scheme-less URL can never be opened, so the action is dropped
+        // while the valid one beside it survives.
+        let schemeless = NotificationAction(label: "no scheme", url: URL(string: "example.com/x")!)
+        let mixed = try PushValidator.makeNotification(
+            title: "t", body: nil, urgencyRaw: nil, timeout: nil, group: nil,
+            actions: [schemeless, NotificationAction(label: "ok", url: good)]
+        ).get()
+        XCTAssertEqual(mixed.actions.map(\.label), ["ok"], "scheme-less action dropped")
     }
 }
