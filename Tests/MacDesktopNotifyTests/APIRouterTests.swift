@@ -45,7 +45,7 @@ final class APIRouterTests: SettingsIsolatedTestCase {
     }
 
     func testSecondPushWhileOneIsLiveQueues() {
-        router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
         let response = router.handle(APIRequest(
             method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])
         ))
@@ -53,11 +53,11 @@ final class APIRouterTests: SettingsIsolatedTestCase {
     }
 
     func testClearGroupClearsOnlyThatGroup() {
-        router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a", "group": "ci"])))
-        router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])))
+        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a", "group": "ci"])))
+        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])))
         manager.clear()   // start clean: history now empty, both gone
-        router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a", "group": "ci"])))
-        router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])))
+        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a", "group": "ci"])))
+        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])))
 
         let response = router.handle(APIRequest(
             method: "POST", path: "/v1/clear", query: [:], body: json(["group": "ci"])
@@ -69,7 +69,7 @@ final class APIRouterTests: SettingsIsolatedTestCase {
     /// A present but unparseable body is a client error, never a silent
     /// clear-everything (spec §8: bad JSON → 400).
     func testClearWithGarbageBodyIs400AndClearsNothing() {
-        router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
 
         let response = router.handle(APIRequest(
             method: "POST", path: "/v1/clear", query: [:], body: Data("not json".utf8)
@@ -82,7 +82,7 @@ final class APIRouterTests: SettingsIsolatedTestCase {
     /// A type mismatch (`group` is a number where a string is expected) is the
     /// same 400, not a clear-all.
     func testClearWithWrongTypedBodyIs400AndClearsNothing() {
-        router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
 
         let response = router.handle(APIRequest(
             method: "POST", path: "/v1/clear", query: [:], body: json(["group": 123])
@@ -92,17 +92,17 @@ final class APIRouterTests: SettingsIsolatedTestCase {
     }
 
     func testClearWithAbsentOrEmptyBodyClearsEverything() {
-        router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
         XCTAssertEqual(router.handle(APIRequest(method: "POST", path: "/v1/clear", query: [:], body: nil)).status, 200)
         XCTAssertEqual(manager.history.map(\.title), [])
 
-        router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])))
+        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])))
         XCTAssertEqual(router.handle(APIRequest(method: "POST", path: "/v1/clear", query: [:], body: Data())).status, 200)
         XCTAssertEqual(manager.history.map(\.title), [])
     }
 
     func testHistoryReturnsItemsWithReadFlagAndUnreadCount() {
-        router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
         let response = router.handle(APIRequest(
             method: "GET", path: "/v1/history", query: [:], body: nil
         ))
@@ -133,7 +133,7 @@ final class APIRouterTests: SettingsIsolatedTestCase {
     }
 
     func testStatusAggregatesManagerState() {
-        router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
         let response = router.handle(APIRequest(method: "GET", path: "/v1/status", query: [:], body: nil))
         let payload = decoded(response.body)
         XCTAssertEqual(payload["unreadCount"] as? Int, 1)
