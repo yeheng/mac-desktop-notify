@@ -181,10 +181,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quit)
         item.menu = menu
         statusItem = item
-        recentItemsMenuRoot = menu
         silenceMenuItem = silence
-        // Refresh silence state whenever the menu is about to show; the
-        // delegate below already rebuilds the recents section there.
+        // Refresh silence state whenever the menu is about to show.
         NotificationCenter.default.addObserver(
             forName: NotificationManager.unreadCountDidChange,
             object: nil,
@@ -212,10 +210,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         silenceMenuItem?.title = silenced ? "取消静默" : "静默 1 小时"
         silenceMenuItem?.state = silenced ? .on : .off
     }
-
-    /// Where the "最近" section is inserted when the menu is about to open;
-    /// rebuilt each time so entries never go stale.
-    @MainActor private var recentItemsMenuRoot: NSMenu?
 
     private func updateStatusIcon() {
         let unread = NotificationManager.shared.unreadCount
@@ -291,60 +285,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppDelegate: NSMenuDelegate {
-    /// Rebuilds the "最近" section just before the menu opens, so its entries
-    /// always name the current history - never a stale snapshot.
+    /// Refreshes the silence item just before the menu opens: the silence
+    /// deadline can pass without any event firing, so the title and checkmark
+    /// must be re-derived rather than trusted from the last toggle.
     func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu == recentItemsMenuRoot else { return }
         updateSilenceMenuItem()
-
-        // Drop any previous "最近" section: header, entries, and the separator
-        // that sat right after them (inserted below at index 2).
-        while let index = menu.items.firstIndex(where: { $0.representedObject is RecentMessageMarker }) {
-            menu.removeItem(at: index)
-        }
-
-        let history = NotificationManager.shared.history
-        let recents = history.suffix(5).reversed()
-        guard recents.first != nil else { return }
-
-        let header = NSMenuItem(title: "最近", action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        header.representedObject = RecentMessageMarker.header
-        menu.insertItem(header, at: 1)
-
-        for notification in recents {
-            let item = NSMenuItem(
-                title: notification.title,
-                action: #selector(openRecentMessage(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = RecentMessageMarker.entry(notification.id)
-            menu.insertItem(item, at: 2)
-        }
-        // Close the section with a separator so it reads as a block.
-        let sectionEnd = NSMenuItem.separator()
-        sectionEnd.representedObject = RecentMessageMarker.header()
-        menu.insertItem(sectionEnd, at: 2)
     }
-
-    @objc private func openRecentMessage(_ sender: NSMenuItem) {
-        guard let marker = sender.representedObject as? RecentMessageMarker,
-              case let .entry(id) = marker.kind else { return }
-        NotificationManager.shared.revealNotification(id: id)
-    }
-}
-
-/// Tags menu items that belong to the rebuilt "最近" section.
-private final class RecentMessageMarker {
-    enum Kind {
-        case header
-        case entry(UUID)
-    }
-    let kind: Kind
-
-    private init(kind: Kind) { self.kind = kind }
-
-    static func header() -> RecentMessageMarker { RecentMessageMarker(kind: .header) }
-    static func entry(_ id: UUID) -> RecentMessageMarker { RecentMessageMarker(kind: .entry(id)) }
 }

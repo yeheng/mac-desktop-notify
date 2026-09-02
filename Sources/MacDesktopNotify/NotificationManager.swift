@@ -947,20 +947,6 @@ final class NotificationManager {
         schedulePersist()
     }
 
-    // MARK: - Menu access
-
-    /// Opens the panel on a specific history entry, as the menu bar's "最近"
-    /// items do. The entry is not re-promoted to live; the panel opens with the
-    /// history list scrolled to it, which is what "直达" means here.
-    func revealNotification(id: UUID) {
-        guard !displaySuppressed, hasContent else { return }
-        guard !displayState.isExpanded else { return }
-        manualExpanded = true
-        displayState = .manualExpanded
-        presentExpanded(marksRead: false)
-        reconcileDwell()
-    }
-
     /// Temporarily silences messages: everything lands in history, critical
     /// included, until the deadline passes or `resume` is called.
     func silence(until deadline: Date) {
