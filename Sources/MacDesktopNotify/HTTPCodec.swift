@@ -23,7 +23,9 @@ enum HTTPCodec {
     static func parseRequestHead(_ data: Data) -> HTTPHeadResult {
         let delimiter = Data("\r\n\r\n".utf8)
         guard let headRange = data.range(of: delimiter) else {
-            return data.count > maxHeadLength ? .malformed : .needMoreData
+            // Up to 3 delimiter bytes may already be buffered without the
+            // delimiter matching, so the head itself can still be at the limit.
+            return data.count > maxHeadLength + 3 ? .malformed : .needMoreData
         }
         let headData = data[data.startIndex..<headRange.lowerBound]
         let remainder = data[headRange.upperBound...]
@@ -63,8 +65,9 @@ enum HTTPCodec {
             headers[key] = value
         }
 
-        // A negative or unparseable Content-Length is malformed; an oversized
-        // one is NOT — the server answers 413 and closes (spec §8).
+        // A negative Content-Length is malformed. An unparseable one is treated
+        // as absent (0 — bodyless); an oversized one is NOT malformed — the
+        // server answers 413 and closes (spec §8).
         let contentLength = Int(headers["content-length"] ?? "") ?? 0
         guard contentLength >= 0 else { return .malformed }
 

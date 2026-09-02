@@ -79,7 +79,8 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertEqual(manager.history.map(\.title), ["a"])
     }
 
-    /// A type mismatch (`group` is a string) is the same 400, not a clear-all.
+    /// A type mismatch (`group` is a number where a string is expected) is the
+    /// same 400, not a clear-all.
     func testClearWithWrongTypedBodyIs400AndClearsNothing() {
         router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
 

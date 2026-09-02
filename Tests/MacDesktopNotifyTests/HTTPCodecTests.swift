@@ -44,6 +44,41 @@ final class HTTPCodecTests: XCTestCase {
         }
     }
 
+    /// A head of exactly `maxHeadLength` bytes parses even when its delimiter
+    /// straddles two receives: the buffer then holds the head plus up to 3
+    /// delimiter bytes, which must not read as "head over the limit".
+    func testHeadAtLimitWithStraddlingDelimiterParses() {
+        // The head is everything before the delimiter, so it does not end
+        // in CRLF itself.
+        let head = "GET /v1/status HTTP/1.1\r\nX-Big: " + String(repeating: "a", count: 8160)
+        XCTAssertEqual(head.utf8.count, HTTPCodec.maxHeadLength)
+
+        // First receive ends two bytes into "\r\n\r\n".
+        let firstChunk = request(head) + Data("\r\n".utf8)
+        XCTAssertEqual(firstChunk.count, HTTPCodec.maxHeadLength + 2)
+        guard case .needMoreData = HTTPCodec.parseRequestHead(firstChunk) else {
+            return XCTFail("expected .needMoreData for head + partial delimiter")
+        }
+
+        let complete = firstChunk + Data("\r\n".utf8)
+        guard case .head(let parsed, let remainder) = HTTPCodec.parseRequestHead(complete) else {
+            return XCTFail("expected .head once the delimiter completes")
+        }
+        XCTAssertEqual(parsed.path, "/v1/status")
+        XCTAssertEqual(parsed.contentLength, 0)
+        XCTAssertTrue(remainder.isEmpty)
+    }
+
+    /// No delimiter and genuinely more than `maxHeadLength` head bytes is
+    /// still malformed — the straddle tolerance is 3 bytes, not a free pass.
+    func testHeadOverLimitWithoutDelimiterIsMalformed() {
+        let head = "GET /v1/status HTTP/1.1\r\nX-Big: " + String(repeating: "a", count: 8164)
+        XCTAssertGreaterThan(head.utf8.count, HTTPCodec.maxHeadLength + 3)
+        guard case .malformed = HTTPCodec.parseRequestHead(request(head)) else {
+            return XCTFail("expected .malformed")
+        }
+    }
+
     func testMissingContentLengthMeansZero() {
         let head = "GET /v1/status HTTP/1.1\r\nHost: x\r\n\r\n"
         guard case .head(let parsed, _) = HTTPCodec.parseRequestHead(request(head)) else {
@@ -62,9 +97,12 @@ final class HTTPCodecTests: XCTestCase {
     }
 
     func testReasonPhrases() {
+        XCTAssertEqual(HTTPCodec.reason(for: 200), "OK")
         XCTAssertEqual(HTTPCodec.reason(for: 400), "Bad Request")
         XCTAssertEqual(HTTPCodec.reason(for: 404), "Not Found")
         XCTAssertEqual(HTTPCodec.reason(for: 405), "Method Not Allowed")
         XCTAssertEqual(HTTPCodec.reason(for: 413), "Payload Too Large")
+        XCTAssertEqual(HTTPCodec.reason(for: 101), "Switching Protocols")
+        XCTAssertEqual(HTTPCodec.reason(for: 418), "Status 418")   // fallback
     }
 }
