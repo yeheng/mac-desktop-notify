@@ -29,8 +29,8 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
     }
 
     func testGroupIsCapped() {
-        let long = String(repeating: "x", count: URLNotificationParser.maxGroupLength + 50)
-        XCTAssertEqual(URLNotificationParser.parseGroup(long)?.count, URLNotificationParser.maxGroupLength)
+        let long = String(repeating: "x", count: PushValidator.maxGroupLength + 50)
+        XCTAssertEqual(URLNotificationParser.parseGroup(long)?.count, PushValidator.maxGroupLength)
     }
 
     func testClearGroupParsing() {

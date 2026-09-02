@@ -105,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// perspective only sometimes, so both channels are used: stderr for scripts
     /// (it lands wherever the sender redirected it), and a visible pill for
     /// humans poking at the URL by hand.
-    private func reportPushRejection(_ rejection: URLNotificationParser.PushRejection, url: URL) {
+    private func reportPushRejection(_ rejection: PushRejection, url: URL) {
         FileHandle.standardError.write(Data("notch-notify: push 被拒绝：\(rejection.description)（\(url.absoluteString)）\n".utf8))
         NotificationManager.shared.push(
             NotchNotification(
