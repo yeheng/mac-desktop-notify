@@ -61,8 +61,21 @@ enum URLNotificationParser {
             urgency: urgency,
             timeout: timeout,
             actions: parseActions(value("actions")),
-            group: parseGroup(value("group"))
+            group: parseGroup(value("group")),
+            displayPeek: parseDisplay(value("display"))
         )
+    }
+
+    /// Parses the `display` parameter: `peek` keeps the message in the compact
+    /// pill (no panel), `expand` forces the panel open even when the sender's
+    /// message would otherwise defer to a peek-by-default setting. Anything
+    /// else leaves the choice to the app.
+    static func parseDisplay(_ raw: String?) -> Bool? {
+        switch raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "peek": true
+        case "expand": false
+        default: nil
+        }
     }
 
     /// Parses the `group` parameter: a sender-defined key that collapses repeat
@@ -74,12 +87,22 @@ enum URLNotificationParser {
         return String(trimmed.prefix(maxGroupLength))
     }
 
-    /// Parses `notch-notify://ack?token=...&label=...`, the loopback URL that turns a
-    /// button click into a receipt on disk instead of opening a browser.
+    /// What a `notch-notify://ack` callback asks the app to record.
+    struct AckRequest: Equatable, Sendable {
+        let token: String
+        let label: String
+        /// The sender wants a line of text recorded alongside the receipt, so a
+        /// decision can carry its reason ("驳回：staging 还没回归").
+        let wantsComment: Bool
+    }
+
+    /// Parses `notch-notify://ack?token=...&label=...&input=1`, the loopback URL that
+    /// turns a button click into a receipt on disk instead of opening a browser.
     ///
     /// The sender picks the token so it can poll for the result afterwards. Tokens are
-    /// filtered to a filename-safe set, since they end up in a path.
-    static func parseAck(_ url: URL) -> (token: String, label: String)? {
+    /// filtered to a filename-safe set, since they end up in a path. `input` asks
+    /// for an inline comment before the receipt is written.
+    static func parseAck(_ url: URL) -> AckRequest? {
         guard url.scheme?.lowercased() == "notch-notify",
               url.host()?.lowercased() == "ack" else { return nil }
 
@@ -89,7 +112,21 @@ enum URLNotificationParser {
         guard let raw = value("token") else { return nil }
         let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard NotificationAckStore.isAcceptedToken(token) else { return nil }
-        return (token, value("label") ?? "")
+        return AckRequest(
+            token: token,
+            label: value("label") ?? "",
+            wantsComment: parseFlag(value("input"))
+        )
+    }
+
+    /// Reads a boolean-ish query flag: only `1` / `true` / `yes` mean yes.
+    /// A missing or unrecognised value means no, so a sender that misspells it
+    /// gets the plain receipt rather than a surprise prompt.
+    static func parseFlag(_ raw: String?) -> Bool {
+        switch raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes": true
+        default: false
+        }
     }
 
     /// Reads `group` from a `clear` URL. Returns `nil` when the whole history should be cleared.
@@ -110,7 +147,13 @@ enum URLNotificationParser {
             guard !label.isEmpty, let url = URL(string: dto.url), url.scheme != nil else {
                 return nil
             }
-            return NotificationAction(label: String(label.prefix(maxActionLabelLength)), url: url)
+            return NotificationAction(
+                label: String(label.prefix(maxActionLabelLength)),
+                url: url,
+                // Resolved once, here: the button needs to know it has to ask
+                // for a comment before the click can be recorded.
+                wantsComment: parseAck(url)?.wantsComment ?? false
+            )
         }
         return Array(actions.prefix(maxActions))
     }

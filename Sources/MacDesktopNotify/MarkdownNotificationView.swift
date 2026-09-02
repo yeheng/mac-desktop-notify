@@ -79,6 +79,79 @@ private enum PanelTextOpacity {
     static let subtle: Double = 0.66
 }
 
+/// One-line text clipped to `maxWidth`; while `active` (pointer near the
+/// island), any overflow scrolls back and forth so a long title stays readable
+/// without widening the pill. The width cap is also what keeps the pill's
+/// reported width - and thus the activation frame - stable across titles.
+private struct MarqueeText: View {
+    let text: String
+    let active: Bool
+    var maxWidth: CGFloat = 220
+
+    @State private var textWidth: CGFloat = 0
+    @State private var scrollOffset: CGFloat = 0
+
+    private var overflow: CGFloat { max(0, textWidth - maxWidth) }
+
+    var body: some View {
+        Text(text)
+            .lineLimit(1)
+            .fixedSize()
+            .onGeometryChange(for: CGFloat.self, of: \.size.width) { textWidth = $0 }
+            .offset(x: -scrollOffset)
+            .frame(maxWidth: maxWidth, alignment: .leading)
+            .clipped()
+            .onChange(of: active) { _, isActive in
+                if isActive, overflow > 0 {
+                    withAnimation(.linear(duration: Double(overflow) / 30).repeatForever(autoreverses: true)) {
+                        scrollOffset = overflow
+                    }
+                } else {
+                    withAnimation(.easeOut(duration: 0.15)) { scrollOffset = 0 }
+                }
+            }
+            .onChange(of: text) { _, _ in scrollOffset = 0 }
+    }
+}
+
+/// The right-click menu shared by the compact pill and the expanded panel, so
+/// the high-frequency management actions no longer require a round trip to
+/// the menu bar icon. Destructive/global actions post notifications that the
+/// app delegate routes through the same paths as its own menu items - one
+/// confirmation dialog, one settings window.
+struct IslandContextMenu: ViewModifier {
+    /// Which presentation the menu is attached to; decides the first item.
+    let expanded: Bool
+
+    func body(content: Content) -> some View {
+        content.contextMenu {
+            let manager = NotificationManager.shared
+            if expanded {
+                Button("收起面板") { manager.dismissPanel() }
+            } else {
+                Button("打开面板") { manager.togglePanel() }
+                    .disabled(!manager.hasContent)
+            }
+            Divider()
+            Button(manager.isSilenced ? "取消静默" : "静默 1 小时") {
+                if manager.isSilenced {
+                    manager.resumeFromSilence()
+                } else {
+                    manager.silence(until: Date().addingTimeInterval(3600))
+                }
+            }
+            Button("清除全部消息…") {
+                NotificationCenter.default.post(name: .init("MacDesktopNotify.requestClearAll"), object: nil)
+            }
+            .disabled(!manager.hasContent)
+            Divider()
+            Button("设置…") {
+                NotificationCenter.default.post(name: .init("MacDesktopNotify.openSettings"), object: nil)
+            }
+        }
+    }
+}
+
 struct CompactIslandView: View {
     let side: CompactIslandSide
     private var manager: NotificationManager { .shared }
@@ -97,9 +170,14 @@ struct CompactIslandView: View {
                             .foregroundStyle(manager.displayUrgency?.color ?? .blue)
                             .accessibilityHidden(true)
                     }
-                    Text(settings.layoutMode == .detailed ? (manager.current?.title ?? manager.compactStatus) : manager.compactStatus)
-                        .lineLimit(1)
-                        .contentTransition(.opacity)
+                    if manager.compactShowsMessageTitle, let title = manager.current?.title {
+                        MarqueeText(text: title, active: manager.pointerNearIsland)
+                            .contentTransition(.opacity)
+                    } else {
+                        Text(manager.compactStatus)
+                            .lineLimit(1)
+                            .contentTransition(.opacity)
+                    }
                 }
             case .trailing:
                 // The leading side already announces "N 条未读" when nothing is
@@ -116,7 +194,13 @@ struct CompactIslandView: View {
             }
         }
         .font(.system(size: 11, weight: .semibold, design: .rounded))
-        .foregroundStyle(.white.opacity(0.92))
+        .foregroundStyle(.white.opacity(manager.pointerNearIsland ? 1 : 0.92))
+        // Pre-expansion cue: the pill wakes up (slightly brighter, slightly
+        // larger) the moment the pointer enters the activation zone, so the
+        // hover-delayed panel never appears out of nowhere. `scaleEffect` is a
+        // render transform - it does not feed back into `setCompactContentWidth`.
+        .scaleEffect(manager.pointerNearIsland ? 1.06 : 1)
+        .animation(.easeOut(duration: 0.12), value: manager.pointerNearIsland)
         .padding(.horizontal, max(4, 8 + settings.notchWidthOffset / 4))
         .padding(.vertical, max(2, 4 + settings.notchHeightOffset / 4))
         .fixedSize()
@@ -129,6 +213,7 @@ struct CompactIslandView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(manager.current.map { "通知：\($0.title)" } ?? "通知中心")
+        .modifier(IslandContextMenu(expanded: false))
     }
 }
 
@@ -136,6 +221,7 @@ struct IslandExpandedView: View {
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
     @State private var confirmClearAll = false
+    @State private var panelDragOffset: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -150,6 +236,8 @@ struct IslandExpandedView: View {
 
             MessageListView()
         }
+        .offset(y: panelDragOffset)
+        .opacity(1 - min(1, panelDragOffset / 120) * 0.4)
         .frame(width: max(320, settings.panelWidth))
         // The outer frame already clamps to `minHeight...maxHeight`, so the list
         // only needs an upper bound: with a fixed height here, a one-line message
@@ -160,9 +248,11 @@ struct IslandExpandedView: View {
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .foregroundStyle(.white)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: manager.current?.id)
+        .animation(reduceMotion ? nil : .default, value: panelDragOffset)
         .onHover { manager.setHovering($0) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("通知面板")
+        .modifier(IslandContextMenu(expanded: true))
     }
 
     private var header: some View {
@@ -231,6 +321,42 @@ struct IslandExpandedView: View {
         .padding(.horizontal, 16)
         .padding(.top, 14)
         .padding(.bottom, 12)
+        // Swipe-down collapses the panel but keeps the message - the gentle
+        // counterpart to the card's swipe-up, which discards it. Header-only,
+        // for the same reason the card's gesture is header-only: a panel-wide
+        // drag would fight the message list's scroll and text selection.
+        .contentShape(Rectangle())
+        .gesture(collapseDrag)
+    }
+
+    private var collapseDrag: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                panelDragOffset = max(0, value.translation.height)
+            }
+            .onEnded { value in
+                if value.translation.height > 40 {
+                    IslandHaptics.actionConfirmed()
+                    manager.dismissPanel()
+                }
+                panelDragOffset = 0
+            }
+    }
+}
+
+/// History flattened into display entries: messages sharing a `group` collapse
+/// into one row fronted by the newest, singles stay as they are. Grouping
+/// happens at render time only - persistence and unread state stay per message.
+private enum HistoryEntry: Identifiable {
+    case single(NotchNotification)
+    /// Newest first; only ever built for groups with two or more entries.
+    case grouped(key: String, items: [NotchNotification])
+
+    var id: String {
+        switch self {
+        case .single(let notification): notification.id.uuidString
+        case .grouped(let key, _): "grouped-\(key)"
+        }
     }
 }
 
@@ -240,6 +366,7 @@ private struct MessageListView: View {
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
     @State private var expandedHistoryID: UUID?
+    @State private var expandedGroupKey: String?
 
     var body: some View {
         ScrollView {
@@ -264,15 +391,34 @@ private struct MessageListView: View {
                     PendingRow(notification: notification)
                 }
 
-                ForEach(manager.pastHistory.reversed()) { notification in
-                    HistoryRow(
-                        notification: notification,
-                        isExpanded: expandedHistoryID == notification.id,
-                        isUnread: !manager.isRead(notification)
-                    ) {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            expandedHistoryID = expandedHistoryID == notification.id ? nil : notification.id
+                ForEach(historyEntries) { entry in
+                    switch entry {
+                    case .single(let notification):
+                        HistoryRow(
+                            notification: notification,
+                            isExpanded: expandedHistoryID == notification.id,
+                            isUnread: !manager.isRead(notification)
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                expandedHistoryID = expandedHistoryID == notification.id ? nil : notification.id
+                            }
                         }
+                    case .grouped(let key, let items):
+                        HistoryGroupRow(
+                            items: items,
+                            isExpanded: expandedGroupKey == key,
+                            expandedItemID: expandedHistoryID,
+                            toggleGroup: {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    expandedGroupKey = expandedGroupKey == key ? nil : key
+                                }
+                            },
+                            toggleItem: { id in
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    expandedHistoryID = expandedHistoryID == id ? nil : id
+                                }
+                            }
+                        )
                     }
                 }
             }
@@ -286,6 +432,108 @@ private struct MessageListView: View {
         // frame's note). The header above costs ~75pt, which is the only fixed
         // tax on the panel's height.
         .frame(maxHeight: max(160, settings.panelHeight - 75))
+    }
+
+    /// Newest-first history with same-group runs collapsed. A group only
+    /// aggregates when it holds at least two entries - a lone message with a
+    /// group key is not a cluster, it is a message.
+    private var historyEntries: [HistoryEntry] {
+        let ordered = Array(manager.pastHistory.reversed())
+        var groupCounts: [String: Int] = [:]
+        for notification in ordered {
+            if let key = notification.groupingKey {
+                groupCounts[key, default: 0] += 1
+            }
+        }
+        var emitted: Set<String> = []
+        var entries: [HistoryEntry] = []
+        for notification in ordered {
+            guard let key = notification.groupingKey, (groupCounts[key] ?? 0) > 1 else {
+                entries.append(.single(notification))
+                continue
+            }
+            guard emitted.insert(key).inserted else { continue }
+            entries.append(.grouped(key: key, items: ordered.filter { $0.groupingKey == key }))
+        }
+        return entries
+    }
+}
+
+/// A collapsed cluster of same-group history: the newest message fronts for
+/// the rest, with the count and any unread state rolled up. Expanding reveals
+/// the individual rows, which behave exactly like ungrouped history.
+private struct HistoryGroupRow: View {
+    let items: [NotchNotification]
+    let isExpanded: Bool
+    let expandedItemID: UUID?
+    let toggleGroup: () -> Void
+    let toggleItem: (UUID) -> Void
+    private var manager: NotificationManager { .shared }
+    @State private var hovering = false
+
+    private var latest: NotchNotification { items[0] }
+    private var unreadCount: Int { items.reduce(0) { $0 + (manager.isRead($1) ? 0 : 1) } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: latest.urgency.symbolName)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(latest.urgency.color)
+                    .frame(width: 16, height: 16)
+                    .accessibilityLabel(latest.urgency.accessibilityLabel)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) {
+                        Text(latest.title)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .lineLimit(1)
+                        if unreadCount > 0 {
+                            Circle()
+                                .fill(Color.blue)
+                                .frame(width: 5, height: 5)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    Text("共 \(items.count) 条同组消息")
+                        .font(.system(size: 11, weight: .regular, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.68))
+                }
+                Spacer(minLength: 0)
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(latest.timestamp.formatted(.relative(presentation: .named)))
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(PanelTextOpacity.timestamp))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: toggleGroup)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(unreadCount > 0 ? "未读分组" : "消息分组")：\(latest.title)，共 \(items.count) 条")
+            .accessibilityHint(isExpanded ? "收起分组" : "展开分组")
+            .accessibilityAddTraits(.isButton)
+
+            if isExpanded {
+                ForEach(items) { notification in
+                    HistoryRow(
+                        notification: notification,
+                        isExpanded: expandedItemID == notification.id,
+                        isUnread: !manager.isRead(notification)
+                    ) {
+                        toggleItem(notification.id)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(.white.opacity(hovering ? 0.12 : 0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onHover { hovering = $0 }
+        .animation(.easeInOut(duration: 0.12), value: hovering)
     }
 }
 
@@ -320,8 +568,8 @@ private struct CurrentCard: View {
             NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
 
             if !notification.actions.isEmpty {
-                ActionRow(actions: notification.actions) { action in
-                    manager.performAction(action, for: notification)
+                ActionRow(actions: notification.actions, shortcutHints: true) { action, comment in
+                    manager.performAction(action, for: notification, comment: comment)
                 }
             }
 
@@ -371,6 +619,7 @@ private struct CurrentCard: View {
             }
             .onEnded { value in
                 if value.translation.height < -40 {
+                    IslandHaptics.actionConfirmed()
                     manager.dismissCurrent()
                 } else {
                     dragOffset = 0
@@ -466,8 +715,8 @@ private struct HistoryRow: View {
                 if isExpanded {
                     NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
                     if !notification.actions.isEmpty {
-                        ActionRow(actions: notification.actions) { action in
-                            manager.performAction(action, for: notification)
+                        ActionRow(actions: notification.actions) { action, comment in
+                            manager.performAction(action, for: notification, comment: comment)
                         }
                     }
                     HStack {
@@ -542,23 +791,95 @@ private struct NotificationBodyView: View {
 /// Callback buttons for a notification. The first action renders as primary.
 private struct ActionRow: View {
     let actions: [NotificationAction]
-    let perform: (NotificationAction) -> Void
+    /// Only the live message's buttons are reachable via ⌘1–⌘3 (see
+    /// `AppDelegate.handleActionShortcut`), so only it advertises the shortcut.
+    var shortcutHints: Bool = false
+    /// The comment the user typed, when the button asked for one.
+    let perform: (NotificationAction, String?) -> Void
+
+    /// A button that asked for a comment (`&input=1`) parks here instead of
+    /// firing on click: the receipt is written when the reason is submitted.
+    @State private var pending: NotificationAction?
+    @State private var comment = ""
+    @FocusState private var commentFocused: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
-                Button {
-                    perform(action)
-                } label: {
-                    Text(action.label)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
+                    Button {
+                        request(action)
+                    } label: {
+                        Text(action.label)
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(ActionCapsuleStyle(primary: index == 0))
+                    .help(helpText(for: action, at: index))
+                    .accessibilityLabel("操作：\(action.label)")
                 }
-                .buttonStyle(ActionCapsuleStyle(primary: index == 0))
-                .accessibilityLabel("操作：\(action.label)")
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            if let pending {
+                commentRow(for: pending)
+            }
         }
+        .onChange(of: actions) { _, _ in pending = nil; comment = "" }
+        .onReceive(NotificationCenter.default.publisher(for: .islandActionShortcut)) { note in
+            guard shortcutHints,
+                  let index = note.userInfo?["index"] as? Int,
+                  actions.indices.contains(index) else { return }
+            request(actions[index])
+        }
+    }
+
+    private func helpText(for action: NotificationAction, at index: Int) -> String {
+        let base = action.wantsComment ? "操作：\(action.label)，需要填写原因" : "操作：\(action.label)"
+        return shortcutHints ? "\(base)（快捷键 ⌘\(index + 1)，指针在面板上时生效）" : base
+    }
+
+    /// One line, because a reason is a sentence - and a two-line field inside
+    /// the panel would push the rest of the card off screen.
+    private func commentRow(for action: NotificationAction) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(action.label)：填写原因（可选）")
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(PanelTextOpacity.subtle))
+            HStack(spacing: 6) {
+                TextField("原因", text: $comment)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .focused($commentFocused)
+                    .onSubmit { submit(action) }
+                    .accessibilityLabel("\(action.label) 的原因")
+                Button("提交") { submit(action) }
+                    .buttonStyle(ActionCapsuleStyle(primary: true))
+                    .accessibilityLabel("提交 \(action.label)")
+                Button("取消") { pending = nil; comment = "" }
+                    .buttonStyle(ActionCapsuleStyle(primary: false))
+                    .accessibilityLabel("取消 \(action.label)")
+            }
+        }
+        .transition(.opacity)
+    }
+
+    private func request(_ action: NotificationAction) {
+        guard action.wantsComment else {
+            perform(action, nil)
+            return
+        }
+        pending = action
+        comment = ""
+        commentFocused = true
+    }
+
+    private func submit(_ action: NotificationAction) {
+        perform(action, comment)
+        pending = nil
+        comment = ""
     }
 }

@@ -21,6 +21,32 @@ enum UrgencyLevel: String, Sendable, Codable {
 struct NotificationAction: Sendable, Equatable, Codable {
     let label: String
     let url: URL
+    /// The sender asked for a line of text to go with the receipt
+    /// (`notch-notify://ack?...&input=1`): the button then opens an inline
+    /// input before anything is written, so a refusal can carry a reason.
+    var wantsComment: Bool
+
+    init(label: String, url: URL, wantsComment: Bool = false) {
+        self.label = label
+        self.url = url
+        self.wantsComment = wantsComment
+    }
+
+    /// History written before `wantsComment` existed has no such key. Those
+    /// buttons behaved as "no comment asked for", which is what they decode to.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        label = try container.decode(String.self, forKey: .label)
+        url = try container.decode(URL.self, forKey: .url)
+        wantsComment = try container.decodeIfPresent(Bool.self, forKey: .wantsComment) ?? false
+    }
+}
+
+extension Notification.Name {
+    /// ⌘1–⌘3 reached the app while the panel is open. Only the live message's
+    /// action row listens: a plain button fires at once, a button asking for a
+    /// comment opens (and focuses) its input instead.
+    static let islandActionShortcut = Notification.Name("MacDesktopNotify.actionShortcut")
 }
 
 struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
@@ -36,6 +62,12 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
     /// Sender-defined grouping key. A push replaces any earlier message carrying
     /// the same non-empty group, which keeps repeat jobs from piling up.
     let group: String?
+    /// Display-style override from the sender (`display=peek` / `display=expand`).
+    /// `nil` defers to the app setting; `true` keeps the message in the compact
+    /// pill (title only, short dwell) instead of opening the panel. Critical
+    /// messages ignore this - they always take the screen. Optional so history
+    /// written before this field existed still decodes.
+    var displayPeek: Bool?
 
     init(
         id: UUID = UUID(),
@@ -45,7 +77,8 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         timeout: TimeInterval?,
         timestamp: Date = Date(),
         actions: [NotificationAction] = [],
-        group: String? = nil
+        group: String? = nil,
+        displayPeek: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -55,6 +88,7 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         self.timestamp = timestamp
         self.actions = actions
         self.group = group
+        self.displayPeek = displayPeek
     }
 
     /// A non-empty trimmed group, or `nil`. Blank groups never collapse anything.

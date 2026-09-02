@@ -59,6 +59,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // The panel's right-click menu routes destructive/global actions
+        // through the same paths as the menu bar items: one confirmation
+        // dialog, one settings window.
+        NotificationCenter.default.addObserver(
+            forName: .init("MacDesktopNotify.requestClearAll"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.requestClearAll(reason: "面板右键菜单") }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .init("MacDesktopNotify.openSettings"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.settingsController?.show() }
+        }
+
         // The app is inert until something calls it. A first run that ends with
         // "now what?" is a first run that ends; the guide makes the first call.
         if !AppSettings.shared.onboardingCompleted {
@@ -246,15 +264,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installShortcutMonitors() {
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Action shortcuts are gated by pointer engagement rather than
+                // app activation (the panel never activates the app), so they
+                // run ahead of the global-shortcuts opt-in gate.
+                if self.handleActionShortcut(event) { return }
                 // Global shortcuts are opt-in: ⌘, / ⌘⇧N / ⌘Delete collide with
                 // Finder and most apps' own menus, so they stay off until enabled.
                 guard AppSettings.shared.globalShortcutsEnabled else { return }
-                _ = self?.handleShortcut(event)
+                _ = self.handleShortcut(event)
             }
         }
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleShortcut(event) == true ? nil : event
+            guard let self else { return event }
+            return (self.handleActionShortcut(event) || self.handleShortcut(event)) ? nil : event
         }
+    }
+
+    /// ⌘1–⌘3 fire the live message's action buttons.
+    ///
+    /// The notch panel is a non-activating panel: clicking it never makes this
+    /// app active, so a keystroke aimed at the panel lands in the *global*
+    /// monitor. Gating on `pointerNearPanel` (pointer on the panel or in the
+    /// island's activation zone) is what makes that safe - a ⌘1 meant for a
+    /// browser's tab bar cannot be stolen while the pointer is nowhere near.
+    private func handleActionShortcut(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command],
+              let index = [18: 0, 19: 1, 20: 2][event.keyCode] else { return false }
+        let manager = NotificationManager.shared
+        guard manager.displayState.isExpanded, manager.pointerNearPanel,
+              let current = manager.current, current.actions.indices.contains(index) else { return false }
+        let action = current.actions[index]
+        IslandHaptics.actionConfirmed()
+        // A button that asks for a comment cannot be fired from the keyboard:
+        // the keystroke has no reason attached. The shortcut opens the field and
+        // focuses it, so the round trip stays "hotkey in, typed reason out".
+        if action.wantsComment {
+            NotificationCenter.default.post(
+                name: .islandActionShortcut,
+                object: nil,
+                userInfo: ["index": index]
+            )
+            return true
+        }
+        manager.performAction(action, for: current)
+        return true
     }
 
     private func handleShortcut(_ event: NSEvent) -> Bool {

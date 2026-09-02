@@ -13,3 +13,8 @@ DerivedData/
 
 # Superpowers subagent-driven-development scratch (ledger, briefs, reports, review packages)
 /.superpowers/
+
+# Local agent/AI workspace data
+.claude/
+.workbuddy/
+repomix-output.xml

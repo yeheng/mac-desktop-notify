@@ -76,6 +76,14 @@ private struct GeneralSettingsPane: View {
                 Toggle("鼠标离开时自动收起", isOn: $settings.autoCollapseOnLeave)
                 Toggle("无活跃消息时自动隐藏", isOn: $settings.hideWhenIdle)
                 Toggle("全屏应用中隐藏", isOn: $settings.hideInFullscreen)
+                Toggle("屏幕录制时隐藏", isOn: $settings.excludeFromScreenRecording)
+                Text("共享屏幕、录屏与截图时刘海不入画面，会议演示不会泄露消息内容。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("触觉反馈", isOn: $settings.enableHaptics)
+                Text("指针进入触发区、点击刘海与手势关闭时，触控板给出轻戳确认。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             SettingsGroup(title: "悬停延迟") {
@@ -87,6 +95,17 @@ private struct GeneralSettingsPane: View {
                     Text("500ms")
                 }
                 SettingsValueLabel(value: "\(Int(settings.hoverDelayMilliseconds)) ms")
+            }
+
+            SettingsGroup(title: "显示器") {
+                Toggle("无刘海屏幕显示迷你摘要条", isOn: $settings.miniSummaryOnNotchlessScreens)
+                Text("没有物理刘海的显示器（iMac、Mac mini、外接屏）无法显示刘海摘要栏，改为在屏幕顶部居中显示一枚小胶囊：紧急度、标题与未读数量。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("所有屏幕都显示摘要", isOn: $settings.mirrorSummaryOnAllDisplays)
+                Text("默认摘要只跟随指针所在的屏幕。开启后每块屏幕都显示摘要，展开的面板仍只出现在指针所在屏幕——始终只有一个面板可以操作。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             SettingsGroup(title: "系统") {
@@ -219,6 +238,10 @@ private struct NotificationSettingsPane: View {
         SettingsScrollView(title: "通知", subtitle: "控制消息展开、停留、声音与离开策略。") {
             SettingsGroup(title: "自动提醒") {
                 Toggle("消息到达时自动展开", isOn: $settings.autoExpandOnMessage)
+                Toggle("普通消息使用轻提醒", isOn: $settings.normalMessagesPeek)
+                Text("开启后，normal 与 low 消息只在摘要栏短暂显示标题（默认 3 秒），不展开面板；critical 不受影响。单条推送可用 URL 参数 display=expand 或 display=peek 覆盖。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Slider(value: $settings.messageDwellSeconds, in: 1...30, step: 1) {
                     Text("自动提醒停留时长")
                 } minimumValueLabel: { Text("1s") } maximumValueLabel: { Text("30s") }
@@ -258,6 +281,7 @@ private struct NotificationSettingsPane: View {
                 ShortcutRow(title: "全局切换面板", shortcut: "⌃ ⌥ N")
                 ShortcutRow(title: "收起面板", shortcut: "Esc")
                 ShortcutRow(title: "清除消息", shortcut: "⌘ Delete")
+                ShortcutRow(title: "执行操作按钮（指针在面板上）", shortcut: "⌘ 1-3")
                 ShortcutRow(title: "切换面板（本 App）", shortcut: "⌘ ⇧ N")
                 ShortcutRow(title: "打开设置", shortcut: "⌘ ,")
                 Text("Esc 在指针停留于面板或手动打开面板时生效。")

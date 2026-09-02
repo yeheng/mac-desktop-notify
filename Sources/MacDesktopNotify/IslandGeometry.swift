@@ -10,6 +10,16 @@ extension NSScreen {
     var displayID: CGDirectDisplayID {
         deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
     }
+
+    /// Whether the display has a physical notch.
+    ///
+    /// The same test DynamicNotchKit uses to choose notch vs floating style:
+    /// the auxiliary top areas only exist when the menu bar is interrupted. It
+    /// decides whether the kit can draw a compact pill here at all - it cannot
+    /// on a floating screen, which is why notchless displays need a mini bar.
+    var hasNotch: Bool {
+        auxiliaryTopLeftArea?.width != nil && auxiliaryTopRightArea?.width != nil
+    }
 }
 
 @MainActor

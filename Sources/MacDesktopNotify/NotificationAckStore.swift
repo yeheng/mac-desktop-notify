@@ -12,6 +12,10 @@ struct NotificationAck: Codable, Equatable {
     var label: String
     var notificationID: UUID
     var decidedAt: Date
+    /// The reason the sender asked for (`&input=1` on the ack URL). Nil when no
+    /// comment was requested or the user left the field blank; optional so
+    /// receipts written by older versions still decode.
+    var comment: String?
 }
 
 /// Writes action receipts to disk, one JSON file per token.
@@ -36,6 +40,10 @@ struct NotificationAckStore {
     static let allowedTokenCharacters = CharacterSet(
         charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
     )
+
+    /// Comments are typed into a one-line field in the panel, so they are capped:
+    /// a reason is a sentence, not a document.
+    static let maxCommentLength = 500
 
     static func isAcceptedToken(_ token: String) -> Bool {
         !token.isEmpty

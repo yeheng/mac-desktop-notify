@@ -70,6 +70,8 @@ final class NotchPresenter: NotchPresenting {
 
     /// One notch per display. See `PerScreenInstances` for why they cannot be shared.
     private let notches = PerScreenInstances<IslandNotch>()
+    /// Floating summary bars for the displays the kit cannot draw a pill on.
+    private let miniBars = MiniSummaryBars()
     /// The display the island currently belongs to: wherever the pointer last was.
     private var activeScreenID: CGDirectDisplayID?
 
@@ -112,11 +114,78 @@ final class NotchPresenter: NotchPresenting {
     // outlives the process's useful life.
 
     func expand() async {
-        await applyToScreens(active: { await $0.expand(on: $1) }, inactive: { await $0.hide() })
+        await applyToScreens(
+            active: { notch, screen in
+                // The panel replaces this screen's summary: a bar floating
+                // under an open panel would be double vision.
+                self.miniBars.hide(for: screen.displayID)
+                await notch.expand(on: screen)
+            },
+            inactive: { notch, screen in await self.settleInactiveScreen(notch, screen) }
+        )
+        applySharingType()
     }
 
     func compact() async {
-        await applyToScreens(active: { await $0.compact(on: $1) }, inactive: { await $0.hide() })
+        await applyToScreens(
+            active: { notch, screen in await self.showSummary(notch, on: screen) },
+            inactive: { notch, screen in await self.settleInactiveScreen(notch, screen) }
+        )
+        applySharingType()
+    }
+
+    /// What a display that is not the pointer's display shows.
+    ///
+    /// Mirroring is a summary-only affordance: the panel keeps belonging to one
+    /// screen, so there is never more than one thing to click, dismiss, or
+    /// scroll. A second panel on a display nobody is looking at is a bug.
+    private func settleInactiveScreen(_ notch: IslandNotch, _ screen: NSScreen) async {
+        if AppSettings.shared.mirrorSummaryOnAllDisplays {
+            await showSummary(notch, on: screen)
+        } else {
+            await hideScreen(notch, screen)
+        }
+    }
+
+    /// Shows this screen's summary: the kit's pill where there is a notch, the
+    /// mini bar where there is not. Asking the kit for `compact` on a floating
+    /// screen is a no-op that looks like success, which is the whole reason this
+    /// branch exists.
+    private func showSummary(_ notch: IslandNotch, on screen: NSScreen) async {
+        switch SummaryRouting.compactPresentation(
+            hasNotch: screen.hasNotch,
+            miniBarEnabled: AppSettings.shared.miniSummaryOnNotchlessScreens
+        ) {
+        case .notchCompact:
+            miniBars.hide(for: screen.displayID)
+            await notch.compact(on: screen)
+        case .miniBar:
+            await notch.hide()
+            miniBars.show(on: screen)
+        case .none:
+            await hideScreen(notch, screen)
+        }
+    }
+
+    private func hideScreen(_ notch: IslandNotch, _ screen: NSScreen) async {
+        await notch.hide()
+        miniBars.hide(for: screen.displayID)
+    }
+
+    /// Re-applies the screen-capture exclusion to every live notch window.
+    ///
+    /// The kit recreates its window on every presentation, so the setting
+    /// cannot be applied once at setup - it follows each `expand`/`compact`
+    /// here, and the `screenRecordingDidChange` observer covers flips made
+    /// while a window is already on screen.
+    private func applySharingType() {
+        let sharingType: NSWindow.SharingType = AppSettings.shared.excludeFromScreenRecording ? .none : .readOnly
+        for notch in notches.instances.values {
+            notch.windowController?.window?.sharingType = sharingType
+        }
+        // The mini bars are plain windows, not kit windows, so the loop above
+        // does not reach them.
+        miniBars.applySharingType()
     }
 
     /// Re-derives suppression for the island's current screen.
@@ -132,13 +201,18 @@ final class NotchPresenter: NotchPresenting {
 
     func hide() async {
         for notch in notches.instances.values { await notch.hide() }
+        miniBars.hideAll()
     }
 
     // MARK: - Per-display instances
 
     private func makeNotch() -> IslandNotch {
         let notch = IslandNotch(
-            hoverBehavior: [.hapticFeedback, .increaseShadow],
+            // `.increaseShadow` stays: hovering the visible pill deepens its
+            // shadow. Haptics are deliberately NOT the kit's job - its version
+            // fires on hover exit as well as entry and ignores the app's
+            // setting, so the ticks live in `IslandHaptics` instead.
+            hoverBehavior: [.increaseShadow],
             style: .auto
         ) {
             IslandExpandedView()
@@ -159,13 +233,19 @@ final class NotchPresenter: NotchPresenting {
 
     /// Brings the instance map in line with the displays that actually exist.
     private func syncScreens() {
+        let live = Set(NSScreen.screens.map(\.displayID))
         notches.sync(
-            current: Set(NSScreen.screens.map(\.displayID)),
+            current: live,
             make: { _ in makeNotch() },
             // The window belongs to a display that is gone, so it has to be taken
             // down rather than left floating over whatever is there now.
             retire: { notch in Task { await notch.hide() } }
         )
+        // Same for the mini bars: a bar left behind after its display was
+        // unplugged would hang over whatever that screen is showing now.
+        for id in miniBars.visibleDisplayIDs where !live.contains(id) {
+            miniBars.hide(for: id)
+        }
         if let activeScreenID, !notches.instances.keys.contains(activeScreenID) {
             self.activeScreenID = nil
         }
@@ -190,7 +270,7 @@ final class NotchPresenter: NotchPresenting {
     /// panel open on a display nobody is looking at is a bug, not a feature.
     private func applyToScreens(
         active: (IslandNotch, NSScreen) async -> Void,
-        inactive: (IslandNotch) async -> Void
+        inactive: (IslandNotch, NSScreen) async -> Void
     ) async {
         let targetID = targetScreen?.displayID
         for screen in NSScreen.screens {
@@ -198,7 +278,7 @@ final class NotchPresenter: NotchPresenting {
             if screen.displayID == targetID {
                 await active(notch, screen)
             } else {
-                await inactive(notch)
+                await inactive(notch, screen)
             }
         }
     }
@@ -273,6 +353,20 @@ final class NotchPresenter: NotchPresenting {
                 Task { @MainActor [weak self] in self?.fullscreenResult = nil }
             })
         }
+        invalidationObservers.append(appCenter.addObserver(
+            forName: AppSettings.screenRecordingDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.applySharingType() }
+        })
+        invalidationObservers.append(appCenter.addObserver(
+            forName: AppSettings.summaryRoutingDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.reapplyDisplayState() }
+        })
         invalidationObservers.append(appCenter.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
