@@ -78,11 +78,14 @@ enum HTTPCodec {
     }
 
     static func response(status: Int, reason: String, body: Data) -> Data {
-        var out = Data("HTTP/1.1 \(status) \(reason)\r\n".utf8)
-        out.append(Data("Content-Type: application/json; charset=utf-8\r\n".utf8))
-        out.append(Data("Content-Length: \(body.count)\r\n".utf8))
-        out.append(Data("Connection: close\r\n".utf8))
-        out.append(Data("\r\n".utf8))
+        // One interpolated string, one Data conversion — no fragment `Data`
+        // allocations per header line. The trailing blank line terminates the
+        // head per HTTP/1.1 (fix.md task 2).
+        let head = "HTTP/1.1 \(status) \(reason)\r\n"
+            + "Content-Type: application/json; charset=utf-8\r\n"
+            + "Content-Length: \(body.count)\r\n"
+            + "Connection: close\r\n\r\n"
+        var out = Data(head.utf8)
         out.append(body)
         return out
     }

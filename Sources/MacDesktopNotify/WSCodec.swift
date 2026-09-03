@@ -19,12 +19,14 @@ enum WSCodec {
     }
 
     static func upgradeResponse(acceptValue: String) -> Data {
-        var out = Data("HTTP/1.1 101 Switching Protocols\r\n".utf8)
-        out.append(Data("Upgrade: websocket\r\n".utf8))
-        out.append(Data("Connection: Upgrade\r\n".utf8))
-        out.append(Data("Sec-WebSocket-Accept: \(acceptValue)\r\n".utf8))
-        out.append(Data("\r\n".utf8))
-        return out
+        // Same single-string rule as HTTPCodec.response: the handshake head is
+        // fixed-shape, so build it in one interpolation instead of fragment
+        // `Data` appends.
+        let head = "HTTP/1.1 101 Switching Protocols\r\n"
+            + "Upgrade: websocket\r\n"
+            + "Connection: Upgrade\r\n"
+            + "Sec-WebSocket-Accept: \(acceptValue)\r\n\r\n"
+        return Data(head.utf8)
     }
 
     static func decode(_ data: Data) -> (frames: [WSFrame], remainder: Data)? {
@@ -79,9 +81,13 @@ enum WSCodec {
         guard bytes.count >= offset + 4 + length else { return .some(nil) }
         let mask = Array(bytes[offset..<(offset + 4)])
         offset += 4
-        let payload = Data(
-            (0..<length).map { bytes[offset + $0] ^ mask[$0 % 4] }
-        )
+        // One contiguous buffer, XORed in place: no intermediate Array from a
+        // high-order `.map`, no per-byte closure dispatch — allocation stays
+        // O(1) regardless of frame size.
+        var payload = Data(bytes[offset..<(offset + length)])
+        for i in 0..<length {
+            payload[i] ^= mask[i % 4]
+        }
         offset += length
         return .some((WSFrame(fin: fin, opcode: opcode, payload: payload), Data(bytes[offset...])))
     }

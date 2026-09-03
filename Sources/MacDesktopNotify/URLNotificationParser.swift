@@ -17,42 +17,29 @@ enum URLNotificationParser {
         func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
 
         let timeout = value("timeout").flatMap { TimeInterval($0) }
-        return PushValidator.makeNotification(
+        switch PushValidator.makeNotification(
             title: value("title") ?? "",
             body: value("body"),
             urgencyRaw: value("urgency"),
             timeout: timeout,
             group: value("group"),
             actions: parseActions(value("actions"))
-        )
+        ) {
+        case .success(var notification):
+            // The `display` hint is a URL-scheme concern; `PushValidator` is the
+            // shared ingress contract and knows nothing of it, so it is applied
+            // once the shared validation has produced a notification.
+            notification.displayPeek = parseDisplay(value("display"))
+            return .success(notification)
+        case .failure(let rejection):
+            return .failure(rejection)
+        }
     }
 
     /// Parses a `notch-notify://push?...` URL. Returns `nil` when `title` is missing or blank.
     static func parsePush(_ url: URL) -> NotchNotification? {
         guard case .success(let notification) = parsePushDetailed(url) else { return nil }
         return notification
-    }
-
-    private static func parse(title: String, value: (String) -> String?) -> NotchNotification {
-        var body = value("body") ?? ""
-        if body.count > maxBodyLength { body = String(body.prefix(maxBodyLength)) }
-
-        let urgency = UrgencyLevel(rawValue: value("urgency") ?? "") ?? .normal
-
-        // A missing or unparseable timeout stays nil: the dwell setting owns it.
-        let timeout = value("timeout")
-            .flatMap { TimeInterval($0) }
-            .map { min(max($0, timeoutRange.lowerBound), timeoutRange.upperBound) }
-
-        return NotchNotification(
-            title: title,
-            bodyMarkdown: body,
-            urgency: urgency,
-            timeout: timeout,
-            actions: parseActions(value("actions")),
-            group: parseGroup(value("group")),
-            displayPeek: parseDisplay(value("display"))
-        )
     }
 
     /// Parses the `display` parameter: `peek` keeps the message in the compact
@@ -135,12 +122,13 @@ enum URLNotificationParser {
                 return nil
             }
             return NotificationAction(
-                label: String(label.prefix(maxActionLabelLength)),
+                label: String(label.prefix(PushValidator.maxActionLabelLength)),
                 url: url,
                 // Resolved once, here: the button needs to know it has to ask
                 // for a comment before the click can be recorded.
                 wantsComment: parseAck(url)?.wantsComment ?? false
             )
         }
+        return actions
     }
 }

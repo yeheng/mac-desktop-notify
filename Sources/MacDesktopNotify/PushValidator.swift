@@ -64,14 +64,14 @@ enum PushValidator {
     /// empty label or a scheme-less URL are dropped, and only the first
     /// `maxActions` survive. A push never fails because of its actions.
     static func normalizedActions(_ actions: [NotificationAction]) -> [NotificationAction] {
-        actions.compactMap { action in
+        Array(actions.compactMap { action in
             let label = action.label.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !label.isEmpty, action.url.scheme != nil else { return nil }
             return NotificationAction(
-                label: String(label.prefix(maxActionLabelLength)), url: action.url
+                label: String(label.prefix(maxActionLabelLength)), url: action.url,
+                wantsComment: action.wantsComment
             )
         }
-        .prefix(maxActions)
-        .map { $0 }
+        .prefix(maxActions))
     }
 }
