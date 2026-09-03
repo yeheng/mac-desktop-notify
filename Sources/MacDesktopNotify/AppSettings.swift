@@ -28,6 +28,12 @@ final class AppSettings {
     static let screenRecordingDidChange = Notification.Name("MacDesktopNotify.screenRecordingDidChange")
     /// Posted when the ⌃⌥N registration should follow its toggle.
     static let panelHotkeyDidChange = Notification.Name("MacDesktopNotify.panelHotkeyDidChange")
+    /// Posted when any API setting flips; APIListenerService restarts on it.
+    static let apiSettingsDidChange = Notification.Name("MacDesktopNotify.apiSettingsDidChange")
+
+    private func notifyAPIChange() {
+        NotificationCenter.default.post(name: Self.apiSettingsDidChange, object: nil)
+    }
     /// Posted when where the summary is drawn changes (mini bar on notchless
     /// screens, mirroring across displays), so live windows follow the setting
     /// instead of waiting for the next presentation.
@@ -99,6 +105,31 @@ final class AppSettings {
     var onboardingPreset: String? {
         didSet { save(onboardingPreset, key: Keys.onboardingPreset) }
     }
+    /// Same-value assignments are ignored: the port TextField writes on
+    /// every keystroke, and without this guard each write would rebind
+    /// both listeners via `apiSettingsDidChange`.
+    var apiUnixSocketEnabled: Bool {
+        didSet {
+            guard apiUnixSocketEnabled != oldValue else { return }
+            save(apiUnixSocketEnabled, key: Keys.apiUnixSocketEnabled)
+            notifyAPIChange()
+        }
+    }
+    var apiHttpEnabled: Bool {
+        didSet {
+            guard apiHttpEnabled != oldValue else { return }
+            save(apiHttpEnabled, key: Keys.apiHttpEnabled)
+            notifyAPIChange()
+        }
+    }
+    var apiHttpPort: Int {
+        didSet {
+            guard apiHttpPort != oldValue else { return }
+            save(apiHttpPort, key: Keys.apiHttpPort)
+            notifyAPIChange()
+        }
+    }
+
     /// Show a debug overlay of the detected notch frame; the geometry escape
     /// hatch for OS releases that move the menu bar.
     var showNotchCalibration: Bool {
@@ -149,6 +180,9 @@ final class AppSettings {
         onboardingPreset = defaults.string(forKey: Keys.onboardingPreset)
         showNotchCalibration = defaults.object(forKey: Keys.showNotchCalibration) as? Bool ?? false
         globalPanelHotkeyEnabled = defaults.object(forKey: Keys.globalPanelHotkeyEnabled) as? Bool ?? true
+        apiUnixSocketEnabled = defaults.object(forKey: Keys.apiUnixSocketEnabled) as? Bool ?? true
+        apiHttpEnabled = defaults.object(forKey: Keys.apiHttpEnabled) as? Bool ?? false
+        apiHttpPort = defaults.object(forKey: Keys.apiHttpPort) as? Int ?? 4770
     }
 
     /// Test seam: the singleton is backed by `.standard`, which inside the test
@@ -169,6 +203,7 @@ final class AppSettings {
             Keys.launchAtLogin, Keys.globalShortcutsEnabled, Keys.persistHistory,
             Keys.quietMode, Keys.ageOutCriticals, Keys.onboardingCompleted,
             Keys.onboardingPreset, Keys.showNotchCalibration, Keys.globalPanelHotkeyEnabled,
+            Keys.apiUnixSocketEnabled, Keys.apiHttpEnabled, Keys.apiHttpPort,
         ] {
             defaults.removeObject(forKey: key)
         }
@@ -218,6 +253,9 @@ final class AppSettings {
         static let onboardingPreset = "island.onboardingPreset"
         static let showNotchCalibration = "island.showNotchCalibration"
         static let globalPanelHotkeyEnabled = "island.globalPanelHotkeyEnabled"
+        static let apiUnixSocketEnabled = "island.apiUnixSocketEnabled"
+        static let apiHttpEnabled = "island.apiHttpEnabled"
+        static let apiHttpPort = "island.apiHttpPort"
     }
 }
 

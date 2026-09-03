@@ -25,7 +25,9 @@ ack 回执只能磁盘轮询；`open` 每次调用有 ~100ms 的 LaunchServices 
 ## 1. 需求（已确认）
 
 1. **能力范围：完整双向** — push / clear / 历史与状态查询 / WS 事件订阅（ack 实时回推、未读数变化）
-2. **暴露范围：仅本机** — HTTP/WS 绑 127.0.0.1；Unix socket 靠 0700 文件权限；无鉴权设计
+2. **暴露范围：仅本机** — HTTP/WS 绑 127.0.0.1；Unix socket 靠 0700 文件权限；无鉴权设计。
+   仅绑定回环挡不住浏览器（网页可直连 127.0.0.1 发 WS 升级或免预检 POST，DNS rebinding 可把
+   恶意域名指向 127.0.0.1），该向量以 Host / Origin 本机校验关闭，而非默默接受
 3. **技术选型：零依赖** — Network.framework；HTTP/1.1 子集与 WS 帧手写
 4. **默认状态** — Unix socket 开（零端口零攻击面）；HTTP/WS 关，设置里可开可改端口
 
@@ -139,6 +141,8 @@ title 缺失/空白是唯一的整体拒绝条件。
 | 场景 | 行为 |
 |------|------|
 | JSON 解析失败 / 校验失败 | `400` + `{"error","field"}`（复用 `PushRejection`） |
+| Host 非本机（DNS rebinding / 浏览器旁路） / WS 升级 Origin 非本机 | `403`，不路由 |
+| `Sec-WebSocket-Version` 存在且非 13 | `400` 拒绝升级 |
 | 未知路径 / 方法不符 | `404` / `405` |
 | body > 32KB | `413` |
 | 请求头 > 8KB | 直接断连（无响应） |

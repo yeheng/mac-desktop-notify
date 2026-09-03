@@ -1,30 +1,13 @@
 import Foundation
 
 enum URLNotificationParser {
-    static let maxBodyLength = 5000
-    static let timeoutRange: ClosedRange<TimeInterval> = 1...60
-    static let maxActions = 3
-    static let maxActionLabelLength = 24
+    /// Caps the raw `actions` JSON a URL may carry, guarding the decode step
+    /// only. Field limits and truncation live in `PushValidator`.
     static let maxActionsPayloadLength = 1000
-    static let maxGroupLength = 64
 
     private struct ActionDTO: Decodable {
         let label: String
         let url: String
-    }
-
-    /// Why a push URL was rejected. For a programmable tool, "silently dropped"
-    /// is the worst possible answer to a malformed request - the sender needs
-    /// something to debug against.
-    enum PushRejection: Error, Equatable, CustomStringConvertible {
-        case missingTitle
-
-        var description: String {
-            switch self {
-            case .missingTitle:
-                "title 参数缺失或为空"
-            }
-        }
     }
 
     /// Parses a `notch-notify://push?...` URL, reporting why it failed.
@@ -33,9 +16,15 @@ enum URLNotificationParser {
         let items = components?.queryItems ?? []
         func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
 
-        let title = (value("title") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return .failure(.missingTitle) }
-        return .success(parse(title: title, value: value))
+        let timeout = value("timeout").flatMap { TimeInterval($0) }
+        return PushValidator.makeNotification(
+            title: value("title") ?? "",
+            body: value("body"),
+            urgencyRaw: value("urgency"),
+            timeout: timeout,
+            group: value("group"),
+            actions: parseActions(value("actions"))
+        )
     }
 
     /// Parses a `notch-notify://push?...` URL. Returns `nil` when `title` is missing or blank.
@@ -81,10 +70,7 @@ enum URLNotificationParser {
     /// Parses the `group` parameter: a sender-defined key that collapses repeat
     /// messages (the same CI job, the same file watcher) into one entry.
     static func parseGroup(_ raw: String?) -> String? {
-        guard let raw else { return nil }
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        return String(trimmed.prefix(maxGroupLength))
+        PushValidator.normalizedGroup(raw)
     }
 
     /// What a `notch-notify://ack` callback asks the app to record.
@@ -135,8 +121,9 @@ enum URLNotificationParser {
         return parseGroup(items.first { $0.name == "group" }?.value)
     }
 
-    /// Parses the `actions` parameter: a JSON array of `{"label": "...", "url": "..."}`.
-    /// Malformed payloads degrade to no actions instead of failing the push.
+    /// Decodes the `actions` parameter: a JSON array of `{"label": "...", "url": "..."}`.
+    /// Malformed payloads degrade to no actions instead of failing the push. The
+    /// decoded actions are returned as-is; `PushValidator` does the truncating.
     static func parseActions(_ raw: String?) -> [NotificationAction] {
         guard let raw, raw.count <= maxActionsPayloadLength, let data = raw.data(using: .utf8) else {
             return []
@@ -155,6 +142,5 @@ enum URLNotificationParser {
                 wantsComment: parseAck(url)?.wantsComment ?? false
             )
         }
-        return Array(actions.prefix(maxActions))
     }
 }

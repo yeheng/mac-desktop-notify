@@ -6,6 +6,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     case general
     case appearance
     case notifications
+    case api
     case about
 
     var id: String { rawValue }
@@ -15,6 +16,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: "通用"
         case .appearance: "外观"
         case .notifications: "通知"
+        case .api: "接口"
         case .about: "关于"
         }
     }
@@ -24,6 +26,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .appearance: "paintbrush"
         case .notifications: "bell"
+        case .api: "network"
         case .about: "info.circle"
         }
     }
@@ -55,6 +58,7 @@ struct SettingsView: View {
                 case .general: GeneralSettingsPane(settings: settings)
                 case .appearance: AppearanceSettingsPane(settings: settings)
                 case .notifications: NotificationSettingsPane(settings: settings)
+                case .api: ApiSettingsPane(settings: settings)
                 case .about: AboutSettingsPane()
                 }
             }
@@ -303,6 +307,45 @@ private struct NotificationSettingsPane: View {
                 Text("依据系统公开的锁屏、屏幕保护与睡眠信号判断，不依赖任何私有状态。无论选择哪一项，消息都不会丢失。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+// MARK: - 接口
+
+private struct ApiSettingsPane: View {
+    @Bindable var settings: AppSettings
+    @State private var service = APIListenerService.shared
+
+    var body: some View {
+        SettingsScrollView(title: "接口", subtitle: "让本机脚本与 Web 应用通过 HTTP、WebSocket 或 Unix socket 对接。仅监听本机。") {
+            SettingsGroup(title: "Unix Socket") {
+                Toggle("启用 Unix Socket（推荐脚本使用）", isOn: $settings.apiUnixSocketEnabled)
+                LabeledContent("路径", value: APIListenerService.defaultSocketPath)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                if let error = service.socketError {
+                    Text("⚠️ \(error)").font(.callout).foregroundStyle(.red)
+                } else if service.isSocketListening {
+                    Text("状态：监听中").font(.callout).foregroundStyle(.secondary)
+                } else {
+                    Text("状态：未启用或未启动").font(.callout).foregroundStyle(.secondary)
+                }
+            }
+
+            SettingsGroup(title: "HTTP / WebSocket") {
+                Toggle("启用 HTTP 与 WebSocket", isOn: $settings.apiHttpEnabled)
+                TextField("端口", value: $settings.apiHttpPort, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 120)
+                Text("绑定 127.0.0.1；WebSocket 地址 ws://127.0.0.1:\(settings.apiHttpPort)/v1/events")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let error = service.httpError {
+                    Text("⚠️ \(error)").font(.callout).foregroundStyle(.red)
+                } else if service.isHttpListening {
+                    Text("状态：监听中").font(.callout).foregroundStyle(.secondary)
+                }
             }
         }
     }

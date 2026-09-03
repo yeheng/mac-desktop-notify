@@ -1,6 +1,6 @@
 # MacDesktopNotify
 
-通过 URL Scheme 向 macOS 灵动岛（Dynamic Notch）推送 Markdown 通知的轻量工具。
+通过 URL Scheme 或本地 API（HTTP / WebSocket / Unix socket）向 macOS 灵动岛（Dynamic Notch）推送 Markdown 通知的轻量工具。
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-6.0-orange)
@@ -10,6 +10,7 @@
 
 - 🖥️ **Vibe Island 风格 UI** — 常驻摘要态、悬停/点击展开、消息自动展开和内容切换动画
 - 🔗 **URL Scheme 推送** — 通过 `notch-notify://` 协议从任何语言/脚本发送通知
+- 🔌 **本地 API** — HTTP / WebSocket / Unix Socket 三种对接方式，仅本机监听，推送结果同步返回
 - 💾 **历史持久化** — 消息与已读状态原子写入磁盘，重启后仍在（防抖合并写，可在设置关闭）
 - 🧹 **分组去重** — 带 `group` 参数的重复推送顶掉旧消息，CI 这类高频任务不再刷屏
 - 📨 **动作回执** — `notch-notify://ack` 按钮把点击结果写回磁盘，脚本可轮询拿到审批结论；`&input=1` 可要求一行批注，回执携带 `comment` 字段
@@ -246,6 +247,107 @@ open 'notch-notify://clear?group=ci-build'
 
 ---
 
+## 本地 API（HTTP / WebSocket / Unix Socket）
+
+三种对接方式共用同一套 API，仅监听本机（127.0.0.1），不对外网开放。在「设置 → 接口」中启用：
+
+| 传输 | 默认 | 地址 |
+|------|------|------|
+| Unix Socket | 开 | `~/Library/Application Support/MacDesktopNotify/api.sock`（权限 0600） |
+| HTTP | 关（设置中开启） | `http://127.0.0.1:4770` |
+| WebSocket | 随 HTTP 一同开启 | `ws://127.0.0.1:4770/v1/events` |
+
+仅绑定本机地址并不足以挡住浏览器：网页可以直连 `127.0.0.1` 发起 WebSocket 或免预检 POST，DNS rebinding 还能把恶意域名解析到 127.0.0.1。因此服务端会校验每个请求的 Host 与每次 WS 升级的 Origin，只放行本机取值（其余返回 403），DNS rebinding 与网页旁路请求由此失效；Unix Socket 用户不带这些头，不受影响。
+
+### 端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/v1/push` | 推送通知，同步返回结果（URL Scheme 做不到） |
+| `POST` | `/v1/clear` | 清除通知；body 缺省或为空 = 清空全部，`{"group":"ci-build"}` 只清该分组 |
+| `GET` | `/v1/history?limit=20` | 最近历史，默认 20 条、上限 50 条，含已读标记与未读数 |
+| `GET` | `/v1/status` | 未读数、待展示队列、历史条数、静默状态与各监听器状态 |
+
+未知路径返回 404，方法不匹配返回 405，参数不合法返回 400：`{"error":"…","field":"title"}`（`field` 仅在字段校验失败时出现，如 push 缺 `title`）。
+
+### 推送通知
+
+请求体为 JSON，字段与 URL Scheme 完全一致（仅 `title` 必填，body/urgency/timeout/group/actions 可选，长度与取值限制相同）：
+
+```bash
+curl http://127.0.0.1:4770/v1/push \
+  -d '{"title":"构建完成","body":"全部通过","urgency":"normal","timeout":10}'
+
+# Unix socket（无需开端口）：
+curl --unix-socket "$HOME/Library/Application Support/MacDesktopNotify/api.sock" \
+  http://localhost/v1/push -d '{"title":"构建完成"}'
+```
+
+响应：
+
+```json
+{"outcome": "displayed", "id": "…"}
+```
+
+`outcome` ∈ `displayed`（成为当前展示）/ `queued`（排队中）/ `withheld`（静默期，仅入历史）。
+
+`actions` 同样支持，规则与 URL Scheme 一致（最多 3 个按钮，`notch-notify://ack` 记录回执）：
+
+```bash
+curl http://127.0.0.1:4770/v1/push \
+  -d '{"title":"部署审批","urgency":"critical","actions":[{"label":"允许","url":"notch-notify://ack?token=deploy-42&label=approve"}]}'
+```
+
+### 历史与状态
+
+```bash
+curl 'http://127.0.0.1:4770/v1/history?limit=5'
+```
+
+```json
+{
+  "items": [
+    {"id":"…","title":"构建完成","body":"全部通过","urgency":"normal","timeout":10,
+     "timestamp":1789999999.17,"actions":[],"group":"ci-build","read":false}
+  ],
+  "unreadCount": 1
+}
+```
+
+`timestamp` 是 Unix 秒（Double）。`limit` 超过 50 时按 50 截断，条目按时间升序（最新在末尾）。
+
+```bash
+curl http://127.0.0.1:4770/v1/status
+```
+
+```json
+{"unreadCount":3,"pendingCount":1,"historyCount":12,"silenced":false,
+ "listening":{"unixSocket":true,"http":true}}
+```
+
+### WebSocket 事件流
+
+连接 `ws://127.0.0.1:4770/v1/events`：先收到 `hello`（带当前未读数），随后按钮回执（ack）与未读数变化实时推送——磁盘轮询可以退役了：
+
+```json
+{"type": "hello", "unreadCount": 2}
+{"type": "ack", "token": "deploy-42", "label": "approve", "notificationID": "…", "decidedAt": 1789999999.17}
+{"type": "unreadCount", "count": 3}
+```
+
+同一连接也可直接发命令，`ref` 用于关联请求与结果：
+
+```json
+{"op":"push","ref":"r1","title":"…"}
+{"type":"result","ref":"r1","ok":true,"outcome":"displayed","id":"…"}
+{"op":"clear","ref":"r2","group":"ci-build"}
+{"type":"result","ref":"r2","ok":true}
+```
+
+未知 `op` 或非法 JSON 返回 `ok:false`，`error` 字段说明原因。
+
+---
+
 ## Markdown 支持
 
 正文支持以下 Markdown 格式：
@@ -284,7 +386,7 @@ open 'notch-notify://clear?group=ci-build'
 | **打开面板** | 展开消息面板（同 `⌘⇧N`） |
 | **清除消息…** | 清除当前、待展示和历史消息（弹出确认） |
 | **静默 1 小时 / 取消静默** | 临时静默：所有消息（含 critical）只进历史，一小时后自动恢复 |
-| **设置…** | 打开设置窗口（通用、外观、通知、关于） |
+| **设置…** | 打开设置窗口（通用、外观、通知、接口、关于） |
 | **退出 MacDesktopNotify** | 退出应用 |
 
 ---
@@ -352,6 +454,8 @@ open 'notch-notify://clear?group=ci-build'
 |------|--------|
 | **通用** | 悬停展开、鼠标离开收起、空闲隐藏、全屏隐藏、屏幕录制时隐藏、触觉反馈、悬停延迟、显示器（无刘海屏迷你摘要条、所有屏幕显示摘要）、登录启动、辅助功能授权状态与引导 |
 | **外观** | 布局模式（标准/简洁/详细）、面板宽度/高度上限、内容字号、摘要栏紧急度图标与未读数量、高级（刘海偏移微调、刘海校准框） |
+| **通知** | 自动展开、停留时长（1-30s）、critical 老化降级、保留历史、声音、快捷键、离开时行为（照常显示 / 静默存入历史 / 仅紧急消息穿透） |
+| **接口** | Unix Socket 开关与路径、HTTP / WebSocket 开关与端口（默认 4770，仅绑定 127.0.0.1） |
 | **通知** | 自动展开、普通消息使用轻提醒（`display` 未指定时生效）、停留时长（1-30s）、critical 老化降级、保留历史、声音、快捷键、离开时行为（照常显示 / 静默存入历史 / 仅紧急消息穿透） |
 | **关于** | 版本、系统要求、项目链接、接入示例、重新运行引导 |
 
@@ -384,12 +488,20 @@ Sources/MacDesktopNotify/
 ├── NotchPresenter.swift                 # DynamicNotchKit 桥接、全屏探测缓存、指针监控
 ├── PerScreenInstances.swift            # 每显示器一个 notch 实例的簿记
 ├── URLNotificationParser.swift          # URL Scheme 参数解析（push/clear/ack，含长度限制）
+├── PushValidator.swift                 # 推送字段校验（长度/紧急度/分组/动作按钮截断），各入口共用
+├── APIRouter.swift                     # 四个端点与 WS 命令的路由（纯逻辑，返回 JSON）
+├── HTTPCodec.swift                     # HTTP 报文解析与响应编码
+├── HTTPServer.swift                    # NWListener 监听（127.0.0.1 TCP / Unix socket）与升级回调
+├── WSCodec.swift                       # WebSocket 帧编解码（握手、分片、close）
+├── WSSession.swift                     # 单个 WS 连接的帧循环（ping/close/命令分发）
+├── WSEventHub.swift                    # WS 会话登记与事件广播（hello/ack/unreadCount）
+├── APIListenerService.swift            # 两个监听器的生命周期（默认 socket 开、HTTP 关）
 ├── MarkdownNotificationView.swift       # 展开视图、摘要视图、消息列表、操作按钮
 ├── MarkdownCache.swift                  # Markdown 解析缓存（NSCache）
 ├── MarkdownRenderer.swift              # Markdown 解析器（正文/代码块分离）
 ├── OnboardingView.swift                # 首次运行引导（试一试/接入/选档位）
 ├── OnboardingWindowController.swift    # 引导窗口生命周期
-├── SettingsView.swift                   # 设置页面（NavigationSplitView，4 分类）
+├── SettingsView.swift                   # 设置页面（NavigationSplitView，5 分类）
 └── SettingsWindowController.swift       # 设置窗口生命周期
 ```
 
