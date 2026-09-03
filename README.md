@@ -1,6 +1,6 @@
 # MacDesktopNotify
 
-通过 URL Scheme 向 macOS 灵动岛（Dynamic Notch）推送 Markdown 通知的轻量工具。
+通过 URL Scheme 或本地 API（HTTP / WebSocket / Unix socket）向 macOS 灵动岛（Dynamic Notch）推送 Markdown 通知的轻量工具。
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-6.0-orange)
@@ -237,7 +237,7 @@ open 'notch-notify://clear?group=ci-build'
 | `GET` | `/v1/history?limit=20` | 最近历史，默认 20 条、上限 50 条，含已读标记与未读数 |
 | `GET` | `/v1/status` | 未读数、待展示队列、历史条数、静默状态与各监听器状态 |
 
-未知路径返回 404，方法不匹配返回 405，参数不合法返回 400：`{"error":"…","field":"title"}`。
+未知路径返回 404，方法不匹配返回 405，参数不合法返回 400：`{"error":"…","field":"title"}`（`field` 仅在字段校验失败时出现，如 push 缺 `title`）。
 
 ### 推送通知
 
@@ -355,7 +355,7 @@ curl http://127.0.0.1:4770/v1/status
 | **打开面板** | 展开消息面板（同 `⌘⇧N`） |
 | **清除消息…** | 清除当前、待展示和历史消息（弹出确认） |
 | **静默 1 小时 / 取消静默** | 临时静默：所有消息（含 critical）只进历史，一小时后自动恢复 |
-| **设置…** | 打开设置窗口（通用、外观、通知、关于） |
+| **设置…** | 打开设置窗口（通用、外观、通知、接口、关于） |
 | **退出 MacDesktopNotify** | 退出应用 |
 
 ---
@@ -453,12 +453,20 @@ Sources/MacDesktopNotify/
 ├── NotchPresenter.swift                 # DynamicNotchKit 桥接、全屏探测缓存、指针监控
 ├── PerScreenInstances.swift            # 每显示器一个 notch 实例的簿记
 ├── URLNotificationParser.swift          # URL Scheme 参数解析（push/clear/ack，含长度限制）
+├── PushValidator.swift                 # 推送字段校验（长度/紧急度/分组/动作按钮截断），各入口共用
+├── APIRouter.swift                     # 四个端点与 WS 命令的路由（纯逻辑，返回 JSON）
+├── HTTPCodec.swift                     # HTTP 报文解析与响应编码
+├── HTTPServer.swift                    # NWListener 监听（127.0.0.1 TCP / Unix socket）与升级回调
+├── WSCodec.swift                       # WebSocket 帧编解码（握手、分片、close）
+├── WSSession.swift                     # 单个 WS 连接的帧循环（ping/close/命令分发）
+├── WSEventHub.swift                    # WS 会话登记与事件广播（hello/ack/unreadCount）
+├── APIListenerService.swift            # 两个监听器的生命周期（默认 socket 开、HTTP 关）
 ├── MarkdownNotificationView.swift       # 展开视图、摘要视图、消息列表、操作按钮
 ├── MarkdownCache.swift                  # Markdown 解析缓存（NSCache）
 ├── MarkdownRenderer.swift              # Markdown 解析器（正文/代码块分离）
 ├── OnboardingView.swift                # 首次运行引导（试一试/接入/选档位）
 ├── OnboardingWindowController.swift    # 引导窗口生命周期
-├── SettingsView.swift                   # 设置页面（NavigationSplitView，4 分类）
+├── SettingsView.swift                   # 设置页面（NavigationSplitView，5 分类）
 └── SettingsWindowController.swift       # 设置窗口生命周期
 ```
 
