@@ -77,6 +77,18 @@ swift build -c release
 | `actions` | `string` | ❌ | _(空)_ | 操作按钮，JSON 数组 `[{"label":"允许","url":"http://..."}]`，最多 3 个。`url` 若为 `notch-notify://ack` 则记录回执而非打开浏览器（见下文） |
 | `display` | `string` | ❌ | 设置值 | 展示档位：`"peek"` 轻提醒（仅在摘要栏短暂停留，默认 3 秒，不展开面板）/ `"expand"` 正常展开；未传时由「设置 → 通知 → 普通消息使用轻提醒」决定；critical 恒为展开，忽略此参数 |
 
+#### 编码与转义（重要）
+
+URL 的编码规则取决于调用方式，用错了正文会变成乱码或静默丢失：
+
+| 调用方式 | 规则 |
+|----------|------|
+| 终端 `open '...'` | **直接写原文，不要 percent-encode**。`open` 会把 `%` 二次编码成 `%25`，已编码的内容会显示为字面 `%XX`。中文、空格、emoji、真实换行（写在引号内）原样传递即可；但 `#`（fragment 起点，会截断其后的所有参数）和 `&`（参数分隔符）**无法**通过此方式传递 |
+| `osascript -e 'open location "..."'` | 与标准 URL 规则一致：**必须 percent-encode**（`%20` / `%0A` / `%23` / `%26`…），解码正确，`#`、`&` 编码后可用；但 AppleScript 源码里的非 ASCII 原文会乱码，不要混用 |
+| HTTP / Unix Socket API | JSON 请求体，无转义问题，是唯一能携带任意正文的通道 |
+
+经验法则：纯文本消息用 `open` 写原文；正文含 `#` / `&`，或 `actions` 的 URL 里带 `&`（如 ack 回执）时，改用 osascript 编码调用或本地 API。
+
 #### 基础示例
 
 ```bash
@@ -85,16 +97,28 @@ open 'notch-notify://push?title=构建完成&body=项目编译成功&urgency=nor
 
 #### 使用 Markdown 正文
 
+换行直接写在引号内（`#` 无法经 `open` 传递，标题样式用粗体代替）：
+
 ```bash
-open 'notch-notify://push?title=部署报告&body=## 部署摘要%0A%0A项目%20%7C%20状态%0A------%20%7C%20------%0AAPI%20Server%20%7C%20✅%0AWeb%20App%20%7C%20✅&urgency=normal&timeout=10'
+open 'notch-notify://push?title=部署报告&body=**部署摘要**
+
+项目 | 状态
+------ | ------
+API Server | ✅
+Web App | ✅&urgency=normal&timeout=10'
 ```
 
-> **提示：** 在 Markdown 中使用 `%0A` 编码换行符，`%20` 编码空格，确保 URL 合法。
+需要 `##` 标题或正文含 `#` / `&` 时，改用本地 API（见下文）：
+
+```bash
+curl http://127.0.0.1:4770/v1/push \
+  -d '{"title":"部署报告","body":"## 部署摘要\n\n- 全部 ✅","timeout":10}'
+```
 
 #### 紧急通知
 
 ```bash
-open 'notch-notify://push?title=磁盘空间不足&body=剩余空间仅%202GB&urgency=critical&timeout=30'
+open 'notch-notify://push?title=磁盘空间不足&body=剩余空间仅 2GB&urgency=critical&timeout=30'
 ```
 
 #### 静默通知
@@ -110,7 +134,7 @@ Low 紧急度不播放提示音，适合高频、无需打扰的后台消息。
 低价值但需要瞥一眼的消息，可指定 `display=peek`：只在摘要栏停留（默认 3 秒），不展开面板、不抢焦点：
 
 ```bash
-open 'notch-notify://push?title=Lint%20通过&display=peek'
+open 'notch-notify://push?title=Lint 通过&display=peek'
 ```
 
 在「设置 → 通知」中开启「普通消息使用轻提醒」后，未指定 `display` 的普通消息默认走 peek 档；发送方仍可用 `display=expand` 逐条要求展开。critical 消息恒为展开，忽略此参数。
@@ -120,12 +144,12 @@ open 'notch-notify://push?title=Lint%20通过&display=peek'
 通过 `actions` 参数给通知添加按钮，点击后用默认浏览器/对应 App 打开回调 URL（支持 http(s) 和自定义 scheme）。对当前消息执行操作后会自动关闭它并展示下一条：
 
 ```bash
-open 'notch-notify://push?title=部署审批&body=版本%20v1.2.3%20等待发布&urgency=critical&actions=%5B%7B%22label%22%3A%22%E5%85%81%E8%AE%B8%22%2C%22url%22%3A%22http%3A%2F%2Flocalhost%3A8080%2Fapprove%22%7D%2C%7B%22label%22%3A%22%E6%8B%92%E7%BB%9D%22%2C%22url%22%3A%22http%3A%2F%2Flocalhost%3A8080%2Fdeny%22%7D%5D'
+open 'notch-notify://push?title=部署审批&body=版本 v1.2.3 等待发布&urgency=critical&actions=[{"label":"允许","url":"http://localhost:8080/approve"},{"label":"拒绝","url":"http://localhost:8080/deny"}]'
 ```
 
-规则：最多 3 个按钮，第一个渲染为主按钮；`label` 最长 24 字符；`url` 必须带 scheme；无效条目会被静默丢弃，不影响通知本身。
+规则：最多 3 个按钮，第一个渲染为主按钮；`label` 最长 24 字符；`url` 必须带 scheme；无效条目会被静默丢弃，不影响通知本身。注意 action 的 `url` 里不能含 `#` / `&`（如 ack 回执 URL 含 `&`，须改用 osascript 或本地 API，见下文动作回执一节）。
 
-**Python 示例（推荐用 urlencode 处理编码）：**
+**Python 示例（urlencode 编码后须经 `osascript` 调用——`open` 会把 `%` 二次编码）：**
 
 ```python
 import json
@@ -142,7 +166,7 @@ params = urllib.parse.urlencode({
     "urgency": "critical",
     "actions": actions,
 })
-subprocess.run(["open", f"notch-notify://push?{params}"])
+subprocess.run(["osascript", "-e", f'open location "notch-notify://push?{params}"'])
 ```
 
 #### 分组去重
@@ -160,7 +184,8 @@ open 'notch-notify://push?title=构建成功&group=ci-build'   # 顶掉上一条
 
 ```bash
 TOKEN="approve-$$"   # 自选，字母数字与 -_ 组成，最长 128
-open "notch-notify://push?title=部署审批&urgency=critical&actions=%5B%7B%22label%22%3A%22%E5%85%81%E8%AE%B8%22%2C%22url%22%3A%22notch-notify%3A%2F%2Fack%3Ftoken%3D${TOKEN}%26label%3Dapprove%22%7D%5D"
+# ack URL 内含 &，必须整体 percent-encode 后经 osascript 调用（open 会二次编码 %）
+osascript -e "open location \"notch-notify://push?title=%E9%83%A8%E7%BD%B2%E5%AE%A1%E6%89%B9&urgency=critical&actions=%5B%7B%22label%22%3A%22%E5%85%81%E8%AE%B8%22%2C%22url%22%3A%22notch-notify%3A%2F%2Fack%3Ftoken%3D${TOKEN}%26label%3Dapprove%22%7D%5D\""
 
 # 轮询直到文件出现
 while [ ! -f "$HOME/Library/Application Support/MacDesktopNotify/acks/${TOKEN}.json" ]; do
@@ -178,7 +203,7 @@ cat "$HOME/Library/Application Support/MacDesktopNotify/acks/${TOKEN}.json"
 
 ```bash
 TOKEN="deny-$$"
-open "notch-notify://push?title=部署审批&urgency=critical&actions=%5B%7B%22label%22%3A%22%E9%A9%B3%E5%9B%9E%22%2C%22url%22%3A%22notch-notify%3A%2F%2Fack%3Ftoken%3D${TOKEN}%26label%3Ddeny%26input%3D1%22%7D%5D"
+osascript -e "open location \"notch-notify://push?title=%E9%83%A8%E7%BD%B2%E5%AE%A1%E6%89%B9&urgency=critical&actions=%5B%7B%22label%22%3A%22%E9%A9%B3%E5%9B%9E%22%2C%22url%22%3A%22notch-notify%3A%2F%2Fack%3Ftoken%3D${TOKEN}%26label%3Ddeny%26input%3D1%22%7D%5D\""
 # 回执示例：{"token":"deny-123","label":"deny","notificationID":"...","decidedAt":"...","comment":"staging 还没回归"}
 ```
 
@@ -202,7 +227,8 @@ params = urllib.parse.urlencode({
     "urgency": urgency,
     "timeout": timeout
 })
-subprocess.run(["open", f"notch-notify://push?{params}"])
+# urlencode 的结果含 %，必须经 osascript 调用；subprocess 走 open 会把 % 二次编码
+subprocess.run(["osascript", "-e", f'open location "notch-notify://push?{params}"'])
 ```
 
 **Node.js:**
@@ -216,7 +242,8 @@ const params = new URLSearchParams({
   timeout: '8'
 });
 
-exec(`open 'notch-notify://push?${params}'`);
+// 同上：编码后的 URL 经 osascript 传递，不要用 open
+exec(`osascript -e 'open location "notch-notify://push?${params}"'`);
 ```
 
 **Swift:**
@@ -278,9 +305,10 @@ open 'notch-notify://clear?group=ci-build'
 curl http://127.0.0.1:4770/v1/push \
   -d '{"title":"构建完成","body":"全部通过","urgency":"normal","timeout":10}'
 
-# Unix socket（无需开端口）：
-curl --unix-socket "$HOME/Library/Application Support/MacDesktopNotify/api.sock" \
-  http://localhost/v1/push -d '{"title":"构建完成"}'
+# Unix socket（无需开端口）。注意：系统自带 curl 的 --unix-socket 不接受
+# 带空格的路径，需先做一个无空格的软链：
+ln -sf "$HOME/Library/Application Support/MacDesktopNotify/api.sock" /tmp/mdn-api.sock
+curl --unix-socket /tmp/mdn-api.sock http://localhost/v1/push -d '{"title":"构建完成"}'
 ```
 
 响应：

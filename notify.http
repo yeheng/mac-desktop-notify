@@ -4,6 +4,11 @@
 ### 本项目通过 macOS URL Scheme 接收通知。
 ### 在终端中运行 `open` 命令即可触发推送，
 ### 也可嵌入 CI/CD 脚本、Alfred/Raycast 工作流等。
+###
+### 注意：不要对参数做 percent-encode——`open` 会把 `%` 再次编码，
+### 导致正文显示为未解码的 %XX。中文、空格、emoji、换行直接写原文即可；
+### 但 `#`（fragment 分隔符）和 `&`（参数分隔符）无法经 URL 传递，
+### 含这两个字符的正文请改用 HTTP API（见文件末尾）。
 ### ============================================================
 
 ### --- 基础用法 ---
@@ -19,11 +24,19 @@ exec: open 'notch-notify://push?title=部署完成&body=所有服务已上线&ur
 
 ### --- Markdown 格式 ---
 
-### 列表格式
-exec: open 'notch-notify://push?title=构建报告&body=## 构建摘要%0A%0A- 状态%3A ✅%0A- 耗时%3A 2m 30s%0A- 产物%3A release.zip'
+### 列表格式（换行直接写在引号内；`#` 无法经 URL 传递，标题用粗体代替）
+exec: open 'notch-notify://push?title=构建报告&body=**构建摘要**
+
+- 状态: ✅
+- 耗时: 2m 30s
+- 产物: release.zip'
 
 ### 代码块
-exec: open 'notch-notify://push?title=错误日志&body=```%0AError%3A connection refused%0A%2Fapi%2Fv1%2Fusers%0A```%0A请检查服务状态&urgency=critical'
+exec: open 'notch-notify://push?title=错误日志&body=```
+Error: connection refused
+/api/v1/users
+```
+请检查服务状态&urgency=critical'
 
 ### --- 清除 ---
 
@@ -35,6 +48,7 @@ exec: open 'notch-notify://clear'
 ### ============================================================
 
 ### 用法：notch_notify "标题" "正文" ["low"|"normal"|"critical"] [timeout]
+### 注意：标题/正文不能包含 `#` 或 `&`（URL 保留字符，见文件头说明）
 ```bash
 #!/bin/bash
 notch_notify() {
@@ -42,20 +56,31 @@ notch_notify() {
     local body="${2:-}"
     local urgency="${3:-normal}"
     local timeout="${4:-}"
-    
-    local params="title=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$title'''))")"
+
+    # 参数保持原文：`open` 会自行编码非法字符，预先 percent-encode
+    # 反而会因 `%` 被二次编码而显示为 %XX。
+    local params="title=$title"
     if [[ -n "$body" ]]; then
-        params+="&body=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$body'''))")"
+        params+="&body=$body"
     fi
     params+="&urgency=$urgency"
     if [[ -n "$timeout" ]]; then
         params+="&timeout=$timeout"
     fi
-    
+
     open "notch-notify://push?$params"
 }
 
 # 示例调用
 notch_notify "Git Push" "分支 main 已推送到远程" "low"
-notic_notify "CI 失败" "测试用例 userService ❌" "critical" 30
+notch_notify "CI 失败" "测试用例 userService ❌" "critical" 30
 ```
+
+### ============================================================
+### HTTP API（正文含 `#` / `&`，或需要 JSON 时使用）
+### ============================================================
+
+### 先开启：设置 → API → 启用 HTTP 监听（默认端口 4770）
+exec: curl -X POST http://127.0.0.1:4770/v1/push \
+  -H 'Content-Type: application/json' \
+  -d '{"title": "构建报告", "body": "## 构建摘要\n\n- 状态: ✅", "urgency": "normal"}'
