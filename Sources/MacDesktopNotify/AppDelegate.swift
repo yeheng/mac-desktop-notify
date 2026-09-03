@@ -59,15 +59,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // The panel's right-click menu routes destructive/global actions
-        // through the same paths as the menu bar items: one confirmation
-        // dialog, one settings window.
+        // The panel's trash button and right-click menu route destructive/global
+        // actions through the same paths as the menu bar items: one
+        // confirmation dialog, one settings window.
         NotificationCenter.default.addObserver(
-            forName: .init("MacDesktopNotify.requestClearAll"),
+            forName: .requestClearAll,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.requestClearAll(reason: "面板右键菜单") }
+            Task { @MainActor [weak self] in self?.requestClearAll(reason: "面板") }
         }
         NotificationCenter.default.addObserver(
             forName: .init("MacDesktopNotify.openSettings"),
@@ -241,9 +241,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func quitApp() { NSApplication.shared.terminate(nil) }
 
     /// Clearing deletes the on-disk history too, so every destructive path
-    /// (menu item, ⌘Delete) funnels through one confirmation. The panel's trash
-    /// button has its own inline confirmationDialog; this is the same contract
-    /// for the places that cannot present one.
+    /// (panel trash button, right-click menu, menu item, ⌘Delete) funnels
+    /// through this one confirmation. A modal NSAlert owns its window, so it
+    /// survives the panel collapsing mid-confirmation, which the panel's
+    /// former inline confirmationDialog did not.
     private func requestClearAll(reason: String) {
         guard NotificationManager.shared.hasContent else { return }
         let alert = NSAlert()
@@ -252,8 +253,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "清空全部")
         alert.addButton(withTitle: "取消")
-        // Non-activating: raising a regular panel would steal focus from whatever
-        // the user was doing when they pressed the shortcut.
+        // The panel never activates the app, and a modal alert from an inactive
+        // app can end up behind the frontmost app or fail to take key - the
+        // same reason Settings/Onboarding windows call `NSApp.activate`. The
+        // alert is about to run modally anyway; momentary activation is the
+        // price of the user actually seeing the button they must click.
+        NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn {
             NotificationManager.shared.clear()
         }

@@ -141,7 +141,7 @@ struct IslandContextMenu: ViewModifier {
                 }
             }
             Button("清除全部消息…") {
-                NotificationCenter.default.post(name: .init("MacDesktopNotify.requestClearAll"), object: nil)
+                NotificationCenter.default.post(name: .requestClearAll, object: nil)
             }
             .disabled(!manager.hasContent)
             Divider()
@@ -220,7 +220,6 @@ struct CompactIslandView: View {
 struct IslandExpandedView: View {
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
-    @State private var confirmClearAll = false
     @State private var panelDragOffset: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -276,8 +275,14 @@ struct IslandExpandedView: View {
 
             Spacer(minLength: 12)
 
+            // The confirmation must outlive this panel window: a hover-out or
+            // outside-click collapse tears the window - and any inline
+            // confirmationDialog inside it - down before the click lands.
+            // Routing through the app delegate's modal NSAlert (same as the
+            // right-click menu below) keeps one confirmation contract and one
+            // window that no pointer state can destroy.
             Button {
-                confirmClearAll = true
+                NotificationCenter.default.post(name: .requestClearAll, object: nil)
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 10, weight: .bold))
@@ -287,12 +292,7 @@ struct IslandExpandedView: View {
             .buttonStyle(PanelIconButtonStyle())
             .help("清空全部消息")
             .accessibilityLabel("清空全部消息")
-            .confirmationDialog("清空全部消息？", isPresented: $confirmClearAll) {
-                Button("清空全部", role: .destructive) { manager.clear() }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("当前、待显示和历史消息都会被清除，此操作不可撤销。")
-            }
+            .disabled(!manager.hasContent)
 
             Button {
                 manager.dismissPanel()
@@ -667,82 +667,85 @@ private struct HistoryRow: View {
     @State private var hovering = false
 
     var body: some View {
-        Button(action: toggle) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .top, spacing: 9) {
-                    Image(systemName: notification.urgency.symbolName)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(notification.urgency.color)
-                        .frame(width: 16, height: 16)
-                        .accessibilityLabel(notification.urgency.accessibilityLabel)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 5) {
-                            Text(notification.title)
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                .lineLimit(1)
-                            if isUnread {
-                                Circle()
-                                    .fill(Color.blue)
-                                    .frame(width: 5, height: 5)
-                                    .accessibilityHidden(true)
-                            }
-                        }
-                        if !isExpanded, let previewText {
-                            Text(previewText)
-                                .font(.system(size: 11, weight: .regular, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.68))
-                                .lineLimit(2)
+        VStack(alignment: .leading, spacing: 6) {
+            // Header-only tap, and no Button wrapper: a Button's label
+            // swallows clicks for every control inside it, which left the
+            // delete button and the action row below dead in the water.
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: notification.urgency.symbolName)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(notification.urgency.color)
+                    .frame(width: 16, height: 16)
+                    .accessibilityLabel(notification.urgency.accessibilityLabel)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) {
+                        Text(notification.title)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .lineLimit(1)
+                        if isUnread {
+                            Circle()
+                                .fill(Color.blue)
+                                .frame(width: 5, height: 5)
+                                .accessibilityHidden(true)
                         }
                     }
-                    Spacer(minLength: 0)
-                    VStack(alignment: .trailing, spacing: 4) {
-                        // Relative time everywhere: absolute clock time made the
-                        // list read like a log file, not a message list.
-                        Text(notification.timestamp.formatted(.relative(presentation: .named)))
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(PanelTextOpacity.timestamp))
-                            .lineLimit(1)
-                        // Rows are tappable; without an affordance that was
-                        // undiscoverable.
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.45))
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                            .accessibilityHidden(true)
+                    if !isExpanded, let previewText {
+                        Text(previewText)
+                            .font(.system(size: 11, weight: .regular, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.68))
+                            .lineLimit(2)
                     }
                 }
-
-                if isExpanded {
-                    NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
-                    if !notification.actions.isEmpty {
-                        ActionRow(actions: notification.actions) { action, comment in
-                            manager.performAction(action, for: notification, comment: comment)
-                        }
-                    }
-                    HStack {
-                        Spacer()
-                        Button {
-                            manager.removeHistory(id: notification.id)
-                        } label: {
-                            Label("删除这条", systemImage: "trash")
-                                .font(.system(size: 10, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.75))
-                        }
-                        .buttonStyle(.borderless)
-                        .help("从历史中删除这条消息")
-                        .accessibilityLabel("删除历史消息 \(notification.title)")
-                    }
+                Spacer(minLength: 0)
+                VStack(alignment: .trailing, spacing: 4) {
+                    // Relative time everywhere: absolute clock time made the
+                    // list read like a log file, not a message list.
+                    Text(notification.timestamp.formatted(.relative(presentation: .named)))
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(PanelTextOpacity.timestamp))
+                        .lineLimit(1)
+                    // Rows are tappable; without an affordance that was
+                    // undiscoverable.
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
                 }
             }
-            .padding(10)
-            .background(.white.opacity(hovering ? 0.12 : 0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .contentShape(Rectangle())
-            .onHover { hovering = $0 }
-            .animation(.easeInOut(duration: 0.12), value: hovering)
+            .onTapGesture(perform: toggle)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(isUnread ? "未读消息" : "消息")：\(notification.title)")
+            .accessibilityHint(isExpanded ? "收起正文" : "展开正文")
+            .accessibilityAddTraits(.isButton)
+
+            if isExpanded {
+                NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
+                if !notification.actions.isEmpty {
+                    ActionRow(actions: notification.actions) { action, comment in
+                        manager.performAction(action, for: notification, comment: comment)
+                    }
+                }
+                HStack {
+                    Spacer()
+                    Button {
+                        manager.removeHistory(id: notification.id)
+                    } label: {
+                        Label("删除这条", systemImage: "trash")
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("从历史中删除这条消息")
+                    .accessibilityLabel("删除历史消息 \(notification.title)")
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(isUnread ? "未读消息" : "消息")：\(notification.title)")
-        .accessibilityHint(isExpanded ? "收起正文" : "展开正文")
+        .padding(10)
+        .background(.white.opacity(hovering ? 0.12 : 0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onHover { hovering = $0 }
+        .animation(.easeInOut(duration: 0.12), value: hovering)
     }
 
     /// Collapsed preview renders inline Markdown instead of showing raw source

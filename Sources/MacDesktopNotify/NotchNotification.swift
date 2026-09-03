@@ -49,6 +49,14 @@ extension Notification.Name {
     static let islandActionShortcut = Notification.Name("MacDesktopNotify.actionShortcut")
 }
 
+extension Notification.Name {
+    /// Ask the app delegate to run its modal clear-all confirmation. The
+    /// panel's own inline confirmationDialog dies with the panel window when
+    /// a hover-out or outside-click collapse races the confirmation; the
+    /// delegate's NSAlert lives in its own window and cannot.
+    static let requestClearAll = Notification.Name("MacDesktopNotify.requestClearAll")
+}
+
 struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
     let id: UUID
     let title: String
