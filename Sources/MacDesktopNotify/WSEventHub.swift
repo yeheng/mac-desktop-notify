@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 
 /// Registry of live WebSocket sessions plus the manager-event bridge.
 /// One hub per app: every `.ackDidRecord` and `unreadCountDidChange`

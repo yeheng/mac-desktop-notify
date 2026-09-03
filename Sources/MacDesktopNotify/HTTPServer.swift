@@ -48,6 +48,12 @@ final class HTTPServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "MacDesktopNotify.HTTPServer")
     /// Router runs on the main actor; connections arrive on `queue`.
     private let router: @MainActor (APIRequest) -> APIResponse
+    /// Set by `stop()` before the listener is cancelled: a cancel that lands
+    /// before `start()` may neither reflect in `.state` nor deliver the
+    /// `.cancelled` event to a handler installed after the fact, so the flag
+    /// is what `start()` trusts to fail fast instead of leaking its
+    /// continuation.
+    private let stopped = OSAllocatedUnfairLock<Bool>(initialState: false)
 
     init(parameters: NWParameters, router: @escaping @MainActor (APIRequest) -> APIResponse) {
         self.router = router
@@ -55,7 +61,8 @@ final class HTTPServer: @unchecked Sendable {
     }
 
     func start() async throws -> UInt16 {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UInt16, Error>) in
+        if stopped.withLock({ $0 }) { throw CancellationError() }
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UInt16, Error>) in
             // `.ready` may be followed by `.failed`/`.cancelled` if the listener
             // dies later; the continuation must be resumed exactly once.
             let resumed = OSAllocatedUnfairLock(initialState: false)
@@ -84,6 +91,7 @@ final class HTTPServer: @unchecked Sendable {
     }
 
     func stop() {
+        stopped.withLock { $0 = true }
         listener.cancel()
     }
 

@@ -36,6 +36,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installShortcutMonitors()
         setupStatusItem()
         syncPanelHotkey()
+        // Local API listeners (HTTP/WS on 127.0.0.1, unix socket in App Support).
+        APIListenerService.shared.restart()
+        NotificationCenter.default.addObserver(
+            forName: AppSettings.apiSettingsDidChange,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in APIListenerService.shared.restart() }
+        }
         NotificationCenter.default.addObserver(
             forName: AppSettings.panelHotkeyDidChange,
             object: nil,

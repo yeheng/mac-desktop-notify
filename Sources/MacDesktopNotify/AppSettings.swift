@@ -25,6 +25,12 @@ final class AppSettings {
     static let calibrationDidChange = Notification.Name("MacDesktopNotify.calibrationDidChange")
     /// Posted when the ⌃⌥N registration should follow its toggle.
     static let panelHotkeyDidChange = Notification.Name("MacDesktopNotify.panelHotkeyDidChange")
+    /// Posted when any API setting flips; APIListenerService restarts on it.
+    static let apiSettingsDidChange = Notification.Name("MacDesktopNotify.apiSettingsDidChange")
+
+    private func notifyAPIChange() {
+        NotificationCenter.default.post(name: Self.apiSettingsDidChange, object: nil)
+    }
 
     @ObservationIgnored private let defaults: UserDefaults
 
@@ -58,6 +64,10 @@ final class AppSettings {
     var onboardingPreset: String? {
         didSet { save(onboardingPreset, key: Keys.onboardingPreset) }
     }
+    var apiUnixSocketEnabled: Bool { didSet { save(apiUnixSocketEnabled, key: Keys.apiUnixSocketEnabled); notifyAPIChange() } }
+    var apiHttpEnabled: Bool { didSet { save(apiHttpEnabled, key: Keys.apiHttpEnabled); notifyAPIChange() } }
+    var apiHttpPort: Int { didSet { save(apiHttpPort, key: Keys.apiHttpPort); notifyAPIChange() } }
+
     /// Show a debug overlay of the detected notch frame; the geometry escape
     /// hatch for OS releases that move the menu bar.
     var showNotchCalibration: Bool {
@@ -103,6 +113,9 @@ final class AppSettings {
         onboardingPreset = defaults.string(forKey: Keys.onboardingPreset)
         showNotchCalibration = defaults.object(forKey: Keys.showNotchCalibration) as? Bool ?? false
         globalPanelHotkeyEnabled = defaults.object(forKey: Keys.globalPanelHotkeyEnabled) as? Bool ?? true
+        apiUnixSocketEnabled = defaults.object(forKey: Keys.apiUnixSocketEnabled) as? Bool ?? true
+        apiHttpEnabled = defaults.object(forKey: Keys.apiHttpEnabled) as? Bool ?? false
+        apiHttpPort = defaults.object(forKey: Keys.apiHttpPort) as? Int ?? 4770
     }
 
     /// Test seam: the singleton is backed by `.standard`, which inside the test
@@ -121,6 +134,7 @@ final class AppSettings {
             Keys.launchAtLogin, Keys.globalShortcutsEnabled, Keys.persistHistory,
             Keys.quietMode, Keys.ageOutCriticals, Keys.onboardingCompleted,
             Keys.onboardingPreset, Keys.showNotchCalibration, Keys.globalPanelHotkeyEnabled,
+            Keys.apiUnixSocketEnabled, Keys.apiHttpEnabled, Keys.apiHttpPort,
         ] {
             defaults.removeObject(forKey: key)
         }
@@ -165,6 +179,9 @@ final class AppSettings {
         static let onboardingPreset = "island.onboardingPreset"
         static let showNotchCalibration = "island.showNotchCalibration"
         static let globalPanelHotkeyEnabled = "island.globalPanelHotkeyEnabled"
+        static let apiUnixSocketEnabled = "island.apiUnixSocketEnabled"
+        static let apiHttpEnabled = "island.apiHttpEnabled"
+        static let apiHttpPort = "island.apiHttpPort"
     }
 }
 

@@ -21,6 +21,7 @@ class SettingsIsolatedTestCase: XCTestCase {
         "island.launchAtLogin", "island.globalShortcutsEnabled", "island.persistHistory",
         "island.quietMode", "island.ageOutCriticals", "island.onboardingCompleted",
         "island.onboardingPreset", "island.showNotchCalibration", "island.globalPanelHotkeyEnabled",
+        "island.apiUnixSocketEnabled", "island.apiHttpEnabled", "island.apiHttpPort",
     ]
 
     /// Suites that must not run against factory defaults override this.
