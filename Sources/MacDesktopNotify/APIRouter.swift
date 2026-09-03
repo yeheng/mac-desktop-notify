@@ -62,6 +62,15 @@ final class APIRouter {
         let url: String
     }
 
+    private struct PushResponse: Codable {
+        let outcome: String
+        let id: String
+    }
+
+    private struct ClearResponse: Codable {
+        let ok: Bool
+    }
+
     private func push(_ request: APIRequest) -> APIResponse {
         guard let body = request.body,
               let dto = try? JSONDecoder().decode(PushDTO.self, from: body) else {
@@ -77,7 +86,7 @@ final class APIRouter {
         ) {
         case .success(let notification):
             let outcome = manager.push(notification)
-            return .ok(["outcome": outcome.label, "id": notification.id.uuidString])
+            return .ok(PushResponse(outcome: outcome.label, id: notification.id.uuidString))
         case .failure(let rejection):
             return .error(status: 400, reason: rejection.description, field: "title")
         }
@@ -93,7 +102,7 @@ final class APIRouter {
         // clear-all (spec §8 — same error shape as the push path).
         guard let body = request.body, !body.isEmpty else {
             manager.clear()
-            return .ok(["ok": true])
+            return .ok(ClearResponse(ok: true))
         }
         guard let dto = try? JSONDecoder().decode(ClearDTO.self, from: body) else {
             return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
@@ -103,7 +112,7 @@ final class APIRouter {
         } else {
             manager.clear()
         }
-        return .ok(["ok": true])
+        return .ok(ClearResponse(ok: true))
     }
 
     /// The whole `/v1/history` payload. Encoded as one Codable value because
@@ -123,15 +132,28 @@ final class APIRouter {
         return .ok(HistoryPayload(items: items, unreadCount: manager.unreadCount))
     }
 
+    private struct StatusResponse: Encodable {
+        let unreadCount: Int
+        let pendingCount: Int
+        let historyCount: Int
+        let silenced: Bool
+        let listening: ListeningStatus
+
+        struct ListeningStatus: Encodable {
+            let unixSocket: Bool
+            let http: Bool
+        }
+    }
+
     private func status() -> APIResponse {
         let listen = listening()
-        return .ok([
-            "unreadCount": manager.unreadCount,
-            "pendingCount": manager.pendingCount,
-            "historyCount": manager.historyCount,
-            "silenced": manager.isSilenced,
-            "listening": ["unixSocket": listen.unixSocket, "http": listen.http],
-        ])
+        return .ok(StatusResponse(
+            unreadCount: manager.unreadCount,
+            pendingCount: manager.pendingCount,
+            historyCount: manager.historyCount,
+            silenced: manager.isSilenced,
+            listening: StatusResponse.ListeningStatus(unixSocket: listen.unixSocket, http: listen.http)
+        ))
     }
 
     // MARK: - WebSocket command frames
@@ -141,65 +163,86 @@ final class APIRouter {
         let ref: String?
     }
 
+    private struct WSResultFrame: Encodable {
+        let type: String
+        let ref: String?
+        let ok: Bool
+        let outcome: String?
+        let id: String?
+        let error: String?
+
+        init(ref: String?, ok: Bool, outcome: String? = nil, id: String? = nil, error: String? = nil) {
+            self.type = "result"
+            self.ref = ref
+            self.ok = ok
+            self.outcome = outcome
+            self.id = id
+            self.error = error
+        }
+    }
+
     /// One client command frame (`{"op":"push","ref":"x",...}`) → one result
     /// frame (`{"type":"result","ref":"x","ok":true,...}`). Never throws:
     /// errors become `ok:false` frames so the client can correlate.
     func handleWSCommand(_ data: Data) -> Data {
         guard let dto = try? JSONDecoder().decode(WSCommandDTO.self, from: data) else {
-            return resultFrame(ref: nil, ok: false, extra: ["error": "帧不是合法 JSON"])
+            return encodeFrame(WSResultFrame(ref: nil, ok: false, error: "帧不是合法 JSON"))
         }
         switch dto.op {
         case "push":
             let response = handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: data))
-            guard response.status == 200,
-                  var payload = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any] else {
+            if response.status == 200,
+               let pushResponse = try? JSONDecoder().decode(PushResponse.self, from: response.body) {
+                return encodeFrame(WSResultFrame(
+                    ref: dto.ref,
+                    ok: true,
+                    outcome: pushResponse.outcome,
+                    id: pushResponse.id
+                ))
+            } else {
                 return failureFrame(ref: dto.ref, from: response)
             }
-            payload["type"] = "result"
-            payload["ref"] = dto.ref
-            payload["ok"] = true
-            return (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
         case "clear":
             let response = handle(APIRequest(method: "POST", path: "/v1/clear", query: [:], body: data))
-            guard response.status == 200 else {
+            if response.status == 200 {
+                return encodeFrame(WSResultFrame(ref: dto.ref, ok: true))
+            } else {
                 return failureFrame(ref: dto.ref, from: response)
             }
-            return resultFrame(ref: dto.ref, ok: true, extra: nil)
         default:
-            return resultFrame(ref: dto.ref, ok: false, extra: ["error": "未知操作"])
+            return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: "未知操作"))
         }
     }
 
     private func failureFrame(ref: String?, from response: APIResponse) -> Data {
-        let reason = (try? JSONSerialization.jsonObject(with: response.body) as? [String: Any])?["error"] as? String
-        return resultFrame(ref: ref, ok: false, extra: ["error": reason ?? "请求失败"])
+        struct ErrorPayload: Decodable {
+            let error: String
+        }
+        let reason = (try? JSONDecoder().decode(ErrorPayload.self, from: response.body))?.error ?? "请求失败"
+        return encodeFrame(WSResultFrame(ref: ref, ok: false, error: reason))
     }
 
-    private func resultFrame(ref: String?, ok: Bool, extra: [String: Any]?) -> Data {
-        var payload: [String: Any] = ["type": "result", "ok": ok]
-        if let ref { payload["ref"] = ref }
-        if let extra { payload.merge(extra) { current, _ in current } }
-        return (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+    private func encodeFrame<T: Encodable>(_ frame: T) -> Data {
+        (try? JSONEncoder().encode(frame)) ?? Data("{\"type\":\"result\",\"ok\":false}".utf8)
     }
 }
 
 // MARK: - DTO encoding helpers
 
 extension APIResponse {
-    static func ok(_ payload: [String: Any]) -> APIResponse {
-        APIResponse(status: 200, body: (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8))
-    }
-
-    /// Codable payloads go through `JSONEncoder` for the same reason
-    /// `history` does: `JSONSerialization` cannot write Swift structs.
+    /// Unified encoding path: all responses use JSONEncoder with Encodable types.
     static func ok<T: Encodable>(_ value: T) -> APIResponse {
-        APIResponse(status: 200, body: (try? JSONEncoder().encode(value)) ?? Data("{}".utf8))
+        let body = (try? JSONEncoder().encode(value)) ?? Data("{}".utf8)
+        return APIResponse(status: 200, body: body)
     }
 
-    static func error(status: Int, reason: String, field: String?) -> APIResponse {
-        var payload: [String: Any] = ["error": reason]
-        if let field { payload["field"] = field }
-        return APIResponse(status: status, body: (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8))
+    static func error(status: Int, reason: String, field: String? = nil) -> APIResponse {
+        struct ErrorPayload: Encodable {
+            let error: String
+            let field: String?
+        }
+        let body = (try? JSONEncoder().encode(ErrorPayload(error: reason, field: field))) ?? Data("{}".utf8)
+        return APIResponse(status: status, body: body)
     }
 }
 
