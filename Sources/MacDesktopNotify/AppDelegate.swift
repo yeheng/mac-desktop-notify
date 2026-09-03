@@ -40,19 +40,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncPanelHotkey()
         // Local API listeners (HTTP/WS on 127.0.0.1, unix socket in App Support).
         APIListenerService.shared.restart()
+        // The observers below pair `queue: .main` with `MainActor.assumeIsolated`:
+        // delivery already lands on the main thread, so handlers run inline
+        // instead of one Task hop later. Keep the queue with the assertion —
+        // `queue: nil` would deliver on the posting thread and trap.
         NotificationCenter.default.addObserver(
             forName: AppSettings.apiSettingsDidChange,
             object: nil,
             queue: .main
         ) { _ in
-            Task { @MainActor in APIListenerService.shared.restart() }
+            MainActor.assumeIsolated { APIListenerService.shared.restart() }
         }
         NotificationCenter.default.addObserver(
             forName: AppSettings.panelHotkeyDidChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.syncPanelHotkey() }
+            MainActor.assumeIsolated { self?.syncPanelHotkey() }
         }
 
         // "重新运行首次引导" from Settings → 关于 lands here.
@@ -61,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 guard let self else { return }
                 if self.onboardingController == nil {
                     self.onboardingController = OnboardingWindowController()
@@ -78,14 +82,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.requestClearAll(reason: "面板") }
+            MainActor.assumeIsolated { self?.requestClearAll(reason: "面板") }
         }
         NotificationCenter.default.addObserver(
             forName: .init("MacDesktopNotify.openSettings"),
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.settingsController?.show() }
+            MainActor.assumeIsolated { self?.settingsController?.show() }
         }
 
         // The app is inert until something calls it. A first run that ends with
@@ -212,12 +216,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
         silenceMenuItem = silence
         // Refresh silence state whenever the menu is about to show.
+        // Same pairing as the observers in `applicationDidFinishLaunching`:
+        // `queue: .main` + `MainActor.assumeIsolated`, inline delivery, no hop.
         NotificationCenter.default.addObserver(
             forName: NotificationManager.unreadCountDidChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.updateStatusIcon() }
+            MainActor.assumeIsolated { self?.updateStatusIcon() }
         }
         updateStatusIcon()
     }

@@ -432,6 +432,27 @@ private struct MessageListView: View {
         // frame's note). The header above costs ~75pt, which is the only fixed
         // tax on the panel's height.
         .frame(maxHeight: max(160, settings.panelHeight - 75))
+        .onAppear(perform: expandFirstHistoryEntry)
+    }
+
+    /// The panel's default state: the newest history entry opens with its body
+    /// already rendered, so arriving at the list reads like arriving at a feed
+    /// — the latest details are on screen and `>` folds them away. The notch
+    /// window is recreated on every presentation, which resets this view's
+    /// state, so the default re-applies per opening while a manual collapse
+    /// still survives for as long as the panel stays up.
+    private func expandFirstHistoryEntry() {
+        guard expandedHistoryID == nil, expandedGroupKey == nil else { return }
+        guard let first = historyEntries.first else { return }
+        switch first {
+        case .single(let notification):
+            expandedHistoryID = notification.id
+        case .grouped(let key, let items):
+            // Both levels open when the newest message lives inside a group:
+            // the cluster's rows, and the newest row's body underneath them.
+            expandedGroupKey = key
+            expandedHistoryID = items.first?.id
+        }
     }
 
     /// Newest-first history with same-group runs collapsed. A group only
@@ -669,8 +690,8 @@ private struct HistoryRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Header-only tap, and no Button wrapper: a Button's label
-            // swallows clicks for every control inside it, which left the
-            // delete button and the action row below dead in the water.
+            // swallows clicks for every control inside it, which would kill
+            // the delete button embedded here and the action row below.
             HStack(alignment: .top, spacing: 9) {
                 Image(systemName: notification.urgency.symbolName)
                     .font(.system(size: 10, weight: .bold))
@@ -688,6 +709,25 @@ private struct HistoryRow: View {
                                 .frame(width: 5, height: 5)
                                 .accessibilityHidden(true)
                         }
+                        // Delete lives beside the title, not at the end of the
+                        // body: one click from the collapsed state, no
+                        // expand-then-scroll-to-the-bottom round trip. It is
+                        // reachable precisely because the header toggles via
+                        // onTapGesture instead of a Button wrapper.
+                        Button {
+                            manager.removeHistory(id: notification.id)
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white.opacity(hovering ? 0.85 : 0.55))
+                                .frame(width: 20, height: 20)
+                        }
+                        .buttonStyle(PanelIconButtonStyle())
+                        .help("从历史中删除这条消息")
+                        // The header below folds its children into one element,
+                        // which would swallow the button; delete stays reachable
+                        // through the header's named accessibility action instead.
+                        .accessibilityHidden(true)
                     }
                     if !isExpanded, let previewText {
                         Text(previewText)
@@ -719,6 +759,9 @@ private struct HistoryRow: View {
             .accessibilityLabel("\(isUnread ? "未读消息" : "消息")：\(notification.title)")
             .accessibilityHint(isExpanded ? "收起正文" : "展开正文")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction(named: "删除这条消息") {
+                manager.removeHistory(id: notification.id)
+            }
 
             if isExpanded {
                 NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
@@ -726,19 +769,6 @@ private struct HistoryRow: View {
                     ActionRow(actions: notification.actions) { action, comment in
                         manager.performAction(action, for: notification, comment: comment)
                     }
-                }
-                HStack {
-                    Spacer()
-                    Button {
-                        manager.removeHistory(id: notification.id)
-                    } label: {
-                        Label("删除这条", systemImage: "trash")
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.75))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("从历史中删除这条消息")
-                    .accessibilityLabel("删除历史消息 \(notification.title)")
                 }
             }
         }
@@ -749,11 +779,31 @@ private struct HistoryRow: View {
     }
 
     /// Collapsed preview renders inline Markdown instead of showing raw source
-    /// asterisks. A message with no body shows no preview rather than a
-    /// placeholder like "无正文".
+    /// asterisks. Fenced code blocks are skipped entirely: log dumps read as
+    /// noise two lines at a time, and their ``` markers would leak into the
+    /// preview as literal backticks. A message with no prose (or no body at
+    /// all) shows no preview rather than a placeholder like "无正文".
     private var previewText: AttributedString? {
         guard !notification.bodyMarkdown.isEmpty else { return nil }
-        let flat = notification.bodyMarkdown.replacingOccurrences(of: "\n", with: " ")
+        var proseLines: [String] = []
+        var inCode = false
+        // Same CRLF normalization as `MarkdownRenderer.parse`, so a body pushed
+        // from Windows-flavored tools does not litter the preview with \r.
+        let lines = notification.bodyMarkdown
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n")
+        for line in lines {
+            if line.hasPrefix("```") {
+                inCode.toggle()
+            } else if !inCode {
+                proseLines.append(line)
+            }
+        }
+        let flat = proseLines
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !flat.isEmpty else { return nil }
         return MarkdownCache.shared.inline(flat)
     }
 }

@@ -339,6 +339,13 @@ final class NotchPresenter: NotchPresenting {
     }
 
     /// Anything that can change the fullscreen answer without the pointer moving.
+    ///
+    /// Every registration pairs `queue: .main` with `MainActor.assumeIsolated`
+    /// so handlers run inline on delivery — no Task hop. The queue and the
+    /// assertion are a contract: `queue: nil` would deliver on the posting
+    /// thread and trap. (The NSEvent monitors in `installMouseMonitors` are a
+    /// different beast — global taps fire off-main, and their Task bridges are
+    /// load-bearing; do not "simplify" them the same way.)
     private func installInvalidationObservers() {
         let workspace = NSWorkspace.shared.notificationCenter
         let appCenter = NotificationCenter.default
@@ -350,7 +357,7 @@ final class NotchPresenter: NotchPresenting {
         ]
         for name in names {
             invalidationObservers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.fullscreenResult = nil }
+                MainActor.assumeIsolated { self?.fullscreenResult = nil }
             })
         }
         invalidationObservers.append(appCenter.addObserver(
@@ -358,21 +365,21 @@ final class NotchPresenter: NotchPresenting {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.applySharingType() }
+            MainActor.assumeIsolated { self?.applySharingType() }
         })
         invalidationObservers.append(appCenter.addObserver(
             forName: AppSettings.summaryRoutingDidChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.reapplyDisplayState() }
+            MainActor.assumeIsolated { self?.reapplyDisplayState() }
         })
         invalidationObservers.append(appCenter.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 self?.fullscreenResult = nil
                 // A display was added, removed, or resized. Instances follow the
                 // new set, and whatever was showing has to be placed again.
@@ -514,7 +521,7 @@ final class NotchPresenter: NotchPresenting {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.syncCalibrationOverlay() }
+            MainActor.assumeIsolated { self?.syncCalibrationOverlay() }
         }
     }
 

@@ -118,13 +118,19 @@ final class PresenceMonitor {
         return session["CGSSessionScreenIsLocked"] as? Bool ?? false
     }
 
+    // Both helpers register with `queue: .main` and bridge into the actor with
+    // `MainActor.assumeIsolated`: delivery already lands on the main thread, so
+    // the handler runs inline instead of one Task hop later. The queue and the
+    // assertion are a contract — if the registration ever drops to `queue: nil`
+    // (synchronous delivery on the posting thread), the trap is the loud
+    // failure you want.
     private func observeDistributed(_ name: String, _ source: AwaySource, active: Bool) {
         let token = distributed.addObserver(
             forName: NSNotification.Name(name),
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.setActive(active, for: source) }
+            MainActor.assumeIsolated { self?.setActive(active, for: source) }
         }
         distributedObservers.append(token)
     }
@@ -134,13 +140,13 @@ final class PresenceMonitor {
             // Wake needs a re-read: the machine may resume into a locked session,
             // and nothing else will tell us.
             if name == NSWorkspace.didWakeNotification {
-                Task { @MainActor [weak self] in
+                MainActor.assumeIsolated {
                     self?.setActive(active, for: source)
                     self?.refreshFromSystem()
                 }
                 return
             }
-            Task { @MainActor [weak self] in self?.setActive(active, for: source) }
+            MainActor.assumeIsolated { self?.setActive(active, for: source) }
         }
         workspaceObservers.append(token)
     }

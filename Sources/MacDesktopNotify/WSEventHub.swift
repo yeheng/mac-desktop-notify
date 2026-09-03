@@ -15,11 +15,17 @@ final class WSEventHub {
     init(manager: NotificationManager) {
         self.manager = manager
         let center = NotificationCenter.default
+        // Both observers register with `queue: .main` and bridge into the actor
+        // with `MainActor.assumeIsolated`: the handler runs inline on delivery
+        // instead of one Task hop later. `Notification` is not Sendable, so its
+        // payload is still unpacked before the value enters the @MainActor
+        // closure — the isolation boundary moved from the old Task hop to
+        // closure formation, but the discipline is the same.
         observers = [
             center.addObserver(
                 forName: NotificationManager.unreadCountDidChange, object: nil, queue: .main
             ) { [weak self] _ in
-                Task { @MainActor [weak self] in
+                MainActor.assumeIsolated {
                     guard let self else { return }
                     self.broadcast(["type": "unreadCount", "count": self.manager.unreadCount])
                 }
@@ -27,10 +33,8 @@ final class WSEventHub {
             center.addObserver(
                 forName: NotificationActionHandler.ackDidRecord, object: nil, queue: .main
             ) { [weak self] notification in
-                // `Notification` is not Sendable, so the payload is unpacked
-                // before hopping to the main actor.
                 let ack = notification.userInfo?["ack"] as? NotificationAck
-                Task { @MainActor [weak self, ack] in
+                MainActor.assumeIsolated {
                     guard let self, let ack else { return }
                     self.broadcast([
                         "type": "ack",
