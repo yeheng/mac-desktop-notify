@@ -122,7 +122,10 @@ final class APIListenerService {
                 _ = try await server.start()
                 guard socketServer === server else { return }
                 // NWListener has no permission parameter; tighten the file
-                // the kernel just created for us.
+                // the kernel just created for us. Between `.ready` and this
+                // chmod the file sits at the process umask's default (usually
+                // 0644 for other-local users): an accepted window — this is a
+                // single-user machine and the gap is milliseconds wide.
                 try? FileManager.default.setAttributes(
                     [.posixPermissions: 0o600], ofItemAtPath: socketPath
                 )

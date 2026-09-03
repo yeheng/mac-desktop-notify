@@ -91,11 +91,51 @@ enum HTTPCodec {
         switch status {
         case 200: "OK"
         case 400: "Bad Request"
+        case 403: "Forbidden"
         case 404: "Not Found"
         case 405: "Method Not Allowed"
         case 413: "Payload Too Large"
         case 101: "Switching Protocols"
         default: "Status \(status)"
+        }
+    }
+
+    // MARK: Origin checks (DNS-rebinding / drive-by browser defense)
+
+    /// Whether a Host header names this machine. Absent means a non-browser
+    /// client (curl on a unix socket, HTTP/1.0 style) and is allowed; anything
+    /// but the exact loopback names is not — the check is what turns "bound to
+    /// 127.0.0.1" into "not reachable through a rebindable hostname".
+    ///
+    /// The port suffix is stripped; brackets stay for IPv6 (`[::1]:4770` →
+    /// `[::1]`). Comparison is case-insensitive (RFC 7230 §5.4).
+    static func isLocalHost(hostHeader: String?) -> Bool {
+        guard let hostHeader, !hostHeader.isEmpty else { return true }
+        var host = hostHeader.lowercased()
+        if host.hasPrefix("[") {
+            if let close = host.firstIndex(of: "]") {
+                host = String(host[host.startIndex...close])
+            }
+        } else if let colon = host.firstIndex(of: ":") {
+            host = String(host[..<colon])
+        }
+        return host == "127.0.0.1" || host == "localhost" || host == "[::1]"
+    }
+
+    /// Whether an `Origin` header may upgrade to a WebSocket. Browsers attach
+    /// it to every cross-origin request and forbid forging it, so a value
+    /// outside this set is a web page poking at the local port. Local HTML
+    /// dashboards run from `file://`, hence its presence in the set.
+    /// Non-browser clients send no Origin at all and never reach this check.
+    static func isAllowedOrigin(_ origin: String) -> Bool {
+        switch origin.lowercased() {
+        case "http://127.0.0.1", "http://localhost",
+             "https://127.0.0.1", "https://localhost",
+             "ws://127.0.0.1", "ws://localhost",
+             "file://":
+            true
+        default:
+            false
         }
     }
 }

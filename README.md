@@ -228,6 +228,8 @@ open 'notch-notify://clear?group=ci-build'
 | HTTP | 关（设置中开启） | `http://127.0.0.1:4770` |
 | WebSocket | 随 HTTP 一同开启 | `ws://127.0.0.1:4770/v1/events` |
 
+仅绑定本机地址并不足以挡住浏览器：网页可以直连 `127.0.0.1` 发起 WebSocket 或免预检 POST，DNS rebinding 还能把恶意域名解析到 127.0.0.1。因此服务端会校验每个请求的 Host 与每次 WS 升级的 Origin，只放行本机取值（其余返回 403），DNS rebinding 与网页旁路请求由此失效；Unix Socket 用户不带这些头，不受影响。
+
 ### 端点
 
 | 方法 | 路径 | 说明 |

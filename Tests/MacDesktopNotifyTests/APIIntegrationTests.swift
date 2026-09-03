@@ -109,6 +109,67 @@ final class APIIntegrationTests: XCTestCase {
         XCTAssertTrue(text.hasPrefix("HTTP/1.1 200"), text)
     }
 
+    // MARK: - Host validation (DNS-rebinding defense)
+
+    /// Sends a hand-built request head over TCP and returns the whole reply,
+    /// so tests can send headers URLSession would never emit.
+    private func rawRequest(port: UInt16, head: String) async throws -> String {
+        let reader = ReplyReader()
+        let connection = NWConnection(
+            to: NWEndpoint.hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!),
+            using: .tcp
+        )
+        connection.stateUpdateHandler = { state in
+            if case .ready = state {
+                connection.send(content: Data(head.utf8), completion: .contentProcessed { _ in })
+            }
+        }
+        connection.start(queue: .global())
+        reader.read(connection)
+        let reply = await reader.waitForReply(seconds: 5)
+        connection.cancel()
+        return String(decoding: reply, as: UTF8.self)
+    }
+
+    /// A Host that names anything but this machine is a rebinding attempt or
+    /// a drive-by browser request: 403, and the request never reaches the
+    /// router — no notification appears (spec §8).
+    func testForeignHostRequestIs403AndNotRouted() async throws {
+        let base = try await startServer()
+        let body = "{\"title\":\"rebind\"}"
+        let reply = try await rawRequest(
+            port: UInt16(base.port!),
+            head: "POST /v1/push HTTP/1.1\r\nHost: evil.example.com\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"
+        )
+        XCTAssertTrue(reply.hasPrefix("HTTP/1.1 403"), reply)
+        let responseBody = reply.split(separator: "\r\n\r\n", maxSplits: 1).last.map(String.init) ?? ""
+        let payload = try JSONSerialization.jsonObject(with: Data(responseBody.utf8)) as! [String: Any]
+        XCTAssertEqual(payload["error"] as? String, "非本机 Host 请求被拒绝")
+        XCTAssertNil(manager.current)
+    }
+
+    /// The suffix must not satisfy the check: `sub.localhost.evil.com` is a
+    /// different host from `localhost`.
+    func testSuffixLookalikeHostIs403() async throws {
+        let base = try await startServer()
+        let reply = try await rawRequest(
+            port: UInt16(base.port!),
+            head: "GET /v1/status HTTP/1.1\r\nHost: sub.localhost.evil.com\r\n\r\n"
+        )
+        XCTAssertTrue(reply.hasPrefix("HTTP/1.1 403"), reply)
+    }
+
+    /// An HTTP/1.0 request carries no Host and must be served as before —
+    /// curl on a unix socket and scripts speak exactly this shape.
+    func testHostlessHTTP10RequestIsServed() async throws {
+        let base = try await startServer()
+        let reply = try await rawRequest(
+            port: UInt16(base.port!),
+            head: "GET /v1/status HTTP/1.0\r\n\r\n"
+        )
+        XCTAssertTrue(reply.hasPrefix("HTTP/1.1 200"), reply)
+    }
+
     // MARK: - WebSocket
 
     /// Starts a server whose `/v1/events` upgrades hand off to a `WSEventHub`
@@ -367,6 +428,44 @@ final class APIIntegrationTests: XCTestCase {
         let head = try await client.waitForHandshake()
         XCTAssertTrue(head.hasPrefix("HTTP/1.1 400"), head)
     }
+
+    // MARK: WebSocket browser-origin defense (Origin / version gates)
+
+    /// A cross-origin upgrade from a browser page: 403 instead of 101, so a
+    /// website cannot subscribe to (or command through) the events socket.
+    func testWSForeignOriginUpgradeIs403() async throws {
+        let (base, _) = try await startServerWithHub()
+        let client = RawWSClient.connect(port: base.port!, origin: "http://evil.example.com")
+        defer { client.cancel() }
+
+        let head = try await client.waitForHandshake()
+        XCTAssertTrue(head.hasPrefix("HTTP/1.1 403"), head)
+        XCTAssertFalse(head.contains("Sec-WebSocket-Accept"), head)
+    }
+
+    /// A same-origin upgrade from a browser dashboard served off the same
+    /// port's origin is legitimate: 101.
+    func testWSLocalOriginUpgradeSucceeds() async throws {
+        let (base, _) = try await startServerWithHub()
+        let client = RawWSClient.connect(port: base.port!, origin: "http://127.0.0.1")
+        defer { client.cancel() }
+
+        let head = try await client.waitForHandshake()
+        XCTAssertTrue(head.hasPrefix("HTTP/1.1 101"), head)
+        XCTAssertTrue(head.contains("Sec-WebSocket-Accept"), head)
+    }
+
+    /// The only RFC 6455 version this server speaks is 13: anything else is
+    /// declined before the handshake math runs.
+    func testWSWrongVersionIsDeclined400() async throws {
+        let (base, _) = try await startServerWithHub()
+        let client = RawWSClient.connect(port: base.port!, version: "8")
+        defer { client.cancel() }
+
+        let head = try await client.waitForHandshake()
+        XCTAssertTrue(head.hasPrefix("HTTP/1.1 400"), head)
+        XCTAssertFalse(head.contains("Sec-WebSocket-Accept"), head)
+    }
 }
 
 /// Test client for one request over a socket URLSession cannot speak: keeps
@@ -434,8 +533,14 @@ private final class RawWSClient: @unchecked Sendable {
 
     /// Connects and performs the RFC 6455 handshake as soon as the socket is
     /// ready. `key` is sent verbatim: pass an invalid string or nil to test the
-    /// server's handshake validation.
-    static func connect(port: Int, key: String? = "dGhlIHNhbXBsZSBub25jZQ==") -> RawWSClient {
+    /// server's handshake validation. `origin` and `version` override what a
+    /// well-behaved client would send, to exercise the upgrade gates.
+    static func connect(
+        port: Int,
+        key: String? = "dGhlIHNhbXBsZSBub25jZQ==",
+        origin: String? = nil,
+        version: String? = "13"
+    ) -> RawWSClient {
         let connection = NWConnection(
             to: NWEndpoint.hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: UInt16(clamping: port))!),
             using: .tcp
@@ -444,8 +549,10 @@ private final class RawWSClient: @unchecked Sendable {
         connection.stateUpdateHandler = { state in
             guard case .ready = state else { return }
             var head = "GET /v1/events HTTP/1.1\r\nHost: 127.0.0.1\r\n"
-            head += "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"
+            head += "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+            if let version { head += "Sec-WebSocket-Version: \(version)\r\n" }
             if let key { head += "Sec-WebSocket-Key: \(key)\r\n" }
+            if let origin { head += "Origin: \(origin)\r\n" }
             head += "\r\n"
             connection.send(content: Data(head.utf8), completion: .contentProcessed { _ in })
         }

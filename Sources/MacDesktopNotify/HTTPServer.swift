@@ -174,6 +174,18 @@ private final class ConnectionHandler: @unchecked Sendable {
         }
         guard let head else { return }
 
+        // Loopback binding alone is not access control once browsers enter
+        // the picture: DNS rebinding turns an attacker's hostname into
+        // 127.0.0.1, and the Host header is the only thing that still names
+        // the intended host. Everything but the local names is refused before
+        // any routing or upgrade — the same send-and-close shape the 413
+        // below uses (spec §8).
+        if !HTTPCodec.isLocalHost(hostHeader: head.headers["host"]) {
+            let body = Data("{\"error\":\"非本机 Host 请求被拒绝\"}".utf8)
+            sendAndClose(HTTPCodec.response(status: 403, reason: HTTPCodec.reason(for: 403), body: body))
+            return
+        }
+
         if head.contentLength > HTTPCodec.maxBodyLength {
             let body = Data("{\"error\":\"请求体过大\"}".utf8)
             sendAndClose(HTTPCodec.response(status: 413, reason: "Payload Too Large", body: body))
@@ -181,6 +193,22 @@ private final class ConnectionHandler: @unchecked Sendable {
         }
 
         if let onUpgrade, head.headers["upgrade"]?.lowercased().contains("websocket") == true {
+            // WS upgrades have no same-origin gate in browsers, so any web
+            // page can attempt one. A browser cannot forge `Origin`, making
+            // it the discriminator: absent (non-browser clients) or local is
+            // fine, anything else is declined here rather than in WSSession —
+            // the answer goes out before the handshake math ever runs.
+            if let origin = head.headers["origin"], !HTTPCodec.isAllowedOrigin(origin) {
+                let body = Data("{\"error\":\"非本机 Origin，拒绝升级\"}".utf8)
+                sendAndClose(HTTPCodec.response(status: 403, reason: HTTPCodec.reason(for: 403), body: body))
+                return
+            }
+            // RFC 6455 §4.2.1: 13 is the only version this server speaks.
+            if let version = head.headers["sec-websocket-version"], version != "13" {
+                let body = Data("{\"error\":\"Sec-WebSocket-Version 不受支持\"}".utf8)
+                sendAndClose(HTTPCodec.response(status: 400, reason: HTTPCodec.reason(for: 400), body: body))
+                return
+            }
             // The hook owns MainActor state (it builds a `WSSession` and
             // registers it with a hub), so the decision runs there instead of
             // on this queue. Nothing else happens on this connection while it

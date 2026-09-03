@@ -99,10 +99,74 @@ final class HTTPCodecTests: XCTestCase {
     func testReasonPhrases() {
         XCTAssertEqual(HTTPCodec.reason(for: 200), "OK")
         XCTAssertEqual(HTTPCodec.reason(for: 400), "Bad Request")
+        XCTAssertEqual(HTTPCodec.reason(for: 403), "Forbidden")
         XCTAssertEqual(HTTPCodec.reason(for: 404), "Not Found")
         XCTAssertEqual(HTTPCodec.reason(for: 405), "Method Not Allowed")
         XCTAssertEqual(HTTPCodec.reason(for: 413), "Payload Too Large")
         XCTAssertEqual(HTTPCodec.reason(for: 101), "Switching Protocols")
         XCTAssertEqual(HTTPCodec.reason(for: 418), "Status 418")   // fallback
+    }
+
+    // MARK: - Host validation (DNS-rebinding defense)
+
+    /// No Host header at all — curl on a unix socket or an HTTP/1.0 client —
+    /// is not a browser and poses no rebinding vector: allow.
+    func testAbsentHostIsAllowed() {
+        XCTAssertTrue(HTTPCodec.isLocalHost(hostHeader: nil))
+        XCTAssertTrue(HTTPCodec.isLocalHost(hostHeader: ""))
+    }
+
+    func testLoopbackHostsWithPortsAreAllowed() {
+        XCTAssertTrue(HTTPCodec.isLocalHost(hostHeader: "127.0.0.1:4770"))
+        XCTAssertTrue(HTTPCodec.isLocalHost(hostHeader: "localhost"))
+        XCTAssertTrue(HTTPCodec.isLocalHost(hostHeader: "localhost:4770"))
+        XCTAssertTrue(HTTPCodec.isLocalHost(hostHeader: "[::1]:4770"))
+    }
+
+    /// Host is case-insensitive per RFC 7230 §5.4.
+    func testLocalhostIsMatchedCaseInsensitively() {
+        XCTAssertTrue(HTTPCodec.isLocalHost(hostHeader: "LOCALHOST"))
+        XCTAssertTrue(HTTPCodec.isLocalHost(hostHeader: "LocalHost:4770"))
+    }
+
+    func testForeignHostIsRejected() {
+        XCTAssertFalse(HTTPCodec.isLocalHost(hostHeader: "evil.example.com"))
+        XCTAssertFalse(HTTPCodec.isLocalHost(hostHeader: "evil.example.com:4770"))
+    }
+
+    /// The match must be exact: a suffix that merely ends in an allowed name
+    /// is a different host.
+    func testSuffixLookalikeHostsAreRejected() {
+        XCTAssertFalse(HTTPCodec.isLocalHost(hostHeader: "sub.localhost.evil.com"))
+        XCTAssertFalse(HTTPCodec.isLocalHost(hostHeader: "127.0.0.1.evil.com"))
+        XCTAssertFalse(HTTPCodec.isLocalHost(hostHeader: "localhost.evil.com"))
+        XCTAssertFalse(HTTPCodec.isLocalHost(hostHeader: "notlocalhost"))
+    }
+
+    // MARK: - Origin validation (drive-by browser defense)
+
+    func testLocalOriginsAreAllowed() {
+        for origin in [
+            "http://127.0.0.1", "http://localhost",
+            "https://127.0.0.1", "https://localhost",
+            "ws://127.0.0.1", "ws://localhost",
+            "file://",
+        ] {
+            XCTAssertTrue(HTTPCodec.isAllowedOrigin(origin), origin)
+        }
+    }
+
+    /// A port on an otherwise-local origin is a different origin: reject.
+    func testLocalOriginWithForeignPortIsRejected() {
+        XCTAssertFalse(HTTPCodec.isAllowedOrigin("http://127.0.0.1:8080"))
+        XCTAssertFalse(HTTPCodec.isAllowedOrigin("http://localhost:4770"))
+    }
+
+    func testForeignOriginsAreRejected() {
+        XCTAssertFalse(HTTPCodec.isAllowedOrigin("http://evil.example.com"))
+        XCTAssertFalse(HTTPCodec.isAllowedOrigin("https://sub.localhost.evil.com"))
+        XCTAssertFalse(HTTPCodec.isAllowedOrigin("ws://evil.example.com"))
+        // Case variation of a local origin is still local.
+        XCTAssertTrue(HTTPCodec.isAllowedOrigin("HTTP://LocalHost"))
     }
 }
