@@ -68,6 +68,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // The panel's trash button and right-click menu route destructive/global
+        // actions through the same paths as the menu bar items: one
+        // confirmation dialog, one settings window.
+        NotificationCenter.default.addObserver(
+            forName: .requestClearAll,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.requestClearAll(reason: "面板") }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .init("MacDesktopNotify.openSettings"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.settingsController?.show() }
+        }
+
         // The app is inert until something calls it. A first run that ends with
         // "now what?" is a first run that ends; the guide makes the first call.
         if !AppSettings.shared.onboardingCompleted {
@@ -232,9 +250,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func quitApp() { NSApplication.shared.terminate(nil) }
 
     /// Clearing deletes the on-disk history too, so every destructive path
-    /// (menu item, ⌘Delete) funnels through one confirmation. The panel's trash
-    /// button has its own inline confirmationDialog; this is the same contract
-    /// for the places that cannot present one.
+    /// (panel trash button, right-click menu, menu item, ⌘Delete) funnels
+    /// through this one confirmation. A modal NSAlert owns its window, so it
+    /// survives the panel collapsing mid-confirmation, which the panel's
+    /// former inline confirmationDialog did not.
     private func requestClearAll(reason: String) {
         guard NotificationManager.shared.hasContent else { return }
         let alert = NSAlert()
@@ -243,8 +262,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "清空全部")
         alert.addButton(withTitle: "取消")
-        // Non-activating: raising a regular panel would steal focus from whatever
-        // the user was doing when they pressed the shortcut.
+        // The panel never activates the app, and a modal alert from an inactive
+        // app can end up behind the frontmost app or fail to take key - the
+        // same reason Settings/Onboarding windows call `NSApp.activate`. The
+        // alert is about to run modally anyway; momentary activation is the
+        // price of the user actually seeing the button they must click.
+        NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn {
             NotificationManager.shared.clear()
         }
@@ -255,15 +278,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installShortcutMonitors() {
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Action shortcuts are gated by pointer engagement rather than
+                // app activation (the panel never activates the app), so they
+                // run ahead of the global-shortcuts opt-in gate.
+                if self.handleActionShortcut(event) { return }
                 // Global shortcuts are opt-in: ⌘, / ⌘⇧N / ⌘Delete collide with
                 // Finder and most apps' own menus, so they stay off until enabled.
                 guard AppSettings.shared.globalShortcutsEnabled else { return }
-                _ = self?.handleShortcut(event)
+                _ = self.handleShortcut(event)
             }
         }
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleShortcut(event) == true ? nil : event
+            guard let self else { return event }
+            return (self.handleActionShortcut(event) || self.handleShortcut(event)) ? nil : event
         }
+    }
+
+    /// ⌘1–⌘3 fire the live message's action buttons.
+    ///
+    /// The notch panel is a non-activating panel: clicking it never makes this
+    /// app active, so a keystroke aimed at the panel lands in the *global*
+    /// monitor. Gating on `pointerNearPanel` (pointer on the panel or in the
+    /// island's activation zone) is what makes that safe - a ⌘1 meant for a
+    /// browser's tab bar cannot be stolen while the pointer is nowhere near.
+    private func handleActionShortcut(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command],
+              let index = [18: 0, 19: 1, 20: 2][event.keyCode] else { return false }
+        let manager = NotificationManager.shared
+        guard manager.displayState.isExpanded, manager.pointerNearPanel,
+              let current = manager.current, current.actions.indices.contains(index) else { return false }
+        let action = current.actions[index]
+        IslandHaptics.actionConfirmed()
+        // A button that asks for a comment cannot be fired from the keyboard:
+        // the keystroke has no reason attached. The shortcut opens the field and
+        // focuses it, so the round trip stays "hotkey in, typed reason out".
+        if action.wantsComment {
+            NotificationCenter.default.post(
+                name: .islandActionShortcut,
+                object: nil,
+                userInfo: ["index": index]
+            )
+            return true
+        }
+        manager.performAction(action, for: current)
+        return true
     }
 
     private func handleShortcut(_ event: NSEvent) -> Bool {

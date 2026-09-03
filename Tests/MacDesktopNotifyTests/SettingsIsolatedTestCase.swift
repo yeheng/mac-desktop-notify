@@ -22,6 +22,8 @@ class SettingsIsolatedTestCase: XCTestCase {
         "island.quietMode", "island.ageOutCriticals", "island.onboardingCompleted",
         "island.onboardingPreset", "island.showNotchCalibration", "island.globalPanelHotkeyEnabled",
         "island.apiUnixSocketEnabled", "island.apiHttpEnabled", "island.apiHttpPort",
+        "island.enableHaptics", "island.excludeFromScreenRecording", "island.normalMessagesPeek",
+        "island.miniSummaryOnNotchlessScreens", "island.mirrorSummaryOnAllDisplays",
     ]
 
     /// Suites that must not run against factory defaults override this.

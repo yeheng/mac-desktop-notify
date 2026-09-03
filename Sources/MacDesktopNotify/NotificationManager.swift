@@ -96,7 +96,9 @@ final class NotificationManager {
     private(set) var unreadCount = 0
 
     @ObservationIgnored private var isHovering = false
-    @ObservationIgnored private var pointerNearIsland = false
+    /// Observed: the compact pill brightens while the pointer is inside its
+    /// activation zone, as a pre-expansion cue (see `CompactIslandView`).
+    private(set) var pointerNearIsland = false
     @ObservationIgnored private(set) var compactLeadingWidth: CGFloat = 0
     @ObservationIgnored private(set) var compactTrailingWidth: CGFloat = 0
     @ObservationIgnored private var manualExpanded = false
@@ -169,6 +171,13 @@ final class NotificationManager {
         return unreadCount > 0 ? "\(unreadCount) 条未读" : ""
     }
 
+    /// Whether the compact pill shows the live message's title instead of the
+    /// generic status text. Detailed layout always does; a peek message must,
+    /// because the title *is* the notification - "新消息" would say nothing.
+    var compactShowsMessageTitle: Bool {
+        AppSettings.shared.layoutMode == .detailed || current?.displayPeek == true
+    }
+
     func isRead(_ notification: NotchNotification) -> Bool {
         readIDs.contains(notification.id)
     }
@@ -186,7 +195,16 @@ final class NotificationManager {
     /// "stored, not shown" — never "dropped".
     @discardableResult
     func push(_ notification: NotchNotification) -> PushOutcome {
-        let incoming = collapseGroup(notification)
+        // Resolve the display style once, at the door: the sender's override
+        // wins, the setting fills the gap, and critical never peeks - an urgent
+        // message that only flickered past in the pill would be a lie.
+        var resolved = notification
+        if resolved.urgency == .critical {
+            resolved.displayPeek = false
+        } else {
+            resolved.displayPeek = resolved.displayPeek ?? AppSettings.shared.normalMessagesPeek
+        }
+        let incoming = collapseGroup(resolved)
 
         history.append(incoming)
         if history.count > Self.maxHistoryCount {
@@ -377,6 +395,12 @@ final class NotificationManager {
             collapseTask?.cancel()
             collapseTask = nil
             notePointerPresence()
+            // The zone is larger than the visible pill, so this tick is the
+            // earliest "expansion is armed" signal there is - it lands inside
+            // the hover delay, before the panel appears.
+            if displayState == .compact, hasContent {
+                IslandHaptics.zoneEntered()
+            }
             guard AppSettings.shared.hoverToExpand, hasContent, !displaySuppressed, !hoverSuppressedUntilExit else { return }
             hoverTask?.cancel()
             hoverTask = Task { [weak self] in
@@ -403,6 +427,7 @@ final class NotificationManager {
     /// Clicking the compact island opens the panel immediately, skipping the hover delay.
     func islandClicked() {
         guard !displaySuppressed, hasContent, !displayState.isExpanded else { return }
+        IslandHaptics.actionConfirmed()
         hoverTask?.cancel()
         hoverTask = nil
         hoverSuppressedUntilExit = false
@@ -595,13 +620,23 @@ final class NotificationManager {
     /// A `notch-notify://ack` URL is a loopback: the click is recorded as a receipt
     /// instead of being handed to the system, so the sender can learn what was chosen.
     /// Anything else is opened as before.
-    func performAction(_ action: NotificationAction, for notification: NotchNotification) {
+    func performAction(
+        _ action: NotificationAction,
+        for notification: NotchNotification,
+        comment: String? = nil
+    ) {
         if let ack = URLNotificationParser.parseAck(action.url) {
+            let trimmed = comment?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let receipt = NotificationAck(
                 token: ack.token,
                 label: ack.label.isEmpty ? action.label : ack.label,
                 notificationID: notification.id,
-                decidedAt: Date()
+                decidedAt: Date(),
+                // A blank comment is recorded as no comment: the sender asked
+                // for a reason and did not get one, which is information too.
+                comment: trimmed.isEmpty
+                    ? nil
+                    : String(trimmed.prefix(NotificationAckStore.maxCommentLength))
             )
             if let ackWriter {
                 ackWriter(receipt)
@@ -654,10 +689,18 @@ final class NotificationManager {
 
     /// The only way a message becomes live. It publishes the message and its dwell
     /// budget as one value, then hands the countdown to `reconcileDwell`.
+    /// How long a peek message holds the pill when the sender gave no timeout.
+    /// Long enough to read a title, short enough that a chatty sender cannot
+    /// turn the notch into a ticker.
+    static let peekDwellSeconds: TimeInterval = 3
+
     private func beginPresenting(_ item: NotchNotification, as state: IslandDisplayState) {
+        let defaultDwell = item.displayPeek == true
+            ? Self.peekDwellSeconds
+            : AppSettings.shared.messageDwellSeconds
         let budget: Duration? = item.urgency == .critical
             ? nil
-            : .seconds(max(0.1, item.timeout ?? AppSettings.shared.messageDwellSeconds))
+            : .seconds(max(0.1, item.timeout ?? defaultDwell))
         // Read state is about what the user could have seen, not what the state
         // machine surfaced. A message rotating into an already-open panel is
         // visible immediately; anywhere else it stays unread until the panel is
@@ -690,7 +733,12 @@ final class NotificationManager {
             return nil
         }
         beginPresenting(next, as: next.urgency == .critical ? .blockingExpanded : .transientExpanded)
-        if autoExpand {
+        if autoExpand, next.displayPeek == true {
+            // The peek tier: the message lives its (short) dwell in the compact
+            // pill - title visible, panel untouched, unread still accruing.
+            displayState = .compact
+            presentCompact()
+        } else if autoExpand {
             presentExpanded(marksRead: false)
         }
         return next
@@ -972,7 +1020,9 @@ final class NotificationManager {
         return false
     }
 
-    @ObservationIgnored private var quietOverrideUntil: Date?
+    /// Observed so the panel's context menu can label 静默/取消静默 correctly
+    /// without a manual refresh pass.
+    private(set) var quietOverrideUntil: Date?
 
     /// The override routes through `isQuiet`, so every existing gate
     /// (withholding, no-sound) follows one rule instead of a second flag

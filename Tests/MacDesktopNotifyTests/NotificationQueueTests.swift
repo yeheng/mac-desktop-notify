@@ -265,6 +265,63 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.displayState, .manualExpanded)
     }
 
+    // MARK: - Sneak Peek (display=peek)
+
+    /// The peek tier: a peek-flagged message lives its dwell in the compact
+    /// pill even though auto-expand is on — the panel never opens on its own.
+    func testPeekPushStaysCompactWhenAutoExpandEnabled() {
+        let m = NotificationManager()
+        m.push(NotchNotification(title: "p", bodyMarkdown: "", urgency: .normal, timeout: 60, displayPeek: true))
+        XCTAssertEqual(m.displayState, .compact, "a peek message must not open the panel")
+        XCTAssertEqual(m.current?.displayPeek, true)
+    }
+
+    /// Critical never peeks: an urgent message that only flickered past in the
+    /// pill would be a lie. Resolution forces displayPeek off at the door.
+    func testCriticalIgnoresPeekAndBlocks() {
+        let m = NotificationManager()
+        m.push(NotchNotification(title: "c", bodyMarkdown: "", urgency: .critical, timeout: nil, displayPeek: true))
+        XCTAssertEqual(m.displayState, .blockingExpanded)
+        XCTAssertEqual(m.current?.displayPeek, false, "critical strips the peek flag at resolution")
+    }
+
+    /// The setting fills the gap for messages that arrive without an explicit
+    /// display parameter; a sender's override still wins.
+    func testNormalMessagesPeekSettingResolvesDisplayAtPush() {
+        let settings = AppSettings.shared
+        let old = settings.normalMessagesPeek
+        settings.normalMessagesPeek = true
+        defer { settings.normalMessagesPeek = old }
+
+        let m = NotificationManager()
+        m.push(make("a"))   // no explicit displayPeek → inherits the setting
+        XCTAssertEqual(m.current?.displayPeek, true)
+        XCTAssertEqual(m.displayState, .compact)
+
+        // A fresh run isolates the override from the first message's state.
+        let m2 = NotificationManager()
+        m2.push(NotchNotification(title: "b", bodyMarkdown: "", urgency: .normal, timeout: 60, displayPeek: false))
+        XCTAssertEqual(m2.displayState, .transientExpanded, "an explicit display=expand overrides the setting")
+    }
+
+    /// Peek dwell: when the sender left the timeout to the app, a peek message
+    /// holds the pill for the short peek budget, not the full dwell setting.
+    func testPeekDefaultDwellIsThreeSeconds() {
+        let settings = AppSettings.shared
+        let old = settings.messageDwellSeconds
+        settings.messageDwellSeconds = 20
+        defer { settings.messageDwellSeconds = old }
+
+        let m = NotificationManager()
+        m.push(NotchNotification(title: "p", bodyMarkdown: "", urgency: .normal, timeout: nil, displayPeek: true))
+        XCTAssertEqual(m.presentation?.remaining, .seconds(3))
+
+        // A fresh run isolates the non-peek dwell from the peek message's state.
+        let m2 = NotificationManager()
+        m2.push(NotchNotification(title: "n", bodyMarkdown: "", urgency: .normal, timeout: nil, displayPeek: false))
+        XCTAssertEqual(m2.presentation?.remaining, .seconds(20), "a non-peek message keeps the dwell setting")
+    }
+
     // MARK: - List model
 
     func testPastHistoryExcludesCurrentAndQueued() {

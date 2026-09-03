@@ -23,6 +23,9 @@ final class AppSettings {
     static let shared = AppSettings()
     /// Posted when the calibration toggle flips, so the overlay can follow it.
     static let calibrationDidChange = Notification.Name("MacDesktopNotify.calibrationDidChange")
+    /// Posted when the screen-recording exclusion flips, so live notch windows
+    /// can re-apply their `sharingType` without waiting for the next presentation.
+    static let screenRecordingDidChange = Notification.Name("MacDesktopNotify.screenRecordingDidChange")
     /// Posted when the ⌃⌥N registration should follow its toggle.
     static let panelHotkeyDidChange = Notification.Name("MacDesktopNotify.panelHotkeyDidChange")
     /// Posted when any API setting flips; APIListenerService restarts on it.
@@ -31,6 +34,10 @@ final class AppSettings {
     private func notifyAPIChange() {
         NotificationCenter.default.post(name: Self.apiSettingsDidChange, object: nil)
     }
+    /// Posted when where the summary is drawn changes (mini bar on notchless
+    /// screens, mirroring across displays), so live windows follow the setting
+    /// instead of waiting for the next presentation.
+    static let summaryRoutingDidChange = Notification.Name("MacDesktopNotify.summaryRoutingDidChange")
 
     @ObservationIgnored private let defaults: UserDefaults
 
@@ -38,9 +45,43 @@ final class AppSettings {
     var hoverDelayMilliseconds: Double { didSet { save(hoverDelayMilliseconds, key: Keys.hoverDelayMilliseconds) } }
     var autoCollapseOnLeave: Bool { didSet { save(autoCollapseOnLeave, key: Keys.autoCollapseOnLeave) } }
     var autoExpandOnMessage: Bool { didSet { save(autoExpandOnMessage, key: Keys.autoExpandOnMessage) } }
+    /// When on, normal/low messages default to the peek tier: the compact pill
+    /// shows their title for a few seconds instead of opening the panel.
+    /// Critical messages always expand; a push URL can override per message
+    /// with `display=expand` / `display=peek`.
+    var normalMessagesPeek: Bool { didSet { save(normalMessagesPeek, key: Keys.normalMessagesPeek) } }
     var messageDwellSeconds: Double { didSet { save(messageDwellSeconds, key: Keys.messageDwellSeconds) } }
     var hideWhenIdle: Bool { didSet { save(hideWhenIdle, key: Keys.hideWhenIdle) } }
     var hideInFullscreen: Bool { didSet { save(hideInFullscreen, key: Keys.hideInFullscreen) } }
+    /// Trackpad haptic ticks for zone entry, click-to-open and swipe gestures.
+    var enableHaptics: Bool { didSet { save(enableHaptics, key: Keys.enableHaptics) } }
+    /// Excludes the island from screen capture (sharing / recording / screenshots),
+    /// so meeting demos never leak pending approvals or internal alerts.
+    var excludeFromScreenRecording: Bool {
+        didSet {
+            save(excludeFromScreenRecording, key: Keys.excludeFromScreenRecording)
+            NotificationCenter.default.post(name: Self.screenRecordingDidChange, object: nil)
+        }
+    }
+    /// Screens without a notch get no compact pill from the kit - it hides the
+    /// compact state on floating-style displays - which would leave those users
+    /// without an unread count or status line. This draws a small floating bar
+    /// instead. Off means a notchless screen stays empty until a panel expands.
+    var miniSummaryOnNotchlessScreens: Bool {
+        didSet {
+            save(miniSummaryOnNotchlessScreens, key: Keys.miniSummaryOnNotchlessScreens)
+            NotificationCenter.default.post(name: Self.summaryRoutingDidChange, object: nil)
+        }
+    }
+    /// Show the summary on every display rather than only the pointer's. The
+    /// expanded panel still belongs to one screen, so there is never more than
+    /// one panel to interact with.
+    var mirrorSummaryOnAllDisplays: Bool {
+        didSet {
+            save(mirrorSummaryOnAllDisplays, key: Keys.mirrorSummaryOnAllDisplays)
+            NotificationCenter.default.post(name: Self.summaryRoutingDidChange, object: nil)
+        }
+    }
     var layoutMode: IslandLayoutMode { didSet { save(layoutMode.rawValue, key: Keys.layoutMode) } }
     var contentFontSize: Double { didSet { save(contentFontSize, key: Keys.contentFontSize) } }
     var panelWidth: Double { didSet { save(panelWidth, key: Keys.panelWidth) } }
@@ -113,9 +154,14 @@ final class AppSettings {
         hoverDelayMilliseconds = defaults.object(forKey: Keys.hoverDelayMilliseconds) as? Double ?? 150
         autoCollapseOnLeave = defaults.object(forKey: Keys.autoCollapseOnLeave) as? Bool ?? true
         autoExpandOnMessage = defaults.object(forKey: Keys.autoExpandOnMessage) as? Bool ?? true
+        normalMessagesPeek = defaults.object(forKey: Keys.normalMessagesPeek) as? Bool ?? false
         messageDwellSeconds = defaults.object(forKey: Keys.messageDwellSeconds) as? Double ?? 5
         hideWhenIdle = defaults.object(forKey: Keys.hideWhenIdle) as? Bool ?? true
         hideInFullscreen = defaults.object(forKey: Keys.hideInFullscreen) as? Bool ?? false
+        enableHaptics = defaults.object(forKey: Keys.enableHaptics) as? Bool ?? true
+        excludeFromScreenRecording = defaults.object(forKey: Keys.excludeFromScreenRecording) as? Bool ?? true
+        miniSummaryOnNotchlessScreens = defaults.object(forKey: Keys.miniSummaryOnNotchlessScreens) as? Bool ?? true
+        mirrorSummaryOnAllDisplays = defaults.object(forKey: Keys.mirrorSummaryOnAllDisplays) as? Bool ?? false
         layoutMode = IslandLayoutMode(rawValue: defaults.string(forKey: Keys.layoutMode) ?? "normal") ?? .normal
         contentFontSize = defaults.object(forKey: Keys.contentFontSize) as? Double ?? 12
         panelWidth = defaults.object(forKey: Keys.panelWidth) as? Double ?? 460
@@ -148,8 +194,10 @@ final class AppSettings {
     func resetAllForTesting() {
         for key in [
             Keys.hoverToExpand, Keys.hoverDelayMilliseconds, Keys.autoCollapseOnLeave,
-            Keys.autoExpandOnMessage, Keys.messageDwellSeconds, Keys.hideWhenIdle,
-            Keys.hideInFullscreen, Keys.layoutMode, Keys.contentFontSize,
+            Keys.autoExpandOnMessage, Keys.normalMessagesPeek, Keys.messageDwellSeconds, Keys.hideWhenIdle,
+            Keys.hideInFullscreen, Keys.enableHaptics, Keys.excludeFromScreenRecording,
+            Keys.miniSummaryOnNotchlessScreens, Keys.mirrorSummaryOnAllDisplays,
+            Keys.layoutMode, Keys.contentFontSize,
             Keys.panelWidth, Keys.panelHeight, Keys.notchWidthOffset, Keys.notchHeightOffset,
             Keys.showUrgency, Keys.showHistoryCount, Keys.soundEnabled,
             Keys.launchAtLogin, Keys.globalShortcutsEnabled, Keys.persistHistory,
@@ -179,9 +227,14 @@ final class AppSettings {
         static let hoverDelayMilliseconds = "island.hoverDelayMilliseconds"
         static let autoCollapseOnLeave = "island.autoCollapseOnLeave"
         static let autoExpandOnMessage = "island.autoExpandOnMessage"
+        static let normalMessagesPeek = "island.normalMessagesPeek"
         static let messageDwellSeconds = "island.messageDwellSeconds"
         static let hideWhenIdle = "island.hideWhenIdle"
         static let hideInFullscreen = "island.hideInFullscreen"
+        static let enableHaptics = "island.enableHaptics"
+        static let excludeFromScreenRecording = "island.excludeFromScreenRecording"
+        static let miniSummaryOnNotchlessScreens = "island.miniSummaryOnNotchlessScreens"
+        static let mirrorSummaryOnAllDisplays = "island.mirrorSummaryOnAllDisplays"
         static let layoutMode = "island.layoutMode"
         static let contentFontSize = "island.contentFontSize"
         static let panelWidth = "island.panelWidth"
