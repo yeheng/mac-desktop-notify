@@ -64,9 +64,30 @@ final class AppSettings {
     var onboardingPreset: String? {
         didSet { save(onboardingPreset, key: Keys.onboardingPreset) }
     }
-    var apiUnixSocketEnabled: Bool { didSet { save(apiUnixSocketEnabled, key: Keys.apiUnixSocketEnabled); notifyAPIChange() } }
-    var apiHttpEnabled: Bool { didSet { save(apiHttpEnabled, key: Keys.apiHttpEnabled); notifyAPIChange() } }
-    var apiHttpPort: Int { didSet { save(apiHttpPort, key: Keys.apiHttpPort); notifyAPIChange() } }
+    /// Same-value assignments are ignored: the port TextField writes on
+    /// every keystroke, and without this guard each write would rebind
+    /// both listeners via `apiSettingsDidChange`.
+    var apiUnixSocketEnabled: Bool {
+        didSet {
+            guard apiUnixSocketEnabled != oldValue else { return }
+            save(apiUnixSocketEnabled, key: Keys.apiUnixSocketEnabled)
+            notifyAPIChange()
+        }
+    }
+    var apiHttpEnabled: Bool {
+        didSet {
+            guard apiHttpEnabled != oldValue else { return }
+            save(apiHttpEnabled, key: Keys.apiHttpEnabled)
+            notifyAPIChange()
+        }
+    }
+    var apiHttpPort: Int {
+        didSet {
+            guard apiHttpPort != oldValue else { return }
+            save(apiHttpPort, key: Keys.apiHttpPort)
+            notifyAPIChange()
+        }
+    }
 
     /// Show a debug overlay of the detected notch frame; the geometry escape
     /// hatch for OS releases that move the menu bar.

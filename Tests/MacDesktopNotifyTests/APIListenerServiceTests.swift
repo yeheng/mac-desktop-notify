@@ -1,6 +1,28 @@
 import XCTest
 @testable import MacDesktopNotify
 
+/// Notification-counting helper safe to mutate from an observer closure.
+/// `Sendable` by confinement — `lock` guards the only mutable state.
+private final class NotificationCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock(); defer { lock.unlock() }
+        return count
+    }
+
+    func bump() {
+        lock.lock(); defer { lock.unlock() }
+        count += 1
+    }
+
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        count = 0
+    }
+}
+
 @MainActor
 final class APIListenerServiceTests: SettingsIsolatedTestCase {
     private var tempSocketPath: String {
@@ -74,6 +96,51 @@ final class APIListenerServiceTests: SettingsIsolatedTestCase {
         service.restart()
         XCTAssertFalse(service.isSocketListening)
         XCTAssertFalse(service.isHttpListening)
+    }
+
+    /// A path occupied by something that cannot be removed as a stale socket
+    /// file must disable the transport AND say why — "off" and "failed" are
+    /// different states in the pane. The occupier carries the immutable flag
+    /// because its removal fails for any user (kernel-enforced), unlike
+    /// permission bits, which the test runner may bypass.
+    func testSocketRemovalFailureReportsError() async throws {
+        pinAPI(unixSocket: true, http: false, port: 4770)
+        let path = tempSocketPath
+        try Data("stale".utf8).write(to: URL(fileURLWithPath: path))
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: path)
+        defer {
+            try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: path)
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        let service = APIListenerService(socketPath: path)
+        defer { service.stop() }
+        service.restart()
+        XCTAssertNotNil(service.socketError, "an unremovable occupier must surface an error")
+        XCTAssertFalse(service.isSocketListening)
+    }
+
+    /// The bind-failure branch of `startSocket` (catch → `socketError`) cannot
+    /// be forced from the xctest process: NWListener there reports `.ready`
+    /// for a unix endpoint without creating the socket file (verified with a
+    /// path whose parent is a regular file — ENOTDIR for any real bind, yet
+    /// `isSocketListening == true` and no file on disk), and permission-bit
+    /// tricks are likewise bypassed. The removal-failure test above covers
+    /// the shared "disable the transport AND report" contract.
+
+    /// Assigning the same value (as TextField(value:format:) does on every
+    /// keystroke) must not rebind the listeners; a real change must.
+    func testUnchangedSettingDoesNotNotify() async throws {
+        let counter = NotificationCounter()
+        let observer = NotificationCenter.default.addObserver(
+            forName: AppSettings.apiSettingsDidChange, object: nil, queue: .main
+        ) { _ in counter.bump() }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        AppSettings.shared.apiHttpPort = 4770   // pin to a known value
+        counter.reset()
+        AppSettings.shared.apiHttpPort = 4770   // unchanged
+        XCTAssertEqual(counter.value, 0, "same value must not post apiSettingsDidChange")
+        AppSettings.shared.apiHttpPort = 4771   // changed
+        XCTAssertEqual(counter.value, 1, "a real change must post exactly once")
     }
 
     /// A stop() that lands while start() is still awaiting must resume that

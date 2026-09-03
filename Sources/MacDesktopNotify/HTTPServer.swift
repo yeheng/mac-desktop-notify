@@ -41,6 +41,9 @@ enum HTTPServerTransport {
 ///
 /// `Sendable` by confinement: every Network.framework callback is delivered
 /// on the single serial `queue`, and `onUpgrade` is set before `start()`.
+/// Callers must invoke `start()` and `stop()` from the same isolation
+/// context — the stopped-flag check in `start()` is only airtight when no
+/// `stop()` can interleave between the check and the continuation body.
 final class HTTPServer: @unchecked Sendable {
     var onUpgrade: ((HTTPHead, NWConnection) -> Bool)?
 

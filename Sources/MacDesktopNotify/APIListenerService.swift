@@ -21,6 +21,9 @@ final class APIListenerService {
     /// Nil when the HTTP listener is healthy or off; a human-readable reason
     /// when it failed to bind (shown in Settings).
     private(set) var httpError: String?
+    /// Nil when the socket listener is healthy or off; set when the stale
+    /// file could not be removed or the bind failed (shown in Settings).
+    private(set) var socketError: String?
     private(set) var isHttpListening = false
     private(set) var isSocketListening = false
 
@@ -55,6 +58,7 @@ final class APIListenerService {
         isHttpListening = false
         socketServer?.stop()
         socketServer = nil
+        socketError = nil
         isSocketListening = false
     }
 
@@ -93,7 +97,17 @@ final class APIListenerService {
     private func startSocket(router: APIRouter) {
         // A socket file left by a previous run blocks the bind; the
         // listener below is dead by definition, so the file is garbage.
-        try? FileManager.default.removeItem(atPath: socketPath)
+        // An occupier we cannot remove (a directory, permissions) means the
+        // transport cannot come up at all: report and stay off.
+        if FileManager.default.fileExists(atPath: socketPath) {
+            do {
+                try FileManager.default.removeItem(atPath: socketPath)
+            } catch {
+                socketError = "旧 socket 文件无法移除：\(error.localizedDescription)"
+                isSocketListening = false
+                return
+            }
+        }
         try? FileManager.default.createDirectory(
             atPath: (socketPath as NSString).deletingLastPathComponent,
             withIntermediateDirectories: true
@@ -113,9 +127,11 @@ final class APIListenerService {
                     [.posixPermissions: 0o600], ofItemAtPath: socketPath
                 )
                 isSocketListening = true
+                socketError = nil
             } catch {
                 guard socketServer === server else { return }
                 isSocketListening = false
+                socketError = "Unix socket 无法监听"
             }
         }
     }

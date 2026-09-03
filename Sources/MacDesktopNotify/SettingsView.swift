@@ -301,8 +301,13 @@ private struct ApiSettingsPane: View {
                 LabeledContent("路径", value: APIListenerService.defaultSocketPath)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
-                Text(service.isSocketListening ? "状态：监听中" : "状态：未启用或未启动")
-                    .font(.callout).foregroundStyle(.secondary)
+                if let error = service.socketError {
+                    Text("⚠️ \(error)").font(.callout).foregroundStyle(.red)
+                } else if service.isSocketListening {
+                    Text("状态：监听中").font(.callout).foregroundStyle(.secondary)
+                } else {
+                    Text("状态：未启用或未启动").font(.callout).foregroundStyle(.secondary)
+                }
             }
 
             SettingsGroup(title: "HTTP / WebSocket") {
