@@ -277,7 +277,7 @@ curl 'http://127.0.0.1:4770/v1/history?limit=5'
 {
   "items": [
     {"id":"…","title":"构建完成","body":"全部通过","urgency":"normal","timeout":10,
-     "timestamp":1789999999.17,"actions":[],"group":null,"read":false}
+     "timestamp":1789999999.17,"actions":[],"group":"ci-build","read":false}
   ],
   "unreadCount": 1
 }
