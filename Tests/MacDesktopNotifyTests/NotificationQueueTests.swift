@@ -337,7 +337,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     func testPerformActionOpensURLAndAdvancesQueue() {
         let m = NotificationManager()
         var opened: URL?
-        m.urlOpener = { opened = $0 }
+        m.actionHandler.urlOpener = { opened = $0 }
         let action = NotificationAction(label: "允许", url: URL(string: "http://localhost:8080/ok")!)
         m.push(NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [action]))
         m.push(make("b"))

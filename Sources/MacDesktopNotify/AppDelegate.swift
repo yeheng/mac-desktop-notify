@@ -25,7 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.presenter = presenter                 // retain (manager holds it weakly)
         NotificationManager.shared.attach(presenter)
         NotificationManager.shared.restoreHistory(using: .default)
-        NotificationManager.shared.attachAckStore(.default)
+        NotificationManager.shared.attachActionHandler(
+            NotificationActionHandler(ackStore: .default)
+        )
 
         let presence = PresenceMonitor()
         presenceMonitor = presence                 // retain; the manager also holds it

@@ -25,7 +25,7 @@ final class WSEventHub {
                 }
             },
             center.addObserver(
-                forName: NotificationManager.ackDidRecord, object: nil, queue: .main
+                forName: NotificationActionHandler.ackDidRecord, object: nil, queue: .main
             ) { [weak self] notification in
                 // `Notification` is not Sendable, so the payload is unpacked
                 // before hopping to the main actor.

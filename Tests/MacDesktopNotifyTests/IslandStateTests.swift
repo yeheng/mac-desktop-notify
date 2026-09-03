@@ -308,6 +308,36 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.displayState, .compact)
     }
 
+    /// A transient (push-expanded) panel was never claimed by the user, so the
+    /// pointer leaving must NOT collapse it: the panel stays open on its own
+    /// dwell countdown and settles when that budget runs out. Only a manual
+    /// panel (click/hover/keyboard) collapses on pointer exit.
+    func testPointerExitDoesNotCollapseTransientPanel() async throws {
+        let settings = AppSettings.shared
+        let oldAutoCollapse = settings.autoCollapseOnLeave
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoCollapseOnLeave = true
+        settings.autoExpandOnMessage = true
+        defer {
+            settings.autoCollapseOnLeave = oldAutoCollapse
+            settings.autoExpandOnMessage = oldAutoExpand
+        }
+
+        let m = NotificationManager()
+        m.push(make("t", timeout: 0.4))                    // auto-expand: transient, never touched
+        XCTAssertEqual(m.displayState, .transientExpanded)
+
+        m.setHovering(true)                                // pointer brushes the panel
+        m.setHovering(false)                               // and leaves again
+
+        XCTAssertEqual(m.displayState, .transientExpanded,
+                       "an untouched panel must not collapse on pointer exit")
+        XCTAssertNotNil(m.dwellDeadline, "the dwell countdown must be running")
+
+        try await Task.sleep(for: .seconds(2))             // 0.4 s budget retires it
+        XCTAssertNil(m.current, "only the countdown may retire a transient panel")
+    }
+
     /// Regression: suppression used to be re-derived only when the pointer
     /// moved, so a push arriving while the user sat still in a fullscreen app
     /// expanded straight over it. The expand path must re-probe and stand

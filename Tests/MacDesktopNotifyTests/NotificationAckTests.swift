@@ -53,9 +53,9 @@ final class NotificationAckTests: XCTestCase {
     func testAckActionWritesReceiptInsteadOfOpeningAURL() {
         let m = NotificationManager()
         var opened: URL?
-        m.urlOpener = { opened = $0 }
+        m.actionHandler.urlOpener = { opened = $0 }
         var receipts: [NotificationAck] = []
-        m.ackWriter = { receipts.append($0) }
+        m.actionHandler.ackWriter = { receipts.append($0) }
 
         let action = NotificationAction(
             label: "允许",
@@ -77,9 +77,9 @@ final class NotificationAckTests: XCTestCase {
     func testNonAckActionStillOpensItsURL() {
         let m = NotificationManager()
         var opened: URL?
-        m.urlOpener = { opened = $0 }
+        m.actionHandler.urlOpener = { opened = $0 }
         var receipts: [NotificationAck] = []
-        m.ackWriter = { receipts.append($0) }
+        m.actionHandler.ackWriter = { receipts.append($0) }
 
         let action = NotificationAction(label: "允许", url: URL(string: "http://localhost:8080/ok")!)
         let note = NotchNotification(title: "审批", bodyMarkdown: "", urgency: .normal,
@@ -93,7 +93,7 @@ final class NotificationAckTests: XCTestCase {
 
     func testAckActionStillDismissesTheCurrentMessage() {
         let m = NotificationManager()
-        m.ackWriter = { _ in }
+        m.actionHandler.ackWriter = { _ in }
         let action = NotificationAction(label: "允许", url: URL(string: "notch-notify://ack?token=t1")!)
         m.push(NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal,
                                  timeout: 60, actions: [action]))
@@ -107,7 +107,7 @@ final class NotificationAckTests: XCTestCase {
     func testAckFallsBackToTheActionLabel() {
         let m = NotificationManager()
         var receipts: [NotificationAck] = []
-        m.ackWriter = { receipts.append($0) }
+        m.actionHandler.ackWriter = { receipts.append($0) }
 
         let action = NotificationAction(label: "拒绝", url: URL(string: "notch-notify://ack?token=t1")!)
         let note = make("a")
@@ -152,7 +152,7 @@ final class NotificationAckTests: XCTestCase {
     func testCommentIsRecordedOnTheReceipt() {
         let m = NotificationManager()
         var receipts: [NotificationAck] = []
-        m.ackWriter = { receipts.append($0) }
+        m.actionHandler.ackWriter = { receipts.append($0) }
 
         let action = NotificationAction(label: "驳回", url: URL(string: "notch-notify://ack?token=t1&input=1")!)
         let note = make("a")
@@ -167,7 +167,7 @@ final class NotificationAckTests: XCTestCase {
     func testBlankCommentIsRecordedAsNil() {
         let m = NotificationManager()
         var receipts: [NotificationAck] = []
-        m.ackWriter = { receipts.append($0) }
+        m.actionHandler.ackWriter = { receipts.append($0) }
 
         let action = NotificationAction(label: "驳回", url: URL(string: "notch-notify://ack?token=t1&input=1")!)
         let note = make("a")
@@ -180,7 +180,7 @@ final class NotificationAckTests: XCTestCase {
     func testCommentIsCappedAtTheStoreLimit() {
         let m = NotificationManager()
         var receipts: [NotificationAck] = []
-        m.ackWriter = { receipts.append($0) }
+        m.actionHandler.ackWriter = { receipts.append($0) }
 
         let action = NotificationAction(label: "驳回", url: URL(string: "notch-notify://ack?token=t1&input=1")!)
         let note = make("a")
