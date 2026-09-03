@@ -140,7 +140,10 @@ final class WSSession {
         let payload = messageData
         messageData = Data()
         fragmentOpcode = nil
-        send(data: WSCodec.encode(opcode: 0x1, payload: router.handleWSCommand(payload)))
+        Task { @MainActor [router] in
+            let responseData = await router.handleWSCommand(payload)
+            send(data: WSCodec.encode(opcode: 0x1, payload: responseData))
+        }
         return true
     }
 

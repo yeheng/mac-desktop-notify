@@ -17,29 +17,28 @@ struct APIResponse: Sendable {
 
 /// Routes API requests to the NotificationManager. Pure: no sockets, no
 /// AppKit — directly unit-testable, and shared by both transports.
-@MainActor
-final class APIRouter {
+final class APIRouter: Sendable {
     private let manager: NotificationManager
-    private let listening: () -> (unixSocket: Bool, http: Bool)
+    private let listening: @MainActor @Sendable () -> (unixSocket: Bool, http: Bool)
 
     init(
-        manager: NotificationManager = .shared,
-        listening: @escaping () -> (unixSocket: Bool, http: Bool) = { (unixSocket: true, http: false) }
+        manager: NotificationManager,
+        listening: @escaping @MainActor @Sendable () -> (unixSocket: Bool, http: Bool) = { (unixSocket: true, http: false) }
     ) {
         self.manager = manager
         self.listening = listening
     }
 
-    func handle(_ request: APIRequest) -> APIResponse {
+    func handle(_ request: APIRequest) async -> APIResponse {
         switch (request.method, request.path) {
         case ("POST", "/v1/push"):
-            return push(request)
+            return await push(request)
         case ("POST", "/v1/clear"):
-            return clear(request)
+            return await clear(request)
         case ("GET", "/v1/history"):
-            return history(request)
+            return await history(request)
         case ("GET", "/v1/status"):
-            return status()
+            return await status()
         case (_, "/v1/push"), (_, "/v1/clear"), (_, "/v1/history"), (_, "/v1/status"):
             return .error(status: 405, reason: "方法不允许", field: nil)
         default:
@@ -71,7 +70,8 @@ final class APIRouter {
         let ok: Bool
     }
 
-    private func push(_ request: APIRequest) -> APIResponse {
+    private func push(_ request: APIRequest) async -> APIResponse {
+        // JSON decoding happens on background thread
         guard let body = request.body,
               let dto = try? JSONDecoder().decode(PushDTO.self, from: body) else {
             return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
@@ -85,7 +85,8 @@ final class APIRouter {
             timeout: dto.timeout, group: dto.group, actions: actions
         ) {
         case .success(let notification):
-            let outcome = manager.push(notification)
+            // Only jump to MainActor when calling manager
+            let outcome = await MainActor.run { manager.push(notification) }
             return .ok(PushResponse(outcome: outcome.label, id: notification.id.uuidString))
         case .failure(let rejection):
             return .error(status: 400, reason: rejection.description, field: "title")
@@ -96,21 +97,21 @@ final class APIRouter {
         let group: String?
     }
 
-    private func clear(_ request: APIRequest) -> APIResponse {
+    private func clear(_ request: APIRequest) async -> APIResponse {
         // An absent or empty body means "clear everything". A present body
         // must parse: garbage or a type mismatch is a 400, never a silent
         // clear-all (spec §8 — same error shape as the push path).
         guard let body = request.body, !body.isEmpty else {
-            manager.clear()
+            await MainActor.run { manager.clear() }
             return .ok(ClearResponse(ok: true))
         }
         guard let dto = try? JSONDecoder().decode(ClearDTO.self, from: body) else {
             return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
         }
         if let group = PushValidator.normalizedGroup(dto.group) {
-            manager.clear(group: group)
+            await MainActor.run { manager.clear(group: group) }
         } else {
-            manager.clear()
+            await MainActor.run { manager.clear() }
         }
         return .ok(ClearResponse(ok: true))
     }
@@ -123,13 +124,19 @@ final class APIRouter {
         let unreadCount: Int
     }
 
-    private func history(_ request: APIRequest) -> APIResponse {
+    private func history(_ request: APIRequest) async -> APIResponse {
         let requested = Int(request.query["limit"] ?? "") ?? 20
-        let limit = min(max(1, requested), NotificationManager.maxHistoryCount)
-        let items = manager.history.suffix(limit).map { item in
-            HistoryItemDTO(item: item, read: manager.isRead(item))
+        // Read history from manager on MainActor
+        let (items, unreadCount) = await MainActor.run {
+            let maxCount = NotificationManager.maxHistoryCount
+            let limit = min(max(1, requested), maxCount)
+            let historyItems = manager.history.suffix(limit).map { item in
+                HistoryItemDTO(item: item, read: manager.isRead(item))
+            }
+            return (historyItems, manager.unreadCount)
         }
-        return .ok(HistoryPayload(items: items, unreadCount: manager.unreadCount))
+        // JSON encoding happens on background thread
+        return .ok(HistoryPayload(items: items, unreadCount: unreadCount))
     }
 
     private struct StatusResponse: Encodable {
@@ -145,13 +152,16 @@ final class APIRouter {
         }
     }
 
-    private func status() -> APIResponse {
-        let listen = listening()
+    private func status() async -> APIResponse {
+        let (unreadCount, pendingCount, historyCount, silenced) = await MainActor.run {
+            (manager.unreadCount, manager.pendingCount, manager.historyCount, manager.isSilenced)
+        }
+        let listen = await listening()
         return .ok(StatusResponse(
-            unreadCount: manager.unreadCount,
-            pendingCount: manager.pendingCount,
-            historyCount: manager.historyCount,
-            silenced: manager.isSilenced,
+            unreadCount: unreadCount,
+            pendingCount: pendingCount,
+            historyCount: historyCount,
+            silenced: silenced,
             listening: StatusResponse.ListeningStatus(unixSocket: listen.unixSocket, http: listen.http)
         ))
     }
@@ -184,13 +194,24 @@ final class APIRouter {
     /// One client command frame (`{"op":"push","ref":"x",...}`) → one result
     /// frame (`{"type":"result","ref":"x","ok":true,...}`). Never throws:
     /// errors become `ok:false` frames so the client can correlate.
-    func handleWSCommand(_ data: Data) -> Data {
+    func handleWSCommand(_ data: Data) async -> Data {
         guard let dto = try? JSONDecoder().decode(WSCommandDTO.self, from: data) else {
             return encodeFrame(WSResultFrame(ref: nil, ok: false, error: "帧不是合法 JSON"))
         }
         switch dto.op {
         case "push":
-            let response = handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: data))
+            // Extract notification fields by removing "op" and "ref" from the command JSON
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: "无效的 JSON"))
+            }
+            var notificationFields = json
+            notificationFields.removeValue(forKey: "op")
+            notificationFields.removeValue(forKey: "ref")
+            guard let notificationBody = try? JSONSerialization.data(withJSONObject: notificationFields) else {
+                return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: "无法构建通知 JSON"))
+            }
+
+            let response = await handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: notificationBody))
             if response.status == 200,
                let pushResponse = try? JSONDecoder().decode(PushResponse.self, from: response.body) {
                 return encodeFrame(WSResultFrame(
@@ -203,7 +224,16 @@ final class APIRouter {
                 return failureFrame(ref: dto.ref, from: response)
             }
         case "clear":
-            let response = handle(APIRequest(method: "POST", path: "/v1/clear", query: [:], body: data))
+            // Extract clear fields by removing "op" and "ref"
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: "无效的 JSON"))
+            }
+            var clearFields = json
+            clearFields.removeValue(forKey: "op")
+            clearFields.removeValue(forKey: "ref")
+            let clearBody = clearFields.isEmpty ? Data() : ((try? JSONSerialization.data(withJSONObject: clearFields)) ?? Data())
+
+            let response = await handle(APIRequest(method: "POST", path: "/v1/clear", query: [:], body: clearBody))
             if response.status == 200 {
                 return encodeFrame(WSResultFrame(ref: dto.ref, ok: true))
             } else {

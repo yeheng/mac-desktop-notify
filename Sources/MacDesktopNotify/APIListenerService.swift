@@ -74,7 +74,7 @@ final class APIListenerService {
 
     private func startHTTP(router: APIRouter, port: UInt16) {
         let server = HTTPServer(parameters: HTTPServerTransport.localhostTCP(port: port)) { request in
-            router.handle(request)
+            await router.handle(request)
         }
         installUpgrade(on: server, router: router)
         httpServer = server
@@ -113,7 +113,7 @@ final class APIListenerService {
             withIntermediateDirectories: true
         )
         let server = HTTPServer(parameters: HTTPServerTransport.unixSocket(path: socketPath)) { request in
-            router.handle(request)
+            await router.handle(request)
         }
         installUpgrade(on: server, router: router)
         socketServer = server

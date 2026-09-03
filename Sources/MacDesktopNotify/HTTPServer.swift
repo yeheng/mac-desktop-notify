@@ -49,8 +49,8 @@ final class HTTPServer: @unchecked Sendable {
 
     private let listener: NWListener
     private let queue = DispatchQueue(label: "MacDesktopNotify.HTTPServer")
-    /// Router runs on the main actor; connections arrive on `queue`.
-    private let router: @MainActor (APIRequest) -> APIResponse
+    /// Router runs async; connections arrive on `queue`.
+    private let router: (APIRequest) async -> APIResponse
     /// Set by `stop()` before the listener is cancelled: a cancel that lands
     /// before `start()` may neither reflect in `.state` nor deliver the
     /// `.cancelled` event to a handler installed after the fact, so the flag
@@ -58,7 +58,7 @@ final class HTTPServer: @unchecked Sendable {
     /// continuation.
     private let stopped = OSAllocatedUnfairLock<Bool>(initialState: false)
 
-    init(parameters: NWParameters, router: @escaping @MainActor (APIRequest) -> APIResponse) {
+    init(parameters: NWParameters, router: @escaping (APIRequest) async -> APIResponse) {
         self.router = router
         self.listener = try! NWListener(using: parameters)
     }
@@ -123,11 +123,11 @@ private final class ConnectionHandler: @unchecked Sendable {
 
     private let connection: NWConnection
     private let queue: DispatchQueue
-    private let router: @MainActor (APIRequest) -> APIResponse
+    private let router: (APIRequest) async -> APIResponse
     private var buffer = Data()
     private var head: HTTPHead?
 
-    init(connection: NWConnection, router: @escaping @MainActor (APIRequest) -> APIResponse, queue: DispatchQueue) {
+    init(connection: NWConnection, router: @escaping (APIRequest) async -> APIResponse, queue: DispatchQueue) {
         self.connection = connection
         self.queue = queue
         self.router = router
@@ -220,7 +220,7 @@ private final class ConnectionHandler: @unchecked Sendable {
                     // Declined. An upgrade request carries no body of its own,
                     // so the routed answer needs nothing further.
                     let request = APIRequest(method: head.method, path: head.path, query: head.query, body: nil)
-                    let response = router(request)
+                    let response = await router(request)
                     connection.send(
                         content: HTTPCodec.response(
                             status: response.status,
@@ -244,8 +244,8 @@ private final class ConnectionHandler: @unchecked Sendable {
             method: head.method, path: head.path, query: head.query,
             body: head.contentLength == 0 ? nil : Data(body)
         )
-        Task { @MainActor [router] in
-            let response = router(request)
+        Task { [router] in
+            let response = await router(request)
             let bytes = HTTPCodec.response(
                 status: response.status, reason: HTTPCodec.reason(for: response.status), body: response.body
             )

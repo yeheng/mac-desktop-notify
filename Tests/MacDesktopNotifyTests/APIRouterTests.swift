@@ -15,8 +15,8 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         try! JSONSerialization.jsonObject(with: data) as! [String: Any]
     }
 
-    func testPushReturnsOutcomeAndID() throws {
-        let response = router.handle(APIRequest(
+    func testPushReturnsOutcomeAndID() async throws {
+        let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/push", query: [:],
             body: json(["title": "构建完成", "urgency": "critical", "timeout": 10])
         ))
@@ -27,8 +27,8 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertEqual(manager.current?.title, "构建完成")
     }
 
-    func testPushWithoutTitleIs400WithField() {
-        let response = router.handle(APIRequest(
+    func testPushWithoutTitleIs400WithField() async {
+        let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/push", query: [:], body: json(["body": "x"])
         ))
         XCTAssertEqual(response.status, 400)
@@ -37,29 +37,29 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertNotNil(payload["error"] as? String)
     }
 
-    func testPushWithMalformedJSONIs400() {
-        let response = router.handle(APIRequest(
+    func testPushWithMalformedJSONIs400() async {
+        let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/push", query: [:], body: Data("not json".utf8)
         ))
         XCTAssertEqual(response.status, 400)
     }
 
-    func testSecondPushWhileOneIsLiveQueues() {
-        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
-        let response = router.handle(APIRequest(
+    func testSecondPushWhileOneIsLiveQueues() async {
+        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+        let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])
         ))
         XCTAssertEqual(decoded(response.body)["outcome"] as? String, "queued")
     }
 
-    func testClearGroupClearsOnlyThatGroup() {
-        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a", "group": "ci"])))
-        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])))
+    func testClearGroupClearsOnlyThatGroup() async {
+        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a", "group": "ci"])))
+        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])))
         manager.clear()   // start clean: history now empty, both gone
-        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a", "group": "ci"])))
-        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])))
+        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a", "group": "ci"])))
+        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])))
 
-        let response = router.handle(APIRequest(
+        let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/clear", query: [:], body: json(["group": "ci"])
         ))
         XCTAssertEqual(response.status, 200)
@@ -68,10 +68,10 @@ final class APIRouterTests: SettingsIsolatedTestCase {
 
     /// A present but unparseable body is a client error, never a silent
     /// clear-everything (spec §8: bad JSON → 400).
-    func testClearWithGarbageBodyIs400AndClearsNothing() {
-        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+    func testClearWithGarbageBodyIs400AndClearsNothing() async {
+        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
 
-        let response = router.handle(APIRequest(
+        let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/clear", query: [:], body: Data("not json".utf8)
         ))
         XCTAssertEqual(response.status, 400)
@@ -81,29 +81,31 @@ final class APIRouterTests: SettingsIsolatedTestCase {
 
     /// A type mismatch (`group` is a number where a string is expected) is the
     /// same 400, not a clear-all.
-    func testClearWithWrongTypedBodyIs400AndClearsNothing() {
-        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+    func testClearWithWrongTypedBodyIs400AndClearsNothing() async {
+        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
 
-        let response = router.handle(APIRequest(
+        let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/clear", query: [:], body: json(["group": 123])
         ))
         XCTAssertEqual(response.status, 400)
         XCTAssertEqual(manager.history.map(\.title), ["a"])
     }
 
-    func testClearWithAbsentOrEmptyBodyClearsEverything() {
-        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
-        XCTAssertEqual(router.handle(APIRequest(method: "POST", path: "/v1/clear", query: [:], body: nil)).status, 200)
+    func testClearWithAbsentOrEmptyBodyClearsEverything() async {
+        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+        let r1 = await router.handle(APIRequest(method: "POST", path: "/v1/clear", query: [:], body: nil))
+        XCTAssertEqual(r1.status, 200)
         XCTAssertEqual(manager.history.map(\.title), [])
 
-        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])))
-        XCTAssertEqual(router.handle(APIRequest(method: "POST", path: "/v1/clear", query: [:], body: Data())).status, 200)
+        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])))
+        let r2 = await router.handle(APIRequest(method: "POST", path: "/v1/clear", query: [:], body: Data()))
+        XCTAssertEqual(r2.status, 200)
         XCTAssertEqual(manager.history.map(\.title), [])
     }
 
-    func testHistoryReturnsItemsWithReadFlagAndUnreadCount() {
-        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
-        let response = router.handle(APIRequest(
+    func testHistoryReturnsItemsWithReadFlagAndUnreadCount() async {
+        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+        let response = await router.handle(APIRequest(
             method: "GET", path: "/v1/history", query: [:], body: nil
         ))
         XCTAssertEqual(response.status, 200)
@@ -118,12 +120,12 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertEqual(payload["unreadCount"] as? Int, 1)
     }
 
-    func testHistoryLimitQueryParameterCapsAt50() {
+    func testHistoryLimitQueryParameterCapsAt50() async {
         for i in 0..<55 {
             manager.push(NotchNotification(title: "n\(i)", bodyMarkdown: "", urgency: .normal, timeout: 60))
         }
         // The live one is n54; history holds all 55. Cap limit at maxHistoryCount.
-        let response = router.handle(APIRequest(
+        let response = await router.handle(APIRequest(
             method: "GET", path: "/v1/history", query: ["limit": "500"], body: nil
         ))
         let items = decoded(response.body)["items"] as! [[String: Any]]
@@ -132,33 +134,36 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertEqual(items.last?["title"] as? String, "n54")
     }
 
-    func testStatusAggregatesManagerState() {
-        _ = router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
-        let response = router.handle(APIRequest(method: "GET", path: "/v1/status", query: [:], body: nil))
+    func testStatusAggregatesManagerState() async {
+        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+        let response = await router.handle(APIRequest(method: "GET", path: "/v1/status", query: [:], body: nil))
         let payload = decoded(response.body)
         XCTAssertEqual(payload["unreadCount"] as? Int, 1)
         XCTAssertEqual(payload["pendingCount"] as? Int, 0)
         XCTAssertEqual(payload["silenced"] as? Bool, false)
     }
 
-    func testUnknownPathIs404AndWrongMethodIs405() {
-        XCTAssertEqual(router.handle(APIRequest(method: "GET", path: "/v1/nope", query: [:], body: nil)).status, 404)
-        XCTAssertEqual(router.handle(APIRequest(method: "GET", path: "/v1/push", query: [:], body: nil)).status, 405)
-        XCTAssertEqual(router.handle(APIRequest(method: "POST", path: "/v1/status", query: [:], body: nil)).status, 405)
+    func testUnknownPathIs404AndWrongMethodIs405() async {
+        let r1 = await router.handle(APIRequest(method: "GET", path: "/v1/nope", query: [:], body: nil))
+        XCTAssertEqual(r1.status, 404)
+        let r2 = await router.handle(APIRequest(method: "GET", path: "/v1/push", query: [:], body: nil))
+        XCTAssertEqual(r2.status, 405)
+        let r3 = await router.handle(APIRequest(method: "POST", path: "/v1/status", query: [:], body: nil))
+        XCTAssertEqual(r3.status, 405)
     }
 
-    func testWSCommandPushAndClear() {
-        let response = router.handleWSCommand(json(["op": "push", "ref": "r1", "title": "ws-push"]))
+    func testWSCommandPushAndClear() async {
+        let response = await router.handleWSCommand(json(["op": "push", "ref": "r1", "title": "ws-push"]))
         let payload = decoded(response)
         XCTAssertEqual(payload["type"] as? String, "result")
         XCTAssertEqual(payload["ref"] as? String, "r1")
         XCTAssertEqual(payload["ok"] as? Bool, true)
         XCTAssertEqual(payload["outcome"] as? String, "displayed")
 
-        let clear = router.handleWSCommand(json(["op": "clear", "ref": "r2"]))
+        let clear = await router.handleWSCommand(json(["op": "clear", "ref": "r2"]))
         XCTAssertEqual(decoded(clear)["ok"] as? Bool, true)
 
-        let bad = router.handleWSCommand(json(["op": "unknown"]))
+        let bad = await router.handleWSCommand(json(["op": "unknown"]))
         XCTAssertEqual(decoded(bad)["ok"] as? Bool, false)
         XCTAssertEqual(decoded(bad)["error"] as? String, "未知操作")
     }

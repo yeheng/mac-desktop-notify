@@ -18,7 +18,7 @@ final class APIIntegrationTests: XCTestCase {
     private func startServer() async throws -> URL {
         let params = HTTPServerTransport.localhostTCP(port: 0)
         let router = makeRouter()
-        let server = HTTPServer(parameters: params) { request in router.handle(request) }
+        let server = HTTPServer(parameters: params) { request in await router.handle(request) }
         self.server = server
         let port = try await server.start()
         return URL(string: "http://127.0.0.1:\(port)")!
@@ -83,7 +83,7 @@ final class APIIntegrationTests: XCTestCase {
 
         let router = makeRouter()
         let server = HTTPServer(parameters: HTTPServerTransport.unixSocket(path: socketPath)) { request in
-            router.handle(request)
+            await router.handle(request)
         }
         self.server = server
         _ = try await server.start()
@@ -178,7 +178,7 @@ final class APIIntegrationTests: XCTestCase {
         let params = HTTPServerTransport.localhostTCP(port: 0)
         let router = makeRouter()
         let hub = WSEventHub(manager: manager)
-        let server = HTTPServer(parameters: params) { request in router.handle(request) }
+        let server = HTTPServer(parameters: params) { request in await router.handle(request) }
         self.server = server
         // Set before `start()`: `onUpgrade` is read at accept time.
         server.onUpgrade = { head, connection in
@@ -256,10 +256,25 @@ final class APIIntegrationTests: XCTestCase {
         _ = try await boundedReceive(ws)   // hello
 
         try await ws.send(.string("{\"op\":\"push\",\"ref\":\"r1\",\"title\":\"从 WS 推送\"}"))
-        let result = try await boundedReceive(ws)
-        guard case .string(let text) = result else { return XCTFail("expected text frame") }
-        let payload = try JSONSerialization.jsonObject(with: Data(text.utf8)) as! [String: Any]
-        XCTAssertEqual(payload["type"] as? String, "result")
+
+        // We may receive two messages: the command result and an unreadCount event
+        // Read both and find the result frame
+        var resultPayload: [String: Any]?
+        for _ in 0..<2 {
+            let result = try await boundedReceive(ws)
+            guard case .string(let text) = result else { continue }
+            let payload = try JSONSerialization.jsonObject(with: Data(text.utf8)) as! [String: Any]
+            if payload["type"] as? String == "result" {
+                resultPayload = payload
+                break
+            }
+        }
+
+        guard let payload = resultPayload else {
+            return XCTFail("Did not receive result frame")
+        }
+
+        XCTAssertEqual(payload["ref"] as? String, "r1")
         XCTAssertEqual(payload["ref"] as? String, "r1")
         XCTAssertEqual(payload["ok"] as? Bool, true)
         XCTAssertEqual(payload["outcome"] as? String, "displayed")
@@ -383,8 +398,22 @@ final class APIIntegrationTests: XCTestCase {
         client.sendMaskedFrame(opcode: 0x1, payload: command[..<split], fin: false)
         client.sendMaskedFrame(opcode: 0x0, payload: command[split...], fin: true)
 
-        let (opcode, payload) = try await client.expectFrame()
-        XCTAssertEqual(opcode, 0x1)
+        // May receive unreadCount event and result frame in either order
+        var resultPayload: Data?
+        for _ in 0..<2 {
+            let (opcode, payload) = try await client.expectFrame()
+            XCTAssertEqual(opcode, 0x1)
+            let json = try JSONSerialization.jsonObject(with: payload) as! [String: Any]
+            if json["type"] as? String == "result" {
+                resultPayload = payload
+                break
+            }
+        }
+
+        guard let payload = resultPayload else {
+            return XCTFail("Did not receive result frame")
+        }
+
         let reply = try JSONSerialization.jsonObject(with: payload) as! [String: Any]
         XCTAssertEqual(reply["type"] as? String, "result")
         XCTAssertEqual(reply["ref"] as? String, "frag")
