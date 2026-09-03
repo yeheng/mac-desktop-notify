@@ -67,6 +67,11 @@ final class HTTPServer: @unchecked Sendable {
                 case .failed(let error):
                     guard claim(resumed) else { return }
                     continuation.resume(throwing: HTTPServerError.listenerFailed(error.localizedDescription))
+                case .cancelled:
+                    // A stop() that lands while start() is still awaiting
+                    // would otherwise leak the continuation forever.
+                    guard claim(resumed) else { return }
+                    continuation.resume(throwing: CancellationError())
                 default:
                     break
                 }
@@ -92,9 +97,11 @@ final class HTTPServer: @unchecked Sendable {
 /// Per-connection receive loop. Owns exactly one request/response exchange
 /// (plus an optional upgrade handoff).
 ///
-/// `Sendable` by confinement: this handler is only ever touched from the
-/// server's serial `queue` (both the listener's `newConnectionHandler` and
-/// the connection callbacks started on it run there).
+/// `Sendable` by confinement: the handler's mutable state (`buffer`, `head`)
+/// is only ever touched from the server's serial `queue`. Two exceptions run
+/// elsewhere and touch only thread-safe `NWConnection` APIs: `sendAndClose`
+/// executes on the main actor, and an accepted upgrade hops to the main actor
+/// to let the hook hand the connection over.
 ///
 /// Lifetime: nothing outside the connection retains a handler, so the
 /// receive loop captures `self` strongly — the handler lives as long as its
@@ -162,10 +169,31 @@ private final class ConnectionHandler: @unchecked Sendable {
             return
         }
 
-        if let onUpgrade,
-           head.headers["upgrade"]?.lowercased().contains("websocket") == true,
-           onUpgrade(head, connection) {
-            return   // ownership handed over; stop reading
+        if let onUpgrade, head.headers["upgrade"]?.lowercased().contains("websocket") == true {
+            // The hook owns MainActor state (it builds a `WSSession` and
+            // registers it with a hub), so the decision runs there instead of
+            // on this queue. Nothing else happens on this connection while it
+            // does: either the session took the socket over, or the reply is
+            // the last thing written to it.
+            let head = head
+            Task { @MainActor [onUpgrade, connection, router] in
+                guard onUpgrade(head, connection) else {
+                    // Declined. An upgrade request carries no body of its own,
+                    // so the routed answer needs nothing further.
+                    let request = APIRequest(method: head.method, path: head.path, query: head.query, body: nil)
+                    let response = router(request)
+                    connection.send(
+                        content: HTTPCodec.response(
+                            status: response.status,
+                            reason: HTTPCodec.reason(for: response.status),
+                            body: response.body
+                        ),
+                        completion: .contentProcessed { _ in connection.cancel() }
+                    )
+                    return
+                }
+            }
+            return   // ownership handed over or answer pending; stop reading
         }
 
         guard buffer.count >= head.contentLength else {

@@ -58,6 +58,11 @@ final class NotificationManager {
     /// views (the status item icon redraws from this).
     static let unreadCountDidChange = Notification.Name("MacDesktopNotify.unreadCountDidChange")
 
+    /// Posted from `performAction` after a receipt is recorded. userInfo
+    /// carries the `NotificationAck` under key "ack". The disk receipt and
+    /// this event coexist: pollers keep working, sockets get it instantly.
+    static let ackDidRecord = Notification.Name("MacDesktopNotify.ackDidRecord")
+
     /// Writes are debounced so a burst of pushes costs one save, not one per message.
     static let persistDebounce: Duration = .milliseconds(500)
 
@@ -603,6 +608,9 @@ final class NotificationManager {
             } else if let ackStore {
                 try? ackStore.write(receipt)
             }
+            NotificationCenter.default.post(
+                name: Self.ackDidRecord, object: nil, userInfo: ["ack": receipt]
+            )
         } else if let urlOpener {
             urlOpener(action.url)
         } else {

@@ -69,6 +69,11 @@ final class WSCodecTests: XCTestCase {
         let medium = Data(repeating: 0x62, count: 300)   // 16-bit length
         let (frames, _) = try XCTUnwrap(WSCodec.decode(clientMasked(WSCodec.encode(opcode: 0x1, payload: medium))))
         XCTAssertEqual(frames.first?.payload, medium)
+
+        // Exactly at the cap the 64-bit length form is legal, not a violation.
+        let atCap = Data(repeating: 0x63, count: 65_536)
+        let (capped, _) = try XCTUnwrap(WSCodec.decode(clientMasked(WSCodec.encode(opcode: 0x1, payload: atCap))))
+        XCTAssertEqual(capped.first?.payload, atCap)
     }
 
     func testMaskedServerFrameFromClientIsRejected() {
