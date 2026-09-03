@@ -10,6 +10,7 @@
 
 - 🖥️ **Vibe Island 风格 UI** — 常驻摘要态、悬停/点击展开、消息自动展开和内容切换动画
 - 🔗 **URL Scheme 推送** — 通过 `notch-notify://` 协议从任何语言/脚本发送通知
+- 🔌 **本地 API** — HTTP / WebSocket / Unix Socket 三种对接方式，仅本机监听，推送结果同步返回
 - 💾 **历史持久化** — 消息与已读状态原子写入磁盘，重启后仍在（防抖合并写，可在设置关闭）
 - 🧹 **分组去重** — 带 `group` 参数的重复推送顶掉旧消息，CI 这类高频任务不再刷屏
 - 📨 **动作回执** — `notch-notify://ack` 按钮把点击结果写回磁盘，脚本可轮询拿到审批结论
@@ -217,6 +218,105 @@ open 'notch-notify://clear?group=ci-build'
 
 ---
 
+## 本地 API（HTTP / WebSocket / Unix Socket）
+
+三种对接方式共用同一套 API，仅监听本机（127.0.0.1），不对外网开放。在「设置 → 接口」中启用：
+
+| 传输 | 默认 | 地址 |
+|------|------|------|
+| Unix Socket | 开 | `~/Library/Application Support/MacDesktopNotify/api.sock`（权限 0600） |
+| HTTP | 关（设置中开启） | `http://127.0.0.1:4770` |
+| WebSocket | 随 HTTP 一同开启 | `ws://127.0.0.1:4770/v1/events` |
+
+### 端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/v1/push` | 推送通知，同步返回结果（URL Scheme 做不到） |
+| `POST` | `/v1/clear` | 清除通知；body 缺省或为空 = 清空全部，`{"group":"ci-build"}` 只清该分组 |
+| `GET` | `/v1/history?limit=20` | 最近历史，默认 20 条、上限 50 条，含已读标记与未读数 |
+| `GET` | `/v1/status` | 未读数、待展示队列、历史条数、静默状态与各监听器状态 |
+
+未知路径返回 404，方法不匹配返回 405，参数不合法返回 400：`{"error":"…","field":"title"}`。
+
+### 推送通知
+
+请求体为 JSON，字段与 URL Scheme 完全一致（仅 `title` 必填，body/urgency/timeout/group/actions 可选，长度与取值限制相同）：
+
+```bash
+curl http://127.0.0.1:4770/v1/push \
+  -d '{"title":"构建完成","body":"全部通过","urgency":"normal","timeout":10}'
+
+# Unix socket（无需开端口）：
+curl --unix-socket "$HOME/Library/Application Support/MacDesktopNotify/api.sock" \
+  http://localhost/v1/push -d '{"title":"构建完成"}'
+```
+
+响应：
+
+```json
+{"outcome": "displayed", "id": "…"}
+```
+
+`outcome` ∈ `displayed`（成为当前展示）/ `queued`（排队中）/ `withheld`（静默期，仅入历史）。
+
+`actions` 同样支持，规则与 URL Scheme 一致（最多 3 个按钮，`notch-notify://ack` 记录回执）：
+
+```bash
+curl http://127.0.0.1:4770/v1/push \
+  -d '{"title":"部署审批","urgency":"critical","actions":[{"label":"允许","url":"notch-notify://ack?token=deploy-42&label=approve"}]}'
+```
+
+### 历史与状态
+
+```bash
+curl 'http://127.0.0.1:4770/v1/history?limit=5'
+```
+
+```json
+{
+  "items": [
+    {"id":"…","title":"构建完成","body":"全部通过","urgency":"normal","timeout":10,
+     "timestamp":1789999999.17,"actions":[],"group":null,"read":false}
+  ],
+  "unreadCount": 1
+}
+```
+
+`timestamp` 是 Unix 秒（Double）。`limit` 超过 50 时按 50 截断，条目按时间升序（最新在末尾）。
+
+```bash
+curl http://127.0.0.1:4770/v1/status
+```
+
+```json
+{"unreadCount":3,"pendingCount":1,"historyCount":12,"silenced":false,
+ "listening":{"unixSocket":true,"http":true}}
+```
+
+### WebSocket 事件流
+
+连接 `ws://127.0.0.1:4770/v1/events`：先收到 `hello`（带当前未读数），随后按钮回执（ack）与未读数变化实时推送——磁盘轮询可以退役了：
+
+```json
+{"type": "hello", "unreadCount": 2}
+{"type": "ack", "token": "deploy-42", "label": "approve", "notificationID": "…", "decidedAt": 1789999999.17}
+{"type": "unreadCount", "count": 3}
+```
+
+同一连接也可直接发命令，`ref` 用于关联请求与结果：
+
+```json
+{"op":"push","ref":"r1","title":"…"}
+{"type":"result","ref":"r1","ok":true,"outcome":"displayed","id":"…"}
+{"op":"clear","ref":"r2","group":"ci-build"}
+{"type":"result","ref":"r2","ok":true}
+```
+
+未知 `op` 或非法 JSON 返回 `ok:false`，`error` 字段说明原因。
+
+---
+
 ## Markdown 支持
 
 正文支持以下 Markdown 格式：
@@ -321,6 +421,7 @@ open 'notch-notify://clear?group=ci-build'
 | **通用** | 悬停展开、鼠标离开收起、空闲隐藏、全屏隐藏、悬停延迟、登录启动、辅助功能授权状态与引导 |
 | **外观** | 布局模式（标准/简洁/详细）、面板宽度/高度上限、内容字号、摘要栏紧急度图标与未读数量、高级（刘海偏移微调、刘海校准框） |
 | **通知** | 自动展开、停留时长（1-30s）、critical 老化降级、保留历史、声音、快捷键、离开时行为（照常显示 / 静默存入历史 / 仅紧急消息穿透） |
+| **接口** | Unix Socket 开关与路径、HTTP / WebSocket 开关与端口（默认 4770，仅绑定 127.0.0.1） |
 | **关于** | 版本、系统要求、项目链接、接入示例、重新运行引导 |
 
 面板高度为**上限**语义：面板随内容收缩，短消息不再占用整块面板空间。
