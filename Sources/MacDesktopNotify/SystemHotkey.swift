@@ -148,6 +148,12 @@ final class SystemHotkey {
             RemoveEventHandler(installed)
             handler = nil
         }
+        // Clear the deinit mirrors alongside the isolated originals: left
+        // set, deinit would unregister a second time through a dangling
+        // Carbon reference on every mid-run replacement of this object
+        // (each toggle of the hotkey setting drops and recreates it).
+        carbonReferenceForTeardown = nil
+        carbonHandlerForTeardown = nil
         // Balance the passRetained: Carbon no longer holds the pointer after
         // both entry points above are torn down.
         if let pointer = box?.retainedPointer {

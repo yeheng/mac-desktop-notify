@@ -29,7 +29,7 @@ enum IslandGeometry {
 
     static func notchFrame(for screen: NSScreen) -> NSRect {
         let settings = AppSettings.shared
-        let detectedWidth = (screen.auxiliaryTopLeftArea?.width != nil && screen.auxiliaryTopRightArea?.width != nil)
+        let detectedWidth = screen.hasNotch
             ? screen.frame.width - (screen.auxiliaryTopLeftArea?.width ?? 0) - (screen.auxiliaryTopRightArea?.width ?? 0)
             : 300
         let notchWidth = max(120, detectedWidth + settings.notchWidthOffset)

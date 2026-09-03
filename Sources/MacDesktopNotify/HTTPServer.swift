@@ -58,9 +58,15 @@ final class HTTPServer: @unchecked Sendable {
     /// continuation.
     private let stopped = OSAllocatedUnfairLock<Bool>(initialState: false)
 
-    init(parameters: NWParameters, router: @escaping (APIRequest) async -> APIResponse) {
+    /// Failable because `NWListener` validates at construction (a unix
+    /// socket path past `sun_path`'s ~104 bytes throws here, not at
+    /// `start()`). Callers get nil instead of a launch-time crash, and the
+    /// error reporting they already have for listener failures stays in
+    /// charge — `try!` here used to bypass exactly that.
+    init?(parameters: NWParameters, router: @escaping (APIRequest) async -> APIResponse) {
+        guard let listener = try? NWListener(using: parameters) else { return nil }
         self.router = router
-        self.listener = try! NWListener(using: parameters)
+        self.listener = listener
     }
 
     func start() async throws -> UInt16 {

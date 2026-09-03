@@ -18,7 +18,7 @@ final class APIIntegrationTests: XCTestCase {
     private func startServer() async throws -> URL {
         let params = HTTPServerTransport.localhostTCP(port: 0)
         let router = makeRouter()
-        let server = HTTPServer(parameters: params) { request in await router.handle(request) }
+        let server = try XCTUnwrap(HTTPServer(parameters: params) { request in await router.handle(request) })
         self.server = server
         let port = try await server.start()
         return URL(string: "http://127.0.0.1:\(port)")!
@@ -82,9 +82,9 @@ final class APIIntegrationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: socketPath) }
 
         let router = makeRouter()
-        let server = HTTPServer(parameters: HTTPServerTransport.unixSocket(path: socketPath)) { request in
+        let server = try XCTUnwrap(HTTPServer(parameters: HTTPServerTransport.unixSocket(path: socketPath)) { request in
             await router.handle(request)
-        }
+        })
         self.server = server
         _ = try await server.start()
 
@@ -178,7 +178,7 @@ final class APIIntegrationTests: XCTestCase {
         let params = HTTPServerTransport.localhostTCP(port: 0)
         let router = makeRouter()
         let hub = WSEventHub(manager: manager)
-        let server = HTTPServer(parameters: params) { request in await router.handle(request) }
+        let server = try XCTUnwrap(HTTPServer(parameters: params) { request in await router.handle(request) })
         self.server = server
         // Set before `start()`: `onUpgrade` is read at accept time.
         server.onUpgrade = { head, connection in

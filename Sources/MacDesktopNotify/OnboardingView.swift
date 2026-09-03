@@ -10,44 +10,10 @@ struct OnboardingView: View {
     @Bindable private var settings: AppSettings = .shared
     @State private var step = 0
 
-    enum Preset: String, CaseIterable {
-        case quiet
-        case balanced
-        case instant
-
-        var title: String {
-            switch self {
-            case .quiet: "安静"
-            case .balanced: "平衡"
-            case .instant: "即时"
-            }
-        }
-
-        var detail: String {
-            switch self {
-            case .quiet: "到达不展开，只在摘要栏显示；适合高频脚本。"
-            case .balanced: "到达自动展开并停留数秒（默认）。"
-            case .instant: "到达即展开，critical 常驻直到处理。"
-            }
-        }
-
-        @MainActor
-        func apply(to settings: AppSettings) {
-            switch self {
-            case .quiet:
-                settings.autoExpandOnMessage = false
-                settings.ageOutCriticals = true
-            case .balanced:
-                settings.autoExpandOnMessage = true
-                settings.messageDwellSeconds = 5
-                settings.ageOutCriticals = true
-            case .instant:
-                settings.autoExpandOnMessage = true
-                settings.messageDwellSeconds = 10
-                settings.ageOutCriticals = false
-            }
-        }
-    }
+    /// The levels come from `AttentionPreset` (AppSettings.swift): onboarding
+    /// and Settings -> 通知 offer the same three choices, writing the same
+    /// underlying settings, so neither can drift from the other.
+    typealias Preset = AttentionPreset
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -132,7 +98,6 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 12) {
             stepHeader("第 2 步 · 接入你的脚本", "复制到终端试试，或粘进任何语言的项目。")
             CodeSnippetView(code: "open 'notch-notify://push?title=构建完成&body=全部通过'")
-            CodeSnippetView(code: "curl -X open 'notch-notify://push?title=部署完成'  # 等价写法", subtitle: "shell")
             Text("完整协议（紧急度、分组、动作按钮、回执）见 README。")
                 .font(.caption)
                 .foregroundStyle(.secondary)

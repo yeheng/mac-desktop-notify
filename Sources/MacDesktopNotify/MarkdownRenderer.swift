@@ -6,35 +6,61 @@ enum MarkdownBlock: Equatable {
 }
 
 enum MarkdownRenderer {
-    static func parse(_ body: String) -> [MarkdownBlock] {
-        let body = body.replacingOccurrences(of: "\r\n", with: "\n")
-        var blocks: [MarkdownBlock] = []
-        var proseBuffer: [String] = []
-        var codeBuffer: [String] = []
+    /// A run of consecutive lines of one kind: prose, or the inside of a
+    /// fenced code block. The single definition of "where the fences are" —
+    /// `parse` renders both sides, the history preview keeps only the prose
+    /// side, and neither carries its own copy of the rule. CRLF
+    /// normalization lives here too, so a body pushed from Windows-flavored
+    /// tools behaves the same for every consumer.
+    enum Segment: Equatable {
+        case prose([String])
+        case code([String])
+    }
+
+    static func segments(in body: String) -> [Segment] {
+        let normalized = body.replacingOccurrences(of: "\r\n", with: "\n")
+        var segments: [Segment] = []
+        var prose: [String] = []
+        var code: [String] = []
         var inCode = false
-
-        func flushProse() {
-            defer { proseBuffer.removeAll() }
-            let text = proseBuffer.joined(separator: "\n")
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            blocks.append(.prose(inlineAttributed(text)))
-        }
-        func flushCode() {
-            blocks.append(.code(codeBuffer.joined(separator: "\n")))
-            codeBuffer.removeAll()
-        }
-
-        for line in body.components(separatedBy: "\n") {
+        for line in normalized.components(separatedBy: "\n") {
             if line.hasPrefix("```") {
-                if inCode { flushCode() } else { flushProse() }
+                if inCode {
+                    // An empty fenced block (fence immediately closed) is
+                    // still a code block.
+                    segments.append(.code(code))
+                    code = []
+                } else if !prose.isEmpty {
+                    segments.append(.prose(prose))
+                    prose = []
+                }
                 inCode.toggle()
             } else if inCode {
-                codeBuffer.append(line)
+                code.append(line)
             } else {
-                proseBuffer.append(line)
+                prose.append(line)
             }
         }
-        if inCode { flushCode() } else { flushProse() }
+        if inCode {
+            segments.append(.code(code))
+        } else if !prose.isEmpty {
+            segments.append(.prose(prose))
+        }
+        return segments
+    }
+
+    static func parse(_ body: String) -> [MarkdownBlock] {
+        var blocks: [MarkdownBlock] = []
+        for segment in segments(in: body) {
+            switch segment {
+            case .prose(let lines):
+                let text = lines.joined(separator: "\n")
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                blocks.append(.prose(inlineAttributed(text)))
+            case .code(let lines):
+                blocks.append(.code(lines.joined(separator: "\n")))
+            }
+        }
         return blocks
     }
 

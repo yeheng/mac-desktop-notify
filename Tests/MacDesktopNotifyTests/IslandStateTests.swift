@@ -53,13 +53,13 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         settings.hoverDelayMilliseconds = 240
         settings.layoutMode = .detailed
         settings.panelWidth = 460
-        settings.globalShortcutsEnabled = true
+        settings.soundEnabled = false
 
         let reloaded = AppSettings(defaults: defaults)
         XCTAssertEqual(reloaded.hoverDelayMilliseconds, 240)
         XCTAssertEqual(reloaded.layoutMode, .detailed)
         XCTAssertEqual(reloaded.panelWidth, 460)
-        XCTAssertTrue(reloaded.globalShortcutsEnabled)
+        XCTAssertFalse(reloaded.soundEnabled)
         defaults.removePersistentDomain(forName: suiteName)
     }
 

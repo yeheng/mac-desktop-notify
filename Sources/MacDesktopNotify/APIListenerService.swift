@@ -73,8 +73,15 @@ final class APIListenerService {
     }
 
     private func startHTTP(router: APIRouter, port: UInt16) {
-        let server = HTTPServer(parameters: HTTPServerTransport.localhostTCP(port: port)) { request in
+        // A nil server means NWListener rejected the parameters outright,
+        // before any port was touched — report and stay off like every other
+        // listener failure, instead of the old `try!` crash at construction.
+        guard let server = HTTPServer(parameters: HTTPServerTransport.localhostTCP(port: port), router: { request in
             await router.handle(request)
+        }) else {
+            isHttpListening = false
+            httpError = "无法创建 HTTP 监听器"
+            return
         }
         installUpgrade(on: server, router: router)
         httpServer = server
@@ -112,8 +119,12 @@ final class APIListenerService {
             atPath: (socketPath as NSString).deletingLastPathComponent,
             withIntermediateDirectories: true
         )
-        let server = HTTPServer(parameters: HTTPServerTransport.unixSocket(path: socketPath)) { request in
+        guard let server = HTTPServer(parameters: HTTPServerTransport.unixSocket(path: socketPath), router: { request in
             await router.handle(request)
+        }) else {
+            isSocketListening = false
+            socketError = "无法创建 Unix socket 监听器"
+            return
         }
         installUpgrade(on: server, router: router)
         socketServer = server

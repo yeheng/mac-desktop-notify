@@ -146,7 +146,7 @@ struct IslandContextMenu: ViewModifier {
             .disabled(!manager.hasContent)
             Divider()
             Button("设置…") {
-                NotificationCenter.default.post(name: .init("MacDesktopNotify.openSettings"), object: nil)
+                NotificationCenter.default.post(name: .openSettings, object: nil)
             }
         }
     }
@@ -305,18 +305,6 @@ struct IslandExpandedView: View {
             .buttonStyle(PanelIconButtonStyle())
             .help("收起面板")
             .accessibilityLabel("收起面板")
-
-            Button {
-                manager.dismissCurrent()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.75))
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(PanelIconButtonStyle())
-            .help("清除当前消息")
-            .accessibilityLabel("清除当前消息")
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)
@@ -380,14 +368,14 @@ private struct MessageListView: View {
                         ))
                 }
 
-                if manager.pendingCount > manager.shownPendingCap {
-                    Text("还有 \(manager.pendingCount - manager.shownPendingCap) 条未展示")
+                if manager.pendingCount > NotificationManager.shownPendingCap {
+                    Text("还有 \(manager.pendingCount - NotificationManager.shownPendingCap) 条未展示")
                         .font(.system(size: 10, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(0.55))
                         .padding(.horizontal, 4)
                 }
 
-                ForEach(manager.queue.prefix(manager.shownPendingCap)) { notification in
+                ForEach(manager.queue.prefix(NotificationManager.shownPendingCap)) { notification in
                     PendingRow(notification: notification)
                 }
 
@@ -585,6 +573,19 @@ private struct CurrentCard: View {
             // to select upwards could dismiss the message mid-gesture.
             .contentShape(Rectangle())
             .gesture(dismissDrag)
+            // Combine the header only, never the whole card: a card-level
+            // `.combine` folds ActionRow's buttons and the critical snooze
+            // control out of VoiceOver. The header is also the only place the
+            // title reaches assistive tech - the card renders just body and
+            // actions - so the combined label carries it along with urgency.
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("当前消息：\(notification.title)，\(notification.urgency.accessibilityLabel)")
+            // Swipe-up dismiss is a gesture, invisible to assistive tech; expose
+            // it as a named action, the same escape hatch HistoryRow gives its
+            // hidden delete button.
+            .accessibilityAction(named: "收起当前消息") {
+                manager.dismissCurrent()
+            }
 
             NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
 
@@ -603,8 +604,6 @@ private struct CurrentCard: View {
         .offset(y: dragOffset)
         .opacity(1 - min(1, abs(dragOffset) / 80) * 0.6)
         .animation(reduceMotion ? nil : .default, value: dragOffset)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("当前消息：\(notification.title)")
     }
 
     /// Critical-specific affordances: snooze (it stays, but stops hogging the
@@ -785,21 +784,11 @@ private struct HistoryRow: View {
     /// all) shows no preview rather than a placeholder like "无正文".
     private var previewText: AttributedString? {
         guard !notification.bodyMarkdown.isEmpty else { return nil }
-        var proseLines: [String] = []
-        var inCode = false
-        // Same CRLF normalization as `MarkdownRenderer.parse`, so a body pushed
-        // from Windows-flavored tools does not litter the preview with \r.
-        let lines = notification.bodyMarkdown
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .components(separatedBy: "\n")
-        for line in lines {
-            if line.hasPrefix("```") {
-                inCode.toggle()
-            } else if !inCode {
-                proseLines.append(line)
-            }
-        }
-        let flat = proseLines
+        // The same fence definition `parse` splits on (MarkdownRenderer.segments):
+        // a block skipped here is exactly a block rendered as a code card there.
+        let flat = MarkdownRenderer.segments(in: notification.bodyMarkdown)
+            .compactMap { if case .prose(let lines) = $0 { return lines } else { return nil } }
+            .flatMap { $0 }
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")

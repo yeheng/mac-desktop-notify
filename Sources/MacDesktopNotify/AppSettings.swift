@@ -92,7 +92,6 @@ final class AppSettings {
     var showHistoryCount: Bool { didSet { save(showHistoryCount, key: Keys.showHistoryCount) } }
     var soundEnabled: Bool { didSet { save(soundEnabled, key: Keys.soundEnabled) } }
     var launchAtLogin: Bool { didSet { save(launchAtLogin, key: Keys.launchAtLogin) } }
-    var globalShortcutsEnabled: Bool { didSet { save(globalShortcutsEnabled, key: Keys.globalShortcutsEnabled) } }
     var persistHistory: Bool { didSet { save(persistHistory, key: Keys.persistHistory) } }
     var quietMode: QuietMode { didSet { save(quietMode.rawValue, key: Keys.quietMode) } }
     /// Critical messages block until dismissed; with this on, an untouched one
@@ -105,9 +104,10 @@ final class AppSettings {
     var onboardingPreset: String? {
         didSet { save(onboardingPreset, key: Keys.onboardingPreset) }
     }
-    /// Same-value assignments are ignored: the port TextField writes on
-    /// every keystroke, and without this guard each write would rebind
-    /// both listeners via `apiSettingsDidChange`.
+    /// Same-value assignments are ignored: a redundant write would rebind
+    /// both listeners via `apiSettingsDidChange` for nothing. The settings UI
+    /// only commits a new port on submit (see ApiSettingsPane), so every
+    /// change that lands here is a real one.
     var apiUnixSocketEnabled: Bool {
         didSet {
             guard apiUnixSocketEnabled != oldValue else { return }
@@ -148,41 +148,50 @@ final class AppSettings {
         }
     }
 
+    /// Geometry micro-adjustment and the calibration overlay are escape
+    /// hatches for a macOS release that moves the menu bar, not everyday
+    /// settings. They surface in Settings -> 外观 only when enabled from the
+    /// CLI:
+    /// `defaults write com.yeheng.macdesktopnotify island.debugGeometry -bool true`
+    /// Read on demand (not cached) so the flag can flip between window opens.
+    static var debugGeometryEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "island.debugGeometry")
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        hoverToExpand = defaults.object(forKey: Keys.hoverToExpand) as? Bool ?? true
-        hoverDelayMilliseconds = defaults.object(forKey: Keys.hoverDelayMilliseconds) as? Double ?? 150
-        autoCollapseOnLeave = defaults.object(forKey: Keys.autoCollapseOnLeave) as? Bool ?? true
-        autoExpandOnMessage = defaults.object(forKey: Keys.autoExpandOnMessage) as? Bool ?? true
-        normalMessagesPeek = defaults.object(forKey: Keys.normalMessagesPeek) as? Bool ?? false
-        messageDwellSeconds = defaults.object(forKey: Keys.messageDwellSeconds) as? Double ?? 5
-        hideWhenIdle = defaults.object(forKey: Keys.hideWhenIdle) as? Bool ?? true
-        hideInFullscreen = defaults.object(forKey: Keys.hideInFullscreen) as? Bool ?? false
-        enableHaptics = defaults.object(forKey: Keys.enableHaptics) as? Bool ?? true
-        excludeFromScreenRecording = defaults.object(forKey: Keys.excludeFromScreenRecording) as? Bool ?? true
-        miniSummaryOnNotchlessScreens = defaults.object(forKey: Keys.miniSummaryOnNotchlessScreens) as? Bool ?? true
-        mirrorSummaryOnAllDisplays = defaults.object(forKey: Keys.mirrorSummaryOnAllDisplays) as? Bool ?? false
-        layoutMode = IslandLayoutMode(rawValue: defaults.string(forKey: Keys.layoutMode) ?? "normal") ?? .normal
-        contentFontSize = defaults.object(forKey: Keys.contentFontSize) as? Double ?? 12
-        panelWidth = defaults.object(forKey: Keys.panelWidth) as? Double ?? 460
-        panelHeight = defaults.object(forKey: Keys.panelHeight) as? Double ?? 360
-        notchWidthOffset = defaults.object(forKey: Keys.notchWidthOffset) as? Double ?? 0
-        notchHeightOffset = defaults.object(forKey: Keys.notchHeightOffset) as? Double ?? 0
-        showUrgency = defaults.object(forKey: Keys.showUrgency) as? Bool ?? true
-        showHistoryCount = defaults.object(forKey: Keys.showHistoryCount) as? Bool ?? true
-        soundEnabled = defaults.object(forKey: Keys.soundEnabled) as? Bool ?? true
-        launchAtLogin = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
-        globalShortcutsEnabled = defaults.object(forKey: Keys.globalShortcutsEnabled) as? Bool ?? false
-        persistHistory = defaults.object(forKey: Keys.persistHistory) as? Bool ?? true
-        quietMode = QuietMode(rawValue: defaults.string(forKey: Keys.quietMode) ?? "") ?? .off
-        ageOutCriticals = defaults.object(forKey: Keys.ageOutCriticals) as? Bool ?? true
-        onboardingCompleted = defaults.object(forKey: Keys.onboardingCompleted) as? Bool ?? false
-        onboardingPreset = defaults.string(forKey: Keys.onboardingPreset)
-        showNotchCalibration = defaults.object(forKey: Keys.showNotchCalibration) as? Bool ?? false
-        globalPanelHotkeyEnabled = defaults.object(forKey: Keys.globalPanelHotkeyEnabled) as? Bool ?? true
-        apiUnixSocketEnabled = defaults.object(forKey: Keys.apiUnixSocketEnabled) as? Bool ?? true
-        apiHttpEnabled = defaults.object(forKey: Keys.apiHttpEnabled) as? Bool ?? false
-        apiHttpPort = defaults.object(forKey: Keys.apiHttpPort) as? Int ?? 4770
+        hoverToExpand = defaults.object(forKey: Keys.hoverToExpand.rawValue) as? Bool ?? true
+        hoverDelayMilliseconds = defaults.object(forKey: Keys.hoverDelayMilliseconds.rawValue) as? Double ?? 150
+        autoCollapseOnLeave = defaults.object(forKey: Keys.autoCollapseOnLeave.rawValue) as? Bool ?? true
+        autoExpandOnMessage = defaults.object(forKey: Keys.autoExpandOnMessage.rawValue) as? Bool ?? true
+        normalMessagesPeek = defaults.object(forKey: Keys.normalMessagesPeek.rawValue) as? Bool ?? false
+        messageDwellSeconds = defaults.object(forKey: Keys.messageDwellSeconds.rawValue) as? Double ?? 5
+        hideWhenIdle = defaults.object(forKey: Keys.hideWhenIdle.rawValue) as? Bool ?? true
+        hideInFullscreen = defaults.object(forKey: Keys.hideInFullscreen.rawValue) as? Bool ?? false
+        enableHaptics = defaults.object(forKey: Keys.enableHaptics.rawValue) as? Bool ?? true
+        excludeFromScreenRecording = defaults.object(forKey: Keys.excludeFromScreenRecording.rawValue) as? Bool ?? true
+        miniSummaryOnNotchlessScreens = defaults.object(forKey: Keys.miniSummaryOnNotchlessScreens.rawValue) as? Bool ?? true
+        mirrorSummaryOnAllDisplays = defaults.object(forKey: Keys.mirrorSummaryOnAllDisplays.rawValue) as? Bool ?? false
+        layoutMode = IslandLayoutMode(rawValue: defaults.string(forKey: Keys.layoutMode.rawValue) ?? "normal") ?? .normal
+        contentFontSize = defaults.object(forKey: Keys.contentFontSize.rawValue) as? Double ?? 12
+        panelWidth = defaults.object(forKey: Keys.panelWidth.rawValue) as? Double ?? 460
+        panelHeight = defaults.object(forKey: Keys.panelHeight.rawValue) as? Double ?? 360
+        notchWidthOffset = defaults.object(forKey: Keys.notchWidthOffset.rawValue) as? Double ?? 0
+        notchHeightOffset = defaults.object(forKey: Keys.notchHeightOffset.rawValue) as? Double ?? 0
+        showUrgency = defaults.object(forKey: Keys.showUrgency.rawValue) as? Bool ?? true
+        showHistoryCount = defaults.object(forKey: Keys.showHistoryCount.rawValue) as? Bool ?? true
+        soundEnabled = defaults.object(forKey: Keys.soundEnabled.rawValue) as? Bool ?? true
+        launchAtLogin = defaults.object(forKey: Keys.launchAtLogin.rawValue) as? Bool ?? false
+        persistHistory = defaults.object(forKey: Keys.persistHistory.rawValue) as? Bool ?? true
+        quietMode = QuietMode(rawValue: defaults.string(forKey: Keys.quietMode.rawValue) ?? "") ?? .off
+        ageOutCriticals = defaults.object(forKey: Keys.ageOutCriticals.rawValue) as? Bool ?? true
+        onboardingCompleted = defaults.object(forKey: Keys.onboardingCompleted.rawValue) as? Bool ?? false
+        onboardingPreset = defaults.string(forKey: Keys.onboardingPreset.rawValue)
+        showNotchCalibration = defaults.object(forKey: Keys.showNotchCalibration.rawValue) as? Bool ?? false
+        globalPanelHotkeyEnabled = defaults.object(forKey: Keys.globalPanelHotkeyEnabled.rawValue) as? Bool ?? true
+        apiUnixSocketEnabled = defaults.object(forKey: Keys.apiUnixSocketEnabled.rawValue) as? Bool ?? true
+        apiHttpEnabled = defaults.object(forKey: Keys.apiHttpEnabled.rawValue) as? Bool ?? false
+        apiHttpPort = defaults.object(forKey: Keys.apiHttpPort.rawValue) as? Int ?? 4770
     }
 
     /// Test seam: the singleton is backed by `.standard`, which inside the test
@@ -190,22 +199,13 @@ final class AppSettings {
     /// cfprefsd caches across test runs. Mutating `AppSettings.shared` from a
     /// test therefore leaks into every later run on the same machine. This
     /// removes every persisted key so the next `AppSettings(defaults:)` read
-    /// falls back to factory defaults. Production never calls it.
+    /// falls back to factory defaults. Production never calls it. The reset
+    /// walks `Keys.allCases`, so a new setting is covered the moment its key
+    /// exists — the hand-maintained list this replaced was the one edit point
+    /// the compiler could not enforce.
     func resetAllForTesting() {
-        for key in [
-            Keys.hoverToExpand, Keys.hoverDelayMilliseconds, Keys.autoCollapseOnLeave,
-            Keys.autoExpandOnMessage, Keys.normalMessagesPeek, Keys.messageDwellSeconds, Keys.hideWhenIdle,
-            Keys.hideInFullscreen, Keys.enableHaptics, Keys.excludeFromScreenRecording,
-            Keys.miniSummaryOnNotchlessScreens, Keys.mirrorSummaryOnAllDisplays,
-            Keys.layoutMode, Keys.contentFontSize,
-            Keys.panelWidth, Keys.panelHeight, Keys.notchWidthOffset, Keys.notchHeightOffset,
-            Keys.showUrgency, Keys.showHistoryCount, Keys.soundEnabled,
-            Keys.launchAtLogin, Keys.globalShortcutsEnabled, Keys.persistHistory,
-            Keys.quietMode, Keys.ageOutCriticals, Keys.onboardingCompleted,
-            Keys.onboardingPreset, Keys.showNotchCalibration, Keys.globalPanelHotkeyEnabled,
-            Keys.apiUnixSocketEnabled, Keys.apiHttpEnabled, Keys.apiHttpPort,
-        ] {
-            defaults.removeObject(forKey: key)
+        for key in Keys.allCases {
+            defaults.removeObject(forKey: key.rawValue)
         }
     }
 
@@ -218,44 +218,56 @@ final class AppSettings {
         notchHeightOffset = 0
     }
 
-    private func save<T>(_ value: T, key: String) {
-        defaults.set(value, forKey: key)
+    /// Takes the key case, not a raw string: the case list below is the
+    /// single source of every persisted key.
+    private func save<T>(_ value: T, key: Keys) {
+        defaults.set(value, forKey: key.rawValue)
     }
 
-    private enum Keys {
-        static let hoverToExpand = "island.hoverToExpand"
-        static let hoverDelayMilliseconds = "island.hoverDelayMilliseconds"
-        static let autoCollapseOnLeave = "island.autoCollapseOnLeave"
-        static let autoExpandOnMessage = "island.autoExpandOnMessage"
-        static let normalMessagesPeek = "island.normalMessagesPeek"
-        static let messageDwellSeconds = "island.messageDwellSeconds"
-        static let hideWhenIdle = "island.hideWhenIdle"
-        static let hideInFullscreen = "island.hideInFullscreen"
-        static let enableHaptics = "island.enableHaptics"
-        static let excludeFromScreenRecording = "island.excludeFromScreenRecording"
-        static let miniSummaryOnNotchlessScreens = "island.miniSummaryOnNotchlessScreens"
-        static let mirrorSummaryOnAllDisplays = "island.mirrorSummaryOnAllDisplays"
-        static let layoutMode = "island.layoutMode"
-        static let contentFontSize = "island.contentFontSize"
-        static let panelWidth = "island.panelWidth"
-        static let panelHeight = "island.panelHeight"
-        static let notchWidthOffset = "island.notchWidthOffset"
-        static let notchHeightOffset = "island.notchHeightOffset"
-        static let showUrgency = "island.showUrgency"
-        static let showHistoryCount = "island.showHistoryCount"
-        static let soundEnabled = "island.soundEnabled"
-        static let launchAtLogin = "island.launchAtLogin"
-        static let globalShortcutsEnabled = "island.globalShortcutsEnabled"
-        static let persistHistory = "island.persistHistory"
-        static let quietMode = "island.quietMode"
-        static let ageOutCriticals = "island.ageOutCriticals"
-        static let onboardingCompleted = "island.onboardingCompleted"
-        static let onboardingPreset = "island.onboardingPreset"
-        static let showNotchCalibration = "island.showNotchCalibration"
-        static let globalPanelHotkeyEnabled = "island.globalPanelHotkeyEnabled"
-        static let apiUnixSocketEnabled = "island.apiUnixSocketEnabled"
-        static let apiHttpEnabled = "island.apiHttpEnabled"
-        static let apiHttpPort = "island.apiHttpPort"
+    /// One case per persisted key; the raw value is the on-disk string,
+    /// unchanged from the hand-rolled era so existing installs keep their
+    /// settings. `CaseIterable` is what lets `resetAllForTesting` — and the
+    /// test harness' isolation wipe — cover every key without a second
+    /// list. Internal (not private) so `@testable` tests can derive from it
+    /// instead of maintaining a copy.
+    enum Keys: String, CaseIterable {
+        case hoverToExpand = "island.hoverToExpand"
+        case hoverDelayMilliseconds = "island.hoverDelayMilliseconds"
+        case autoCollapseOnLeave = "island.autoCollapseOnLeave"
+        case autoExpandOnMessage = "island.autoExpandOnMessage"
+        case normalMessagesPeek = "island.normalMessagesPeek"
+        case messageDwellSeconds = "island.messageDwellSeconds"
+        case hideWhenIdle = "island.hideWhenIdle"
+        case hideInFullscreen = "island.hideInFullscreen"
+        case enableHaptics = "island.enableHaptics"
+        case excludeFromScreenRecording = "island.excludeFromScreenRecording"
+        case miniSummaryOnNotchlessScreens = "island.miniSummaryOnNotchlessScreens"
+        case mirrorSummaryOnAllDisplays = "island.mirrorSummaryOnAllDisplays"
+        case layoutMode = "island.layoutMode"
+        case contentFontSize = "island.contentFontSize"
+        case panelWidth = "island.panelWidth"
+        case panelHeight = "island.panelHeight"
+        case notchWidthOffset = "island.notchWidthOffset"
+        case notchHeightOffset = "island.notchHeightOffset"
+        case showUrgency = "island.showUrgency"
+        case showHistoryCount = "island.showHistoryCount"
+        case soundEnabled = "island.soundEnabled"
+        case launchAtLogin = "island.launchAtLogin"
+        // Retired with the ⌘-family global shortcuts (they conflicted with
+        // Finder and every app's own menus; ⌃⌥N covers the same ground with
+        // no permission and no conflicts). The case stays so
+        // `resetAllForTesting` still wipes the stale on-disk key.
+        case globalShortcutsEnabled = "island.globalShortcutsEnabled"
+        case persistHistory = "island.persistHistory"
+        case quietMode = "island.quietMode"
+        case ageOutCriticals = "island.ageOutCriticals"
+        case onboardingCompleted = "island.onboardingCompleted"
+        case onboardingPreset = "island.onboardingPreset"
+        case showNotchCalibration = "island.showNotchCalibration"
+        case globalPanelHotkeyEnabled = "island.globalPanelHotkeyEnabled"
+        case apiUnixSocketEnabled = "island.apiUnixSocketEnabled"
+        case apiHttpEnabled = "island.apiHttpEnabled"
+        case apiHttpPort = "island.apiHttpPort"
     }
 }
 
@@ -281,5 +293,68 @@ enum QuietMode: String, CaseIterable, Identifiable {
         case .historyOnly: "离开期间的消息只进入历史，回来后用未读数量提示。"
         case .criticalOnly: "critical 消息照常弹出，其余静默进入历史。"
         }
+    }
+}
+
+/// The three attention levels the app ships, shared by onboarding and the
+/// settings window. A preset is the unit a user reasons in; the underlying
+/// toggles (`autoExpandOnMessage`, `messageDwellSeconds`, `ageOutCriticals`)
+/// are what it writes - and the only thing that writes them from UI, so the
+/// two can never disagree about what a level means.
+enum AttentionPreset: String, CaseIterable, Identifiable {
+    case quiet
+    case balanced
+    case instant
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .quiet: "安静"
+        case .balanced: "平衡"
+        case .instant: "即时"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .quiet: "到达不展开，只在摘要栏显示；适合高频脚本。critical 超时自动降级。"
+        case .balanced: "到达自动展开并停留 5 秒（默认）。critical 超时自动降级。"
+        case .instant: "到达即展开并停留 10 秒，critical 常驻直到手动处理。"
+        }
+    }
+
+    @MainActor
+    func apply(to settings: AppSettings) {
+        switch self {
+        case .quiet:
+            settings.autoExpandOnMessage = false
+            settings.ageOutCriticals = true
+        case .balanced:
+            settings.autoExpandOnMessage = true
+            settings.messageDwellSeconds = 5
+            settings.ageOutCriticals = true
+        case .instant:
+            settings.autoExpandOnMessage = true
+            settings.messageDwellSeconds = 10
+            settings.ageOutCriticals = false
+        }
+    }
+
+    /// The preset the current values correspond to, or nil when they form a
+    /// custom combination (e.g. tuned by an older version's individual
+    /// controls). Derived, never stored: there is one source of truth and it
+    /// is the values themselves. Note `.quiet` does not pin a dwell time, so
+    /// its derivation ignores `messageDwellSeconds` - exactly what `apply`
+    /// leaves untouched.
+    @MainActor
+    static func matching(_ settings: AppSettings) -> AttentionPreset? {
+        if !settings.autoExpandOnMessage {
+            return settings.ageOutCriticals ? .quiet : nil
+        }
+        if settings.ageOutCriticals {
+            return settings.messageDwellSeconds == 5 ? .balanced : nil
+        }
+        return settings.messageDwellSeconds == 10 ? .instant : nil
     }
 }

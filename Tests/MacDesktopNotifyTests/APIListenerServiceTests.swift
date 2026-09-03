@@ -148,9 +148,9 @@ final class APIListenerServiceTests: SettingsIsolatedTestCase {
     /// the path every mid-startup restart takes through `HTTPServer.start()`.
     /// Cancelling before the first await makes the race deterministic.
     func testStopBeforeReadyCancelsPendingStart() async throws {
-        let server = HTTPServer(parameters: HTTPServerTransport.localhostTCP(port: 0)) { _ in
+        let server = try XCTUnwrap(HTTPServer(parameters: HTTPServerTransport.localhostTCP(port: 0)) { _ in
             APIResponse(status: 404, body: Data())
-        }
+        })
         server.stop()
         do {
             _ = try await server.start()

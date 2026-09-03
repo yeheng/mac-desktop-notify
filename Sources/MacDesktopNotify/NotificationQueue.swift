@@ -31,16 +31,16 @@ struct NotificationQueue {
         return history.filter { !skip.contains($0.id) }
     }
 
-    /// Records a message in history, enforcing the cap. Returns the ids that
-    /// were evicted (oldest first), so the caller can drop their read state.
-    @discardableResult
-    mutating func record(_ notification: NotchNotification) -> [UUID] {
+    /// Records a message in history, enforcing the cap. No eviction list is
+    /// returned: read state is reconciled against history in one place
+    /// (`pruneReadState`), so an evicted id loses its read marker there —
+    /// a second per-call cleanup path is exactly the kind of parallel
+    /// mechanism that drifts.
+    mutating func record(_ notification: NotchNotification) {
         history.append(notification)
-        guard history.count > Self.maxHistoryCount else { return [] }
-        let excess = history.count - Self.maxHistoryCount
-        let dropped = history.prefix(excess).map(\.id)
-        history.removeFirst(excess)
-        return Array(dropped)
+        if history.count > Self.maxHistoryCount {
+            history.removeFirst(history.count - Self.maxHistoryCount)
+        }
     }
 
     /// Adds an already-recorded message to the pending queue, enforcing the cap.
@@ -97,14 +97,11 @@ struct NotificationQueue {
         readIDs.subtract(ids)
     }
 
-    /// Drops one entry everywhere it lives. Returns whether anything was removed.
-    @discardableResult
-    mutating func remove(_ id: UUID) -> Bool {
-        let before = history.count + queue.count + readIDs.count
+    /// Drops one entry everywhere it lives.
+    mutating func remove(_ id: UUID) {
         history.removeAll { $0.id == id }
         queue.removeAll { $0.id == id }
         readIDs.remove(id)
-        return history.count + queue.count + readIDs.count < before
     }
 
     mutating func clear() {

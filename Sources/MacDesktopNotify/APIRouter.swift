@@ -168,9 +168,18 @@ final class APIRouter: Sendable {
 
     // MARK: - WebSocket command frames
 
+    /// One DTO for every op: `op`/`ref` are the WS envelope, the rest is the
+    /// push/clear payload. Decodable ignores unknown keys, so push fields
+    /// ride along in the same decode — no strip-and-reencode pass needed.
     private struct WSCommandDTO: Decodable {
         let op: String
         let ref: String?
+        let title: String?
+        let body: String?
+        let urgency: String?
+        let timeout: Double?
+        let group: String?
+        let actions: [ActionDTO]?
     }
 
     private struct WSResultFrame: Encodable {
@@ -200,56 +209,43 @@ final class APIRouter: Sendable {
         }
         switch dto.op {
         case "push":
-            // Extract notification fields by removing "op" and "ref" from the command JSON
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: "无效的 JSON"))
+            // The frame DTO already carries the whole push payload, so this
+            // is the same validation the HTTP endpoint runs — one decode,
+            // where the old path decoded (WSCommandDTO), re-parsed
+            // (JSONSerialization), re-encoded, and decoded again (PushDTO):
+            // four JSON passes per frame for a problem Decodable never had.
+            let actions = (dto.actions ?? []).compactMap { dto -> NotificationAction? in
+                guard let url = URL(string: dto.url) else { return nil }
+                return NotificationAction(label: dto.label, url: url)
             }
-            var notificationFields = json
-            notificationFields.removeValue(forKey: "op")
-            notificationFields.removeValue(forKey: "ref")
-            guard let notificationBody = try? JSONSerialization.data(withJSONObject: notificationFields) else {
-                return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: "无法构建通知 JSON"))
-            }
-
-            let response = await handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: notificationBody))
-            if response.status == 200,
-               let pushResponse = try? JSONDecoder().decode(PushResponse.self, from: response.body) {
+            switch PushValidator.makeNotification(
+                title: dto.title ?? "", body: dto.body, urgencyRaw: dto.urgency,
+                timeout: dto.timeout, group: dto.group, actions: actions
+            ) {
+            case .success(let notification):
+                let outcome = await MainActor.run { manager.push(notification) }
                 return encodeFrame(WSResultFrame(
                     ref: dto.ref,
                     ok: true,
-                    outcome: pushResponse.outcome,
-                    id: pushResponse.id
+                    outcome: outcome.label,
+                    id: notification.id.uuidString
                 ))
-            } else {
-                return failureFrame(ref: dto.ref, from: response)
+            case .failure(let rejection):
+                return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: rejection.description))
             }
         case "clear":
-            // Extract clear fields by removing "op" and "ref"
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: "无效的 JSON"))
-            }
-            var clearFields = json
-            clearFields.removeValue(forKey: "op")
-            clearFields.removeValue(forKey: "ref")
-            let clearBody = clearFields.isEmpty ? Data() : ((try? JSONSerialization.data(withJSONObject: clearFields)) ?? Data())
-
-            let response = await handle(APIRequest(method: "POST", path: "/v1/clear", query: [:], body: clearBody))
-            if response.status == 200 {
-                return encodeFrame(WSResultFrame(ref: dto.ref, ok: true))
+            // Absent or unnormalizable group means "clear everything" — the
+            // same rule the HTTP endpoint applies to its body. A group of the
+            // wrong type fails the frame decode above, never a silent clear.
+            if let group = PushValidator.normalizedGroup(dto.group) {
+                await MainActor.run { manager.clear(group: group) }
             } else {
-                return failureFrame(ref: dto.ref, from: response)
+                await MainActor.run { manager.clear() }
             }
+            return encodeFrame(WSResultFrame(ref: dto.ref, ok: true))
         default:
             return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: "未知操作"))
         }
-    }
-
-    private func failureFrame(ref: String?, from response: APIResponse) -> Data {
-        struct ErrorPayload: Decodable {
-            let error: String
-        }
-        let reason = (try? JSONDecoder().decode(ErrorPayload.self, from: response.body))?.error ?? "请求失败"
-        return encodeFrame(WSResultFrame(ref: ref, ok: false, error: reason))
     }
 
     private func encodeFrame<T: Encodable>(_ frame: T) -> Data {

@@ -9,22 +9,12 @@ import XCTest
 /// later run *and* every other suite. Rather than restoring a snapshot (which
 /// would faithfully restore yesterday's leaked garbage), tearDown removes all
 /// island.* keys outright: the next reader gets factory defaults, which is the
-/// only state tests should ever assume.
+/// only state tests should ever assume. The key list is derived from
+/// `AppSettings.Keys.allCases` — a new setting is covered the moment its key
+/// exists, where a hand-maintained copy here would rot silently.
 @MainActor
 class SettingsIsolatedTestCase: XCTestCase {
-    private static let islandKeys: [String] = [
-        "island.hoverToExpand", "island.hoverDelayMilliseconds", "island.autoCollapseOnLeave",
-        "island.autoExpandOnMessage", "island.messageDwellSeconds", "island.hideWhenIdle",
-        "island.hideInFullscreen", "island.layoutMode", "island.contentFontSize",
-        "island.panelWidth", "island.panelHeight", "island.notchWidthOffset", "island.notchHeightOffset",
-        "island.showUrgency", "island.showHistoryCount", "island.soundEnabled",
-        "island.launchAtLogin", "island.globalShortcutsEnabled", "island.persistHistory",
-        "island.quietMode", "island.ageOutCriticals", "island.onboardingCompleted",
-        "island.onboardingPreset", "island.showNotchCalibration", "island.globalPanelHotkeyEnabled",
-        "island.apiUnixSocketEnabled", "island.apiHttpEnabled", "island.apiHttpPort",
-        "island.enableHaptics", "island.excludeFromScreenRecording", "island.normalMessagesPeek",
-        "island.miniSummaryOnNotchlessScreens", "island.mirrorSummaryOnAllDisplays",
-    ]
+    private static let islandKeys: [String] = AppSettings.Keys.allCases.map(\.rawValue)
 
     /// Suites that must not run against factory defaults override this.
     var keysToPreserve: Set<String> { [] }

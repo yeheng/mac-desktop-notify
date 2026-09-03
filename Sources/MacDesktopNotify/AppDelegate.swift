@@ -1,6 +1,14 @@
 import AppKit
 import ApplicationServices
 
+extension Notification.Name {
+    /// Opens the Settings window: the notch panel's context menu posts it,
+    /// the delegate (which owns the window controller) observes it.
+    static let openSettings = Notification.Name("MacDesktopNotify.openSettings")
+    /// Reruns onboarding from Settings → 关于。
+    static let reopenOnboarding = Notification.Name("MacDesktopNotify.reopenOnboarding")
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
@@ -48,8 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: AppSettings.apiSettingsDidChange,
             object: nil,
             queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { APIListenerService.shared.restart() }
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleAPIRestart() }
         }
         NotificationCenter.default.addObserver(
             forName: AppSettings.panelHotkeyDidChange,
@@ -61,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // "重新运行首次引导" from Settings → 关于 lands here.
         NotificationCenter.default.addObserver(
-            forName: .init("MacDesktopNotify.reopenOnboarding"),
+            forName: .reopenOnboarding,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -85,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self?.requestClearAll(reason: "面板") }
         }
         NotificationCenter.default.addObserver(
-            forName: .init("MacDesktopNotify.openSettings"),
+            forName: .openSettings,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -138,16 +146,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// perspective only sometimes, so both channels are used: stderr for scripts
     /// (it lands wherever the sender redirected it), and a visible pill for
     /// humans poking at the URL by hand.
+    ///
+    /// Normal urgency, deliberately: a typo in a shell script is feedback to the
+    /// person debugging it, not a fire. Sending it as critical would let a
+    /// malformed URL hold the screen hostage - a self-DoS with extra steps.
     private func reportPushRejection(_ rejection: PushRejection, url: URL) {
         FileHandle.standardError.write(Data("notch-notify: push 被拒绝：\(rejection.description)（\(url.absoluteString)）\n".utf8))
         NotificationManager.shared.push(
             NotchNotification(
                 title: "推送格式错误",
                 bodyMarkdown: "**\(rejection.description)**\n\n发送方：`\(url.host() ?? "push")`\n\n请检查 URL 参数后重试。",
-                urgency: .critical,
+                urgency: .normal,
                 timeout: nil
             )
         )
+    }
+
+    /// Coalesced listener restart: several API settings can flip within one
+    /// settings interaction, and rebinding twice per flip is pure churn.
+    private var apiRestartTask: Task<Void, Never>?
+
+    private func scheduleAPIRestart() {
+        apiRestartTask?.cancel()
+        apiRestartTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            _ = self
+            APIListenerService.shared.restart()
+        }
     }
 
     // MARK: - Sound
@@ -192,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = NSMenuItem(title: "打开面板", action: #selector(togglePanelFromMenu), keyEquivalent: "")
         let clear = NSMenuItem(title: "清除消息…", action: #selector(confirmClearAll), keyEquivalent: "")
         let settings = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
-        let quit = NSMenuItem(title: "退出 MacDesktopNotify", action: #selector(quitApp), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "退出 NotchNotify", action: #selector(quitApp), keyEquivalent: "q")
         panel.target = self
         clear.target = self
         settings.target = self
@@ -288,12 +314,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 // Action shortcuts are gated by pointer engagement rather than
-                // app activation (the panel never activates the app), so they
-                // run ahead of the global-shortcuts opt-in gate.
+                // app activation (the panel never activates the app).
+                // Esc is gated by `canDismissWithEscape` for the same reason:
+                // a global Esc that collapses the panel on every vim press is
+                // worse than no Esc at all. Both need Accessibility trust to
+                // fire from other apps; ⌃⌥N (Carbon hotkey) does not.
                 if self.handleActionShortcut(event) { return }
-                // Global shortcuts are opt-in: ⌘, / ⌘⇧N / ⌘Delete collide with
-                // Finder and most apps' own menus, so they stay off until enabled.
-                guard AppSettings.shared.globalShortcutsEnabled else { return }
                 _ = self.handleShortcut(event)
             }
         }
@@ -333,20 +359,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// Esc collapses the panel. That is the only key this handler claims:
+    /// the ⌘-family shortcuts (⌘, / ⌘⇧N / ⌘Delete) were removed - a shortcut
+    /// that fights Finder and every app's own menu is a special case, and the
+    /// conflict-free ⌃⌥N already covers panel toggling.
     private func handleShortcut(_ event: NSEvent) -> Bool {
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if event.keyCode == 45, modifiers.contains([.command, .shift]) {
-            NotificationManager.shared.togglePanel()
-            return true
-        }
-        if event.keyCode == 43, modifiers.contains(.command) {
-            settingsController?.show()
-            return true
-        }
-        if event.keyCode == 51, modifiers.contains(.command) {
-            requestClearAll(reason: "快捷键 ⌘Delete")
-            return true
-        }
         // Esc only counts when the panel is a deliberate focus of attention:
         // the pointer is on it, or the user opened it themselves (click, hover,
         // or keyboard). Firing from the global monitor otherwise would collapse

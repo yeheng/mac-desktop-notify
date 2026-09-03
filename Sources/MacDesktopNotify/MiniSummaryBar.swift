@@ -112,15 +112,31 @@ final class MiniSummaryBars {
     }
 
     /// Retires the bar for a display that no longer needs one: it expanded, it
-    /// went empty, or the display itself is gone.
+    /// went empty, or the user switched the summary off. The window STAYS in
+    /// the map — an NSPanel with an NSHostingView is not cheap, and a
+    /// notchless display's ordinary compact↔expand churn should not rebuild
+    /// one per cycle. Displays that are actually gone are swept by
+    /// `retireAbsent(from:)`.
     func hide(for displayID: CGDirectDisplayID) {
         visibleDisplayIDs.remove(displayID)
-        guard let window = windows.removeValue(forKey: displayID) else { return }
-        window.orderOut(nil)
+        windows[displayID]?.orderOut(nil)
     }
 
     func hideAll() {
-        for id in Array(windows.keys) { hide(for: id) }
+        for id in visibleDisplayIDs {
+            windows[id]?.orderOut(nil)
+        }
+        visibleDisplayIDs.removeAll()
+    }
+
+    /// Drops bars whose display no longer exists (unplug, reconfigure). The
+    /// displayID is not coming back — and if the physical screen is ever
+    /// re-plugged, `show` simply builds a fresh window for it.
+    func retireAbsent(from live: Set<CGDirectDisplayID>) {
+        for id in windows.keys where !live.contains(id) {
+            windows.removeValue(forKey: id)?.orderOut(nil)
+            visibleDisplayIDs.remove(id)
+        }
     }
 
     /// Screen-capture exclusion has to be re-applied here too: the bars are

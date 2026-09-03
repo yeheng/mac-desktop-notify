@@ -99,6 +99,17 @@ final class NotchPresenter: NotchPresenting {
     /// How long the cached answer may be reused while the pointer keeps moving.
     private static let fullscreenStaleness: TimeInterval = 2
 
+    /// Snapshot of `NSScreen.screens`, refreshed by `syncScreens`.
+    ///
+    /// `NSScreen.screens` rebuilds its array on every call, and the mouse-move
+    /// path reads it well over a hundred times a second. Caching the *array*
+    /// is safe where hoarding an individual `NSScreen` would not be: display
+    /// changes recreate the instances, and the same notification that
+    /// recreates them (`didChangeScreenParameters`) is what reruns
+    /// `syncScreens`, on the same main thread every reader runs on — so no
+    /// reader can observe a pre-change array after the change landed.
+    private var screensSnapshot: [NSScreen] = []
+
     init() {
         syncScreens()
         installMouseMonitors()
@@ -233,7 +244,8 @@ final class NotchPresenter: NotchPresenting {
 
     /// Brings the instance map in line with the displays that actually exist.
     private func syncScreens() {
-        let live = Set(NSScreen.screens.map(\.displayID))
+        screensSnapshot = NSScreen.screens
+        let live = Set(screensSnapshot.map(\.displayID))
         notches.sync(
             current: live,
             make: { _ in makeNotch() },
@@ -243,9 +255,7 @@ final class NotchPresenter: NotchPresenting {
         )
         // Same for the mini bars: a bar left behind after its display was
         // unplugged would hang over whatever that screen is showing now.
-        for id in miniBars.visibleDisplayIDs where !live.contains(id) {
-            miniBars.hide(for: id)
-        }
+        miniBars.retireAbsent(from: live)
         if let activeScreenID, !notches.instances.keys.contains(activeScreenID) {
             self.activeScreenID = nil
         }
@@ -253,15 +263,18 @@ final class NotchPresenter: NotchPresenting {
 
     /// The display the island belongs to: wherever the pointer last was.
     ///
-    /// `NSScreen.screens` is consulted every time rather than cached, because
-    /// `NSScreen` instances are recreated on every display change and a stale one
-    /// carries a stale frame.
+    /// Reads `screensSnapshot` (the same array `syncScreens` built the notch
+    /// map from) rather than querying fresh: the two must never disagree about
+    /// which displays exist. `applyToScreens` is the one deliberate exception
+    /// below — its screens cross into async closures, where Swift 6 region
+    /// isolation demands a freshly built array, and it matches by `displayID`,
+    /// which is stable across instance recreation.
     private var targetScreen: NSScreen? {
         if let activeScreenID,
-           let match = NSScreen.screens.first(where: { $0.displayID == activeScreenID }) {
+           let match = screensSnapshot.first(where: { $0.displayID == activeScreenID }) {
             return match
         }
-        return NSScreen.main ?? NSScreen.screens.first
+        return NSScreen.main ?? screensSnapshot.first
     }
 
     /// Applies `active` to the island's display and `inactive` to every other one.
@@ -273,6 +286,12 @@ final class NotchPresenter: NotchPresenting {
         inactive: (IslandNotch, NSScreen) async -> Void
     ) async {
         let targetID = targetScreen?.displayID
+        // Fresh query, deliberately: these screens are sent into the async
+        // closures below, and Swift 6 only allows sending values that a
+        // freshly built array can prove no one else references (the snapshot
+        // is shared stored state). This is the cold path — expand, collapse,
+        // reapply — so the per-call array build is irrelevant, and matching
+        // happens by `displayID`, which survives instance recreation.
         for screen in NSScreen.screens {
             guard let notch = notches.instances[screen.displayID] else { continue }
             if screen.displayID == targetID {
@@ -393,7 +412,7 @@ final class NotchPresenter: NotchPresenting {
     private func updatePointerState(clicked: Bool = false) {
         let location = NSEvent.mouseLocation
         let manager = NotificationManager.shared
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(location) }) else {
+        guard let screen = screensSnapshot.first(where: { $0.frame.contains(location) }) else {
             manager.setPointerNearIsland(false)
             return
         }
@@ -529,7 +548,7 @@ final class NotchPresenter: NotchPresenting {
 
     private func syncCalibrationOverlay() {
         if AppSettings.shared.showNotchCalibration {
-            calibrationOverlay.update(screens: NSScreen.screens)
+            calibrationOverlay.update(screens: screensSnapshot)
         } else {
             calibrationOverlay.removeAll()
         }

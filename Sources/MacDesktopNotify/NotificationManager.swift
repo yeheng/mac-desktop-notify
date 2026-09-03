@@ -224,11 +224,12 @@ final class NotificationManager {
         }
 
         let shouldExpand = AppSettings.shared.autoExpandOnMessage && !displaySuppressed
-        promoteNext(autoExpand: shouldExpand)
-        if !shouldExpand, !displaySuppressed {
-            displayState = .compact
-            presentCompact()
-        }
+        promoteNext(
+            autoExpand: shouldExpand,
+            // Setting off: the message still surfaces, as a pill. Suppressed:
+            // park like `promoteCritical` until the screen comes back.
+            parkWhenNotExpanding: displaySuppressed
+        )
         reconcileDwell()
         return .displayed
     }
@@ -320,14 +321,8 @@ final class NotificationManager {
         guard !removed.isEmpty else { return }
 
         recomputeUnread()
-
-        if let itemID = presentation?.item.id, removed.contains(itemID) {
-            advance()                       // retire what is on screen and move on
-        } else if !hasContent {
-            displayState = .hidden
-            Task { await presenter?.hide() }
-        }
-        schedulePersist()
+        let liveWasRemoved = presentation.map { removed.contains($0.item.id) } ?? false
+        settleAfterRemoval(liveMessageRemoved: liveWasRemoved)
     }
 
     func clear() {
@@ -555,6 +550,12 @@ final class NotificationManager {
             dismissPanel()
         } else {
             guard hasContent else { return }
+            // Same open path as `islandClicked`, minus its pointer events — a
+            // hotkey or menu open has no click to feed the pointer reducer.
+            // The hover timer still must die here: the user can arm it by
+            // crossing the zone on the way to the keyboard, and a late fire
+            // would re-present (and un-mark-read) the panel this just opened.
+            delayed.cancel(.hoverExpand)
             displayState = .manualExpanded
             presentExpanded(marksRead: true)
             reconcileDwell()
@@ -716,7 +717,12 @@ final class NotificationManager {
             return
         }
 
-        promoteNext(autoExpand: displayState == .hidden || displayState == .compact)
+        promoteNext(
+            autoExpand: displayState == .hidden || displayState == .compact,
+            // No auto-expand here means the panel is already open and the
+            // content swaps in place; the presenter is left alone.
+            parkWhenNotExpanding: true
+        )
     }
 
     /// The only way a message becomes live. It publishes the message and its dwell
@@ -757,17 +763,37 @@ final class NotificationManager {
     /// waiting outranks a newly pushed normal one, and the caller needs to know
     /// that to report the push outcome honestly.
     @discardableResult
-    private func promoteNext(autoExpand: Bool) -> NotchNotification? {
-        guard let next = dequeue() else {
+    private func promoteNext(autoExpand: Bool, parkWhenNotExpanding: Bool) -> NotchNotification? {
+        guard let next = messages.dequeue() else {
             presentation = nil
             settleDisplay(liveMessage: false)
             return nil
         }
-        beginPresenting(next, as: next.urgency == .critical ? .blockingExpanded : .transientExpanded)
-        if autoExpand, next.displayPeek == true {
-            // The peek tier: the message lives its (short) dwell in the compact
-            // pill - title visible, panel untouched, unread still accruing.
-            displayState = .compact
+        // The landing state is knowable up front, so it is written exactly
+        // once. The old flow parked in `.transientExpanded` and let the caller
+        // overwrite it to `.compact` a moment later - two `displayState`
+        // writes and two didSet settles for a state that never reached the
+        // screen.
+        //  - autoExpand: the message's natural state. The peek tier spends its
+        //    (short) dwell in the compact pill - title visible, panel
+        //    untouched, unread still accruing.
+        //  - parked: rotation into an already-open panel (the content swaps in
+        //    place) or a suppressed display (`promoteCritical` parks the same
+        //    way) - the presenter is left alone either way.
+        //  - otherwise: `push` with the setting off - the message still
+        //    surfaces, as a pill.
+        let landing: IslandDisplayState
+        if autoExpand {
+            landing = next.urgency == .critical
+                ? .blockingExpanded
+                : (next.displayPeek == true ? .compact : .transientExpanded)
+        } else if parkWhenNotExpanding {
+            landing = next.urgency == .critical ? .blockingExpanded : .transientExpanded
+        } else {
+            landing = .compact
+        }
+        beginPresenting(next, as: landing)
+        if landing == .compact {
             presentCompact()
         } else if autoExpand {
             presentExpanded(marksRead: false)
@@ -788,15 +814,6 @@ final class NotificationManager {
         if !displaySuppressed {
             presentExpanded(marksRead: false)
         }
-    }
-
-    /// Next message to present: the most urgent one waiting, oldest first.
-    ///
-    /// Urgency is the dequeue key rather than an insert-time trick, so the queue
-    /// stays FIFO within a priority and "drop the oldest when full" keeps
-    /// meaning the oldest - not the critical that was displaced most recently.
-    private func dequeue() -> NotchNotification? {
-        messages.dequeue()
     }
 
     /// Presents the expanded panel.
@@ -1004,7 +1021,7 @@ final class NotificationManager {
     /// How many pending rows the panel renders before the "还有 N 条" line.
     /// The full queue stays real; only the list is bounded so a burst of pushes
     /// does not turn the panel into a wall of "待显示".
-    var shownPendingCap: Int { 5 }
+    static let shownPendingCap = 5
 
     /// Removes one entry from history (and the queue if it has not shown yet).
     /// The single-message delete the trash-all button always needed beside it:
@@ -1012,7 +1029,16 @@ final class NotificationManager {
     func removeHistory(id: UUID) {
         messages.remove(id)
         recomputeUnread()
-        if presentation?.item.id == id {
+        settleAfterRemoval(liveMessageRemoved: presentation?.item.id == id)
+    }
+
+    /// Shared tail for the surgical deletes (`removeHistory`, `clear(group:)`):
+    /// when the live message is among the removed, the queue decides what
+    /// comes next; an app left with nothing hides the notch; either way the
+    /// change is persisted. `clear()` does not belong here - it wipes
+    /// everything, timers and on-disk store included.
+    private func settleAfterRemoval(liveMessageRemoved: Bool) {
+        if liveMessageRemoved {
             advance()
         } else if !hasContent {
             displayState = .hidden
@@ -1022,15 +1048,18 @@ final class NotificationManager {
     }
 
     /// Temporarily silences messages: everything lands in history, critical
-    /// included, until the deadline passes or `resume` is called.
+    /// included, until the deadline passes or `resume` is called. `isSilenced`
+    /// derives straight from the deadline, so nothing else needs refreshing.
     func silence(until deadline: Date) {
         quietOverrideUntil = deadline
-        applyQuietOverride()
     }
 
     func resumeFromSilence() {
         quietOverrideUntil = nil
-        applyQuietOverride()
+        // Anything that piled up while silenced stays in history; the return
+        // is announced the same way coming back from a lock is. Idempotent:
+        // `setAway` no-ops when the user was never away.
+        setAway(false)
     }
 
     var isSilenced: Bool {
@@ -1042,39 +1071,16 @@ final class NotificationManager {
     /// without a manual refresh pass.
     private(set) var quietOverrideUntil: Date?
 
-    /// The override routes through `isQuiet`, so every existing gate
-    /// (withholding, no-sound) follows one rule instead of a second flag
-    /// checked in parallel.
-    private func applyQuietOverride() {
-        if isSilenced, quietModeOverride == nil {
-            quietModeOverride = .historyOnly
-        } else if !isSilenced, quietModeOverride != nil {
-            quietModeOverride = nil
-            // Anything that piled up while silenced stays in history; the return
-            // is announced the same way coming back from a lock is.
-            setAway(false)
-        }
-    }
-
-    /// When non-nil, stands in for the user's quiet-mode pick while a manual
-    /// silence window is active.
-    @ObservationIgnored private var quietModeOverride: QuietMode?
-
     // MARK: - Timers
 
     private func scheduleManualCollapse() {
         delayed.schedule(.manualCollapse, after: .milliseconds(260)) { [weak self] in
             guard let self, self.pointer.completelyGone else { return }
-            let shouldHide = self.settlesHidden(liveMessage: self.current != nil)
-            self.displayState = shouldHide ? .hidden : .compact
-            self.reconcileDwell()
-            Task {
-                if shouldHide {
-                    await self.presenter?.hide()
-                } else {
-                    await self.presenter?.compact()
-                }
-            }
+            // The one settle path decides where the display lands — and which
+            // timers die with it (a stale `.hoverExpand` must not outlive this
+            // collapse). The body used to duplicate `settleDisplay` inline and
+            // had already drifted: it forgot the `.hoverExpand` cancel.
+            self.settleDisplay(liveMessage: self.current != nil)
         }
     }
 

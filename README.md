@@ -1,4 +1,4 @@
-# MacDesktopNotify
+# NotchNotify
 
 通过 URL Scheme 或本地 API（HTTP / WebSocket / Unix socket）向 macOS 灵动岛（Dynamic Notch）推送 Markdown 通知的轻量工具。
 
@@ -253,7 +253,7 @@ components.scheme = "notch-notify"
 components.host = "push"
 components.queryItems = [
     URLQueryItem(name: "title", value: "构建完成"),
-    URLQueryItem(value: "body", value: "## 摘要\n\n编译成功"),
+    URLQueryItem(name: "body", value: "## 摘要\n\n编译成功"),
     URLQueryItem(name: "urgency", value: "normal"),
     URLQueryItem(name: "timeout", value: "8")
 ]
@@ -411,11 +411,11 @@ curl http://127.0.0.1:4770/v1/status
 
 | 选项 | 说明 |
 |------|------|
-| **打开面板** | 展开消息面板（同 `⌘⇧N`） |
+| **打开面板** | 展开消息面板（同 `⌃⌥N`） |
 | **清除消息…** | 清除当前、待展示和历史消息（弹出确认） |
 | **静默 1 小时 / 取消静默** | 临时静默：所有消息（含 critical）只进历史，一小时后自动恢复 |
 | **设置…** | 打开设置窗口（通用、外观、通知、接口、关于） |
-| **退出 MacDesktopNotify** | 退出应用 |
+| **退出 NotchNotify** | 退出应用 |
 
 ---
 
@@ -435,12 +435,8 @@ curl http://127.0.0.1:4770/v1/status
 | 点击操作按钮 | 打开回调 URL；对当前消息操作后自动关闭并展示下一条 |
 | 超过停留时间 | 收起到摘要态或隐藏，历史消息仍然保留 |
 | 当前无活跃消息时 | 展开后显示历史消息列表 |
-| `⌘⇧N` | 切换展开/收起状态 |
-| `⌘,` | 打开设置 |
-| `⌘Delete` | 清除消息（**弹确认**，与面板垃圾桶一致） |
 | `Esc` | 收起面板——指针停留在面板/刘海区域，**或面板由手动操作打开**时生效，避免在 vim 等 App 中误触 |
 | 点击 `▾`（收起）按钮 | 只收起面板，当前消息保留 |
-| 点击 `×` 按钮 | 清除当前消息并收起面板（指针离开刘海区域后才会再次悬停展开） |
 | 点击垃圾桶按钮 | 清空全部消息（弹出确认，防止误清空历史） |
 | critical 消息上的「稍后处理」 | 降级为普通消息（5 分钟预算），收起到摘要栏；消息保留在历史与未读中 |
 
@@ -448,11 +444,11 @@ curl http://127.0.0.1:4770/v1/status
 
 **首次运行引导：** 首次启动会出现三步引导（发一条测试通知 / 复制接入片段 / 选择安静·平衡·即时档位），可跳过，并可在「设置 → 关于」重新打开。
 
-**推送诊断：** `push` 缺少 `title` 时不再静默丢弃——写 stderr 并在刘海弹出一条「推送格式错误」的 critical 说明原因。
+**推送诊断：** `push` 缺少 `title` 时不再静默丢弃——写 stderr 并在刘海弹出一条「推送格式错误」的普通通知说明原因。
 
 **全局热键：** `⌃⌥N` 默认开启（系统级注册，无需辅助功能授权，任何 App 中可用），可在「设置 → 通知 → 快捷键」关闭。
 
-其余 ⌘ 系快捷键默认只在本 App 激活时生效；在「设置 → 通知」中开启「在任意 App 中启用 ⌘ 快捷键」后全局生效，**需要辅助功能授权**（可在「设置 → 通用」检测并引导授权，未授权时开关不生效）。注意全局模式下 `⌘,` 与多数 App 的「设置」、`⌘⇧N` 与 Finder「新建文件夹」、`⌘Delete` 与「移到废纸篓」冲突。
+`⌘1`–`⌘3` 与 `Esc` 依赖全局键盘监听，**需要辅助功能授权**（「设置 → 通知 → 快捷键」内检测并引导授权）；未授权时它们不生效，`⌃⌥N` 不受影响。⌘ 系全局快捷键（`⌘,` / `⌘⇧N` / `⌘Delete`）已移除——它们与 Finder 及多数 App 的自身快捷键冲突，`⌃⌥N` 已覆盖面板切换。
 
 ---
 
@@ -480,12 +476,13 @@ curl http://127.0.0.1:4770/v1/status
 
 | 分类 | 配置项 |
 |------|--------|
-| **通用** | 悬停展开、鼠标离开收起、空闲隐藏、全屏隐藏、屏幕录制时隐藏、触觉反馈、悬停延迟、显示器（无刘海屏迷你摘要条、所有屏幕显示摘要）、登录启动、辅助功能授权状态与引导 |
-| **外观** | 布局模式（标准/简洁/详细）、面板宽度/高度上限、内容字号、摘要栏紧急度图标与未读数量、高级（刘海偏移微调、刘海校准框） |
-| **通知** | 自动展开、停留时长（1-30s）、critical 老化降级、保留历史、声音、快捷键、离开时行为（照常显示 / 静默存入历史 / 仅紧急消息穿透） |
-| **接口** | Unix Socket 开关与路径、HTTP / WebSocket 开关与端口（默认 4770，仅绑定 127.0.0.1） |
-| **通知** | 自动展开、普通消息使用轻提醒（`display` 未指定时生效）、停留时长（1-30s）、critical 老化降级、保留历史、声音、快捷键、离开时行为（照常显示 / 静默存入历史 / 仅紧急消息穿透） |
+| **通用** | 悬停展开、鼠标离开收起、空闲隐藏、全屏隐藏、屏幕录制时隐藏、触觉反馈、悬停延迟、显示器（无刘海屏迷你摘要条、所有屏幕显示摘要）、登录启动 |
+| **外观** | 布局模式（标准/简洁/详细）、面板宽度/高度上限、内容字号、摘要栏紧急度图标与未读数量 |
+| **接口** | Unix Socket 开关与路径、HTTP / WebSocket 开关与端口（默认 4770，仅绑定 127.0.0.1，回车或「应用」后生效） |
+| **通知** | 提醒档位（安静/平衡/即时）、普通消息轻提醒（`display` 未指定时生效）、保留历史、声音、快捷键（`⌃⌥N`、`⌘1-3`、`Esc`，含辅助功能授权引导）、离开时行为（照常显示 / 静默存入历史 / 仅紧急消息穿透） |
 | **关于** | 版本、系统要求、项目链接、接入示例、重新运行引导 |
+
+**提醒档位**是通知行为的主开关：安静＝到达不展开只亮摘要栏；平衡＝自动展开停留 5 秒；即时＝自动展开停留 10 秒且 critical 不自动降级。刘海偏移微调与校准框属于调试工具，默认隐藏，可用 `defaults write com.yeheng.macdesktopnotify island.debugGeometry -bool true` 后在「设置 → 外观 → 高级」中启用。
 
 面板高度为**上限**语义：面板随内容收缩，短消息不再占用整块面板空间。
 
@@ -506,15 +503,20 @@ Sources/MacDesktopNotify/
 ├── main.swift                          # 入口
 ├── AppDelegate.swift                   # 应用代理，URL Scheme 处理，菜单栏，快捷键，提示音
 ├── AppSettings.swift                    # 类型化设置与持久化（@Observable）
-├── IslandDisplayState.swift             # 展示状态枚举（hidden/compact/expanded）
+├── IslandDisplayState.swift             # 展示状态枚举（hidden/compact/expanded）与指针状态
 ├── IslandGeometry.swift                 # 刘海区域计算、触发区、屏幕标识
+├── IslandHaptics.swift                  # 触控板触觉反馈（触发区进入、点击、手势确认）
 ├── NotificationManager.swift            # 消息队列、历史、未读、dwell 状态机、静默闸门（@MainActor）
+├── NotificationQueue.swift              # 待展示队列（critical 抢占、容量上限驱逐、分组整组移除）
+├── DelayedEvents.swift                  # 延迟事件簿记（hover 展开、手动收起等定时器，可单独/整体取消）
 ├── NotchNotification.swift              # 通知数据模型（标题/正文/紧急度/超时/分组/操作按钮）
+├── NotificationActionHandler.swift      # 操作按钮点击处理（URL 回调 / ack 回执与批注输入 / 稍后处理降级）
 ├── NotificationHistoryStore.swift       # 历史持久化（原子写 + schemaVersion）
 ├── NotificationAckStore.swift          # 动作回执（token 校验 + 落盘 + 过期清理）
 ├── PresenceMonitor.swift                # 锁屏/屏保/睡眠感知（AwaySource 集合）
 ├── NotchPresenter.swift                 # DynamicNotchKit 桥接、全屏探测缓存、指针监控
 ├── PerScreenInstances.swift            # 每显示器一个 notch 实例的簿记
+├── MiniSummaryBar.swift                 # 无刘海屏的迷你摘要条（每屏一个常驻 NSPanel）
 ├── URLNotificationParser.swift          # URL Scheme 参数解析（push/clear/ack，含长度限制）
 ├── PushValidator.swift                 # 推送字段校验（长度/紧急度/分组/动作按钮截断），各入口共用
 ├── APIRouter.swift                     # 四个端点与 WS 命令的路由（纯逻辑，返回 JSON）
@@ -524,6 +526,7 @@ Sources/MacDesktopNotify/
 ├── WSSession.swift                     # 单个 WS 连接的帧循环（ping/close/命令分发）
 ├── WSEventHub.swift                    # WS 会话登记与事件广播（hello/ack/unreadCount）
 ├── APIListenerService.swift            # 两个监听器的生命周期（默认 socket 开、HTTP 关）
+├── SystemHotkey.swift                  # ⌃⌥N 全局热键（Carbon 注册，无需辅助功能授权）
 ├── MarkdownNotificationView.swift       # 展开视图、摘要视图、消息列表、操作按钮
 ├── MarkdownCache.swift                  # Markdown 解析缓存（NSCache）
 ├── MarkdownRenderer.swift              # Markdown 解析器（正文/代码块分离）
