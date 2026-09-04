@@ -84,7 +84,10 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.unreadCount, 1, "a panel that nobody looked at must not clear unread state")
     }
 
-    func testPointerAtPanelForSettleDelayMarksReadOnCollapse() async throws {
+    /// Dwell unlock marks only what was on screen: the current message and
+    /// rows the view reported visible. A queued message never shown stays
+    /// unread (P3 visibility-based read marking).
+    func testDwellUnlockMarksVisibleRowsOnly() async throws {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
         settings.autoExpandOnMessage = true
@@ -92,15 +95,69 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(make("a"))
-        m.setPointerNearIsland(true)                    // pointer arrives at the panel
+        m.push(make("b"))
+        m.push(make("c"))
+        m.dismissCurrent()           // b current; a past; c queued
+        m.noteRowVisible(m.pastHistory[0].id)   // a is on screen
+        m.setPointerNearIsland(true)
         try await Task.sleep(for: .milliseconds(1200))  // past the settle delay
-        m.dismissPanel()                                // collapse settles the read state
 
-        XCTAssertEqual(m.unreadCount, 0, "a looked-at panel marks everything read when it closes")
+        XCTAssertTrue(m.isRead(m.pastHistory[0]), "the visible history row is read")
+        XCTAssertTrue(m.current.map { m.isRead($0) } ?? false, "the live message is read")
+        XCTAssertEqual(m.unreadCount, 1, "the queued message was never shown, so it stays unread")
+        m.dismissPanel()
+    }
+
+    /// After the unlock, a row scrolled into view earns its read mark after
+    /// one full second on screen — not on the frame it appears.
+    func testScrolledInRowEarnsReadAfterOneSecond() async throws {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = old }
+
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.push(make("b"))
+        m.dismissCurrent()           // b current, a past
+        m.setPointerNearIsland(true)
+        try await Task.sleep(for: .milliseconds(1200))  // unlock
+        let a = m.pastHistory[0]
+        XCTAssertFalse(m.isRead(a), "a was never on screen during the dwell")
+
+        m.noteRowVisible(a.id)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(m.isRead(a), "200ms on screen is a scroll-past, not a read")
+        try await Task.sleep(for: .milliseconds(1000))
+        XCTAssertTrue(m.isRead(a), "a full second on screen earns the read mark")
+        m.dismissPanel()
+    }
+
+    /// A row scrolled away before its second elapses keeps its unread state.
+    func testRowHiddenBeforeItsSecondStaysUnread() async throws {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = old }
+
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.push(make("b"))
+        m.dismissCurrent()           // b current, a past
+        m.setPointerNearIsland(true)
+        try await Task.sleep(for: .milliseconds(1200))  // unlock
+        let a = m.pastHistory[0]
+
+        m.noteRowVisible(a.id)
+        try await Task.sleep(for: .milliseconds(300))
+        m.noteRowHidden(a.id)
+        try await Task.sleep(for: .milliseconds(1000))
+        XCTAssertFalse(m.isRead(a), "the row left the viewport before earning the mark")
+        m.dismissPanel()
     }
 
     /// A brush past the notch is not attention either: presence shorter than
-    /// the settle delay banks nothing.
+    /// the settle delay never unlocks read marking.
     func testBriefPointerVisitDoesNotMarkRead() async throws {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
@@ -225,7 +282,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.displayState, .compact, "second toggle collapses to the pill while the message is live")
     }
 
-    func testIslandClickedExpandsAndMarksAllRead() {
+    func testIslandClickedExpandsAndMarksCurrentRead() {
         let m = NotificationManager()
         m.push(make("a"))
         m.dismissPanel()           // → .compact, before the read-settle delay
@@ -235,7 +292,27 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
 
         m.islandClicked()
         XCTAssertEqual(m.displayState, .manualExpanded)
-        XCTAssertEqual(m.unreadCount, 0, "an explicit click opens the panel to be read")
+        XCTAssertTrue(m.current.map { m.isRead($0) } ?? false,
+                      "an explicit click marks the live message read at once")
+        XCTAssertEqual(m.unreadCount, 1,
+                       "history rows now wait for viewport visibility (P3); the queued b stays unread until shown")
+    }
+
+    /// Click unlocks, then visibility does the rest: a history row reported
+    /// visible after the click earns its mark after its own second.
+    func testClickUnlockThenVisibilityMarksRows() async throws {
+        let m = NotificationManager()
+        m.push(make("a"))       // current
+        m.push(make("b"))       // queued
+        m.dismissCurrent()      // b current, a past - never unlocked, so a stays unread
+        m.dismissPanel()        // collapse; the read pipeline resets
+        m.islandClicked()       // reopen: unlock; the live message marks at once
+        let a = m.pastHistory[0]
+        XCTAssertFalse(m.isRead(a))
+        m.noteRowVisible(a.id)
+        try await Task.sleep(for: .milliseconds(1200))
+        XCTAssertTrue(m.isRead(a))
+        m.dismissPanel()
     }
 
     func testIslandClickedIgnoredWithoutContent() {
@@ -332,6 +409,158 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         XCTAssertTrue(m.pastHistory.isEmpty)       // a current, b/c queued
         m.advance()                                // b current, a past
         XCTAssertEqual(m.pastHistory.map(\.title), ["a"])
+    }
+
+    // MARK: - Panel list actions (P0 redesign)
+
+    /// The hover row action toggles one message without touching its siblings.
+    func testSetReadTogglesSingleMessage() {
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.push(make("b"))
+        XCTAssertEqual(m.unreadCount, 2)
+        let queued = m.queue[0]
+        m.setRead(queued.id, read: true)
+        XCTAssertEqual(m.unreadCount, 1)
+        XCTAssertTrue(m.isRead(queued))
+        m.setRead(queued.id, read: false)
+        XCTAssertEqual(m.unreadCount, 2)
+        XCTAssertFalse(m.isRead(queued))
+    }
+
+    /// 「全部丢弃」empties the waiting list but keeps every message in
+    /// history, still unread: discarding presentation is not reading.
+    func testDiscardPendingKeepsHistoryAndUnread() {
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.push(make("b"))
+        m.push(make("c"))
+        m.discardPending()
+        XCTAssertEqual(m.pendingCount, 0)
+        XCTAssertEqual(m.current?.title, "a")
+        XCTAssertEqual(m.historyCount, 3)
+        XCTAssertEqual(m.unreadCount, 3)
+    }
+
+    /// 「清空本区」on the history section removes only past messages; the
+    /// live message and the queue survive untouched.
+    func testClearPastHistoryKeepsCurrentAndQueued() {
+        let m = NotificationManager()
+        m.push(make("old"))
+        m.push(make("live"))
+        m.push(make("waiting"))
+        m.dismissCurrent()   // "live" current, "old" past, "waiting" queued
+        XCTAssertEqual(m.pastHistory.map(\.title), ["old"])
+        m.clearPastHistory()
+        XCTAssertTrue(m.pastHistory.isEmpty)
+        XCTAssertEqual(m.current?.title, "live")
+        XCTAssertEqual(m.pendingCount, 1)
+        XCTAssertEqual(m.historyCount, 2)
+    }
+
+    /// The one-click header action marks everything read at once.
+    func testMarkAllReadClearsUnreadCount() {
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.push(make("b"))
+        XCTAssertEqual(m.unreadCount, 2)
+        m.markAllRead()
+        XCTAssertEqual(m.unreadCount, 0)
+    }
+
+    // MARK: - Deletion journal & undo (P1)
+
+    private func makeGroupedStore(_ items: [NotchNotification], read: Set<UUID> = []) throws -> NotificationHistoryStore {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NotchUndoTests-\(UUID().uuidString)", isDirectory: true)
+        let store = NotificationHistoryStore(fileURL: dir.appendingPathComponent("history.json"))
+        try store.save(HistorySnapshot(items: items, readIDs: read))
+        return store
+    }
+
+    /// Deleting a row keeps a snapshot for the undo window; undo restores the
+    /// message and its read marker.
+    func testUndoDeletionRestoresMessageAndReadState() {
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.push(make("b"))
+        m.dismissCurrent()                 // b current, a past
+        let a = m.pastHistory[0]
+        m.setRead(a.id, read: true)
+        m.removeHistory(id: a.id)
+        XCTAssertTrue(m.pastHistory.isEmpty)
+        XCTAssertEqual(m.deletionNotice?.count, 1)
+        XCTAssertEqual(m.deletionNotice?.subject, "「a」")
+        m.undoDeletion()
+        XCTAssertEqual(m.pastHistory.map(\.title), ["a"])
+        XCTAssertTrue(m.isRead(m.pastHistory[0]))
+        XCTAssertNil(m.deletionNotice)
+    }
+
+    /// Deletions inside the same window merge into one notice, and one undo
+    /// brings all of them back.
+    func testConsecutiveDeletesMergeNoticeAndUndoRestoresAll() {
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.push(make("b"))
+        m.push(make("c"))
+        m.dismissCurrent()                 // b current; a past; c queued
+        m.removeHistory(id: m.pastHistory[0].id)
+        m.dismissCurrent()                 // c current; b past
+        m.removeHistory(id: m.pastHistory[0].id)
+        XCTAssertEqual(m.deletionNotice?.count, 2)
+        XCTAssertNil(m.deletionNotice?.subject, "merged deletions lose the single-item label")
+        m.undoDeletion()
+        XCTAssertEqual(m.historyCount, 3)
+        XCTAssertEqual(m.pastHistory.map(\.title), ["a", "b"])
+    }
+
+    /// Once the undo window closes the snapshot is gone for good.
+    func testUndoWindowExpiryDropsTheSnapshot() async throws {
+        let m = NotificationManager()
+        m.undoWindow = .milliseconds(80)
+        m.push(make("a"))
+        m.push(make("b"))
+        m.dismissCurrent()
+        m.removeHistory(id: m.pastHistory[0].id)
+        XCTAssertNotNil(m.deletionNotice)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertNil(m.deletionNotice)
+        m.undoDeletion()
+        XCTAssertTrue(m.pastHistory.isEmpty, "expired undo restores nothing")
+    }
+
+    /// 整组删除 journals the whole cluster; undo puts every entry back with
+    /// its read state.
+    func testRemoveGroupWithUndoRestoresWholeGroup() throws {
+        let g1 = NotchNotification(title: "g1", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci")
+        let g2 = NotchNotification(title: "g2", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci")
+        let store = try makeGroupedStore([g1, g2], read: [g1.id])
+        let m = NotificationManager()
+        m.restoreHistory(using: store)
+        XCTAssertEqual(m.pastHistory.count, 2)
+        m.removeGroupWithUndo("ci")
+        XCTAssertTrue(m.pastHistory.isEmpty)
+        XCTAssertEqual(m.deletionNotice?.subject, "「ci」组")
+        m.undoDeletion()
+        XCTAssertEqual(m.pastHistory.count, 2)
+        let restoredG1 = try XCTUnwrap(m.pastHistory.first { $0.id == g1.id })
+        XCTAssertTrue(m.isRead(restoredG1))
+    }
+
+    /// 整组已读 toggles every entry carrying the key, both directions.
+    func testSetGroupReadTogglesWholeGroup() throws {
+        let g1 = NotchNotification(title: "g1", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci")
+        let g2 = NotchNotification(title: "g2", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci")
+        let other = NotchNotification(title: "x", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "deploy")
+        let store = try makeGroupedStore([g1, g2, other])
+        let m = NotificationManager()
+        m.restoreHistory(using: store)
+        XCTAssertEqual(m.unreadCount, 3)
+        m.setGroupRead("ci", read: true)
+        XCTAssertEqual(m.unreadCount, 1, "only the other group stays unread")
+        m.setGroupRead("ci", read: false)
+        XCTAssertEqual(m.unreadCount, 3)
     }
 
     func testPerformActionOpensURLAndAdvancesQueue() {

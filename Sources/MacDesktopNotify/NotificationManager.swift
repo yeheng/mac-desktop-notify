@@ -25,9 +25,15 @@ extension NotchPresenting {
 ///
 /// `remaining == nil` means the message blocks (critical) and never expires on its
 /// own, so a missing countdown is a deliberate state rather than an oversight.
+///
+/// `actionsHoldReleased` records that the actions hold (see
+/// `NotificationManager.dwellHeldForActions`) already aged out once: the hold
+/// is a one-shot privilege, otherwise the release would re-hold itself on the
+/// very next reconcile.
 struct Presentation: Equatable, Sendable {
     let item: NotchNotification
     var remaining: Duration?
+    var actionsHoldReleased = false
 }
 
 /// What happened to a pushed message. Every outcome implies the message is in
@@ -59,18 +65,48 @@ final class NotificationManager {
     /// views (the status item icon redraws from this).
     static let unreadCountDidChange = Notification.Name("MacDesktopNotify.unreadCountDidChange")
 
+    /// Posts whenever `actionShortcutsEligible` flips, for the app delegate's
+    /// dynamic Carbon registration of ⌘1–⌘3 — the same non-SwiftUI channel as
+    /// `unreadCountDidChange`.
+    static let actionShortcutEligibilityDidChange = Notification.Name("MacDesktopNotify.actionShortcutEligibilityDidChange")
+
     /// Writes are debounced so a burst of pushes costs one save, not one per message.
     static let persistDebounce: Duration = .milliseconds(500)
 
     /// The live message together with the dwell budget that retires it.
     /// Observed storage: `current` reads it, so the UI invalidates when it changes.
-    private(set) var presentation: Presentation?
+    private(set) var presentation: Presentation? {
+        didSet {
+            // The live message is by definition on screen while presented, so
+            // rotations report into the visibility pipeline (P3) the same way
+            // the list's rows do. Same-id reassignments (dwell budgeting) are
+            // not visibility events.
+            if let item = presentation?.item, item.id != oldValue?.item.id {
+                noteRowVisible(item.id)
+            }
+            if let old = oldValue?.item, presentation?.item.id != old.id {
+                noteRowHidden(old.id)
+            }
+            syncActionShortcutEligibility()
+        }
+    }
 
     /// Pure queue/history/read-state data, extracted so the invariants live in
     /// one place; the facades below keep the observed surface stable.
     @ObservationIgnored private var messages = NotificationQueue()
     private(set) var displayState: IslandDisplayState = .hidden {
         didSet {
+            // The panel's two modes split on "was this opening deliberate",
+            // but displayState loses that bit when a message rotates into an
+            // already-open panel (advance lands on .transientExpanded), which
+            // would snap a manually opened message center back to the
+            // single-card mode mid-browse. The flag keeps the intent sticky
+            // for the whole open period.
+            if displayState == .manualExpanded {
+                panelOpenedManually = true
+            } else if !displayState.isExpanded {
+                panelOpenedManually = false
+            }
             // Every collapse path funnels through this property, so the didSet is
             // the single choke point that settles what the user got to see - no
             // call site has to remember to do it.
@@ -88,6 +124,7 @@ final class NotificationManager {
                 // attention we are trying to measure.
                 settleReadState()
             }
+            syncActionShortcutEligibility()
         }
     }
     private(set) var unreadCount = 0
@@ -96,7 +133,11 @@ final class NotificationManager {
     /// ignored) because `pointerNearIsland` derives from it and the compact
     /// pill's pre-expansion cue reads that. All transitions flow through
     /// `reduce(_:)`; nothing else writes it.
-    private var pointer = PointerState()
+    private var pointer = PointerState() {
+        didSet {
+            if pointer != oldValue { syncActionShortcutEligibility() }
+        }
+    }
     @ObservationIgnored private(set) var compactLeadingWidth: CGFloat = 0
     @ObservationIgnored private(set) var compactTrailingWidth: CGFloat = 0
     /// Readable by the presenter, which re-applies display state across screen
@@ -176,6 +217,46 @@ final class NotificationManager {
     /// True while the pointer is over the expanded panel or inside the compact
     /// activation zone. Used to scope Esc so it cannot fire from other apps.
     var pointerNearPanel: Bool { pointer.onPanel || pointer.nearIsland }
+
+    /// True while the current open period began as a deliberate open (click,
+    /// hover, hotkey) - see displayState's didSet for why displayState alone
+    /// cannot answer this. Drives the panel's full-list vs single-card split.
+    private(set) var panelOpenedManually = false
+
+    /// Whether ⌘1–⌘3 currently have something to act on: the panel is open,
+    /// the pointer is near it, and the live message carries action buttons.
+    /// The app delegate registers the Carbon hotkeys only while this holds —
+    /// an always-on ⌘1 would eat the front app's own shortcuts.
+    var actionShortcutsEligible: Bool {
+        displayState.isExpanded && pointerNearPanel && !(current?.actions.isEmpty ?? true)
+    }
+
+    /// The eligibility value last announced, so a flip posts exactly once.
+    @ObservationIgnored private var announcedActionShortcutEligibility = false
+
+    /// The single choke point every input to `actionShortcutsEligible`
+    /// (presentation, display state, pointer) reports into.
+    private func syncActionShortcutEligibility() {
+        let eligible = actionShortcutsEligible
+        guard eligible != announcedActionShortcutEligibility else { return }
+        announcedActionShortcutEligibility = eligible
+        NotificationCenter.default.post(name: Self.actionShortcutEligibilityDidChange, object: nil)
+    }
+
+    // MARK: - Panel view state
+    //
+    // The message list's UI state lives here, not in view `@State`: the notch
+    // window is recreated on every presentation, so view-local state died on
+    // every close and the accordion/group/selection reset with it. The history
+    // filter deliberately stays view-local - a forgotten filter hiding unread
+    // messages is worse than re-tapping a chip.
+
+    /// Accordion model: one expanded history body at a time.
+    var expandedHistoryID: UUID?
+    /// Group rows open independently of the accordion (two separate levels).
+    var expandedGroupKeys: Set<String> = []
+    /// The row the keyboard (↑/↓) has landed on.
+    var selectedRowID: String?
 
     // MARK: - Ingress
 
@@ -328,6 +409,11 @@ final class NotificationManager {
     func clear() {
         cancelTimers()
         messages.clear()
+        // Clear-all is the one delete that is NOT undoable (it also wipes the
+        // on-disk store), so any pending journal must die with it — undoing
+        // into a freshly cleared history would resurrect ghosts.
+        deletionJournal = []
+        deletionNotice = nil
         recomputeUnread()
         presentation = nil
         displayState = .hidden
@@ -585,7 +671,7 @@ final class NotificationManager {
         advance()
     }
 
-    // MARK: - Critical aging
+    // MARK: - Idle aging (critical demotion + actions hold)
 
     /// How long a critical may sit untouched before it demotes itself to a
     /// transient with a visible pill. It never leaves history, and its unread
@@ -628,6 +714,39 @@ final class NotificationManager {
                 self.displayState = .compact
                 self.presentCompact()
             }
+            self.reconcileDwell()
+        }
+    }
+
+    /// The mirror of `criticalIdleDemotion` for the actions hold: a message
+    /// with unanswered actions holds the screen indefinitely (see
+    /// `dwellHeldForActions`), but one abandoned on an idle machine must not
+    /// park there forever. A var so tests can shrink the window instead of
+    /// sleeping five minutes - the same precedent as `undoWindow`.
+    var actionHoldIdleLimit: Duration = .seconds(300)
+
+    /// Releases an actions hold nobody is looking at, giving the message a
+    /// normal dwell budget so it retires on its own. Same shape as the
+    /// critical demotion above: the message stays in history and unread, the
+    /// actions are simply no longer owed an immediate answer. Armed from
+    /// `beginPresenting`, cancelled with the presentation.
+    private func armActionHoldAging() {
+        guard dwellHeldForActions else {
+            delayed.cancel(.actionHoldAging)
+            return
+        }
+        delayed.schedule(.actionHoldAging, after: actionHoldIdleLimit) { [weak self] in
+            guard let self else { return }
+            guard self.dwellHeldForActions, let live = self.presentation else { return }
+            // Only an untouched panel may be released; hover or a manual
+            // opening means the actions are being looked at.
+            guard self.pointer.completelyGone, self.displayState != .manualExpanded else { return }
+            var released = live
+            released.actionsHoldReleased = true
+            // The message's own budget, recomputed like `beginPresenting`'s
+            // non-peek branch (a peek message never expands, so it never held).
+            released.remaining = .seconds(max(0.1, live.item.timeout ?? AppSettings.shared.messageDwellSeconds))
+            self.presentation = released
             self.reconcileDwell()
         }
     }
@@ -745,12 +864,13 @@ final class NotificationManager {
         // actually engaged (see `presentExpanded`).
         let panelWasOpen = displayState.isExpanded
         stopDwell()
-        stopCriticalIdleDemotion()
+        stopAgingTimers()
         presentation = Presentation(item: item, remaining: budget)
         displayState = state
         if item.urgency == .critical {
             armCriticalIdleDemotion()
         }
+        armActionHoldAging()
         if panelWasOpen {
             markRead(item.id)
         }
@@ -818,10 +938,11 @@ final class NotificationManager {
 
     /// Presents the expanded panel.
     ///
-    /// Reading is acknowledged, not assumed. An explicit open (`marksRead: true` -
-    /// a click or the shortcut) marks everything read at once, because the user
-    /// just asked to see the list. Automatic openings mark nothing here: what
-    /// they earn is decided when the panel closes (see `settleReadState`).
+    /// Reading is acknowledged, not assumed. An explicit open (`marksRead:
+    /// true` - a click or the shortcut) unlocks read marking immediately: the
+    /// live message is marked at once, and history rows follow as the list
+    /// reports them visible. Automatic openings stay locked until the pointer
+    /// has dwelled a full settle delay (see `armReadUnlock`).
     ///
     /// Suppression is re-derived first: the pointer may not have moved since a
     /// fullscreen app took the screen, and without this check a push would
@@ -829,7 +950,7 @@ final class NotificationManager {
     /// so the cost is one screen lookup, not a window-list walk.
     private func presentExpanded(marksRead: Bool) {
         if marksRead {
-            markAllRead()
+            unlockReadMarking()
         }
         Task {
             if await presenter?.probeDisplaySuppressed() == true {
@@ -866,6 +987,17 @@ final class NotificationManager {
     /// not strand the message.
     private var dwellHeldOpen: Bool {
         (pointer.onPanel && displayState.isExpanded) || displaySuppressed || displayState == .manualExpanded
+            || dwellHeldForActions
+    }
+
+    /// A live message with unanswered action buttons never retires itself: the
+    /// sender is waiting for a decision, so the card stays until one is made
+    /// (or `armActionHoldAging` releases an abandoned one). Criticals are
+    /// excluded only because they never reach the dwell path at all - their
+    /// `remaining` is already nil.
+    private var dwellHeldForActions: Bool {
+        guard let live = presentation, live.remaining != nil, !live.actionsHoldReleased else { return false }
+        return !live.item.actions.isEmpty
     }
 
     private func reconcileDwell() {
@@ -963,12 +1095,89 @@ final class NotificationManager {
     private func notePointerPresence() {
         guard presenceStartedAt == nil else { return }
         presenceStartedAt = clock.now
+        armReadUnlock()
     }
 
-    /// Cancels the aging timer whenever the presentation is retired or replaced;
-    /// `beginPresenting` re-arms it for the incoming message if it is critical.
-    private func stopCriticalIdleDemotion() {
+    /// Arms the dwell gate of the read pipeline. Re-armed on every presence
+    /// edge because banking moves the finish line closer on each return
+    /// visit: a pointer that already spent 0.8s here only needs 0.2s more.
+    private func armReadUnlock() {
+        guard !readUnlocked else { return }
+        let remaining = Self.readSettleDelay - lookedAtFor
+        guard remaining > .zero else {
+            unlockReadMarking()
+            return
+        }
+        delayed.schedule(.readUnlock, after: remaining) { [weak self] in
+            self?.unlockReadMarking()
+        }
+    }
+
+    // MARK: - Visibility-based read marking (P3)
+    //
+    // "Read" is a claim about attention on *that message*, not on the panel as
+    // a whole. Once an open period has earned reading (an explicit click, or a
+    // full settle delay of pointer presence), only rows actually on screen are
+    // marked — and rows scrolled in later must each spend their own second in
+    // the viewport. A 50-entry history no longer goes all-read because the
+    // panel was open for a second.
+
+    /// Whether this open period has earned reading yet.
+    @ObservationIgnored private var readUnlocked = false
+    /// Row ids currently on screen, reported by the list (and by
+    /// `presentation`'s didSet for the live message). Not observed: it feeds
+    /// timers, not UI.
+    @ObservationIgnored private var visibleRowIDs: Set<UUID> = []
+    /// Rows with a pending one-second visibility timer, so leaving the
+    /// viewport can cancel precisely and settling can cancel all.
+    @ObservationIgnored private var pendingRowReads: Set<UUID> = []
+
+    /// The open period has earned reading: mark everything on screen right
+    /// now (the live message plus the rows visible through the attended
+    /// dwell), then let `noteRowVisible` give later arrivals their own budget.
+    ///
+    /// The single-card mode (an automatic opening renders no history list) can
+    /// only have shown the live message; the full list - and its row marking -
+    /// belongs to deliberate openings alone.
+    private func unlockReadMarking() {
+        guard !readUnlocked else { return }
+        readUnlocked = true
+        if let current { markRead(current.id) }
+        guard panelOpenedManually else { return }
+        for id in visibleRowIDs where !messages.readIDs.contains(id) {
+            markRead(id)
+        }
+    }
+
+    /// A row entered the viewport. Before the unlock this is just tracked;
+    /// after it, one full second of continuous visibility earns the read mark.
+    func noteRowVisible(_ id: UUID) {
+        visibleRowIDs.insert(id)
+        guard readUnlocked,
+              !messages.readIDs.contains(id),
+              !pendingRowReads.contains(id) else { return }
+        pendingRowReads.insert(id)
+        delayed.schedule(.rowRead(id), after: Self.readSettleDelay) { [weak self] in
+            guard let self else { return }
+            self.pendingRowReads.remove(id)
+            guard self.readUnlocked, self.visibleRowIDs.contains(id) else { return }
+            self.markRead(id)
+        }
+    }
+
+    /// A row left the viewport; a pending mark for it dies here.
+    func noteRowHidden(_ id: UUID) {
+        visibleRowIDs.remove(id)
+        if pendingRowReads.remove(id) != nil {
+            delayed.cancel(.rowRead(id))
+        }
+    }
+
+    /// Cancels the aging timers whenever the presentation is retired or replaced;
+    /// `beginPresenting` re-arms whichever applies to the incoming message.
+    private func stopAgingTimers() {
         delayed.cancel(.criticalAging)
+        delayed.cancel(.actionHoldAging)
     }
 
     /// Moves the current stay into the bank. Called on every edge that can end
@@ -977,6 +1186,7 @@ final class NotificationManager {
         guard let start = presenceStartedAt else { return }
         presenceBanked += start.duration(to: clock.now)
         presenceStartedAt = nil
+        delayed.cancel(.readUnlock)
     }
 
     private var lookedAtFor: Duration {
@@ -990,11 +1200,16 @@ final class NotificationManager {
         presenceBanked = .zero
     }
 
-    /// Settles the read state for the open period that just ended.
+    /// Settles the read state for the open period that just ended: pending
+    /// per-row timers die with the panel, and the next opening must earn its
+    /// own unlock. Marking itself already happened continuously during the
+    /// stay, so there is nothing to flush here.
     private func settleReadState() {
-        defer { resetPresence() }
-        guard lookedAtLongEnough else { return }
-        markAllRead()
+        for id in pendingRowReads { delayed.cancel(.rowRead(id)) }
+        pendingRowReads = []
+        readUnlocked = false
+        visibleRowIDs = []
+        resetPresence()
     }
 
     private func markRead(_ id: UUID) {
@@ -1003,7 +1218,88 @@ final class NotificationManager {
         schedulePersist()
     }
 
-    private func markAllRead() {
+    /// A deletion the panel can still take back. `count` covers everything
+    /// deleted since the undo window opened; `subject` names the single
+    /// deleted thing ("「标题」" / "「ci」组") and goes nil once several
+    /// deletions merge into the same window.
+    struct DeletionNotice: Equatable {
+        var count: Int
+        var subject: String?
+    }
+
+    /// Drives the panel's undo toast; nil while there is nothing to undo.
+    private(set) var deletionNotice: DeletionNotice?
+    /// How long a deletion stays undoable. A var (not a let) so tests can
+    /// shrink the window instead of sleeping four seconds.
+    var undoWindow: Duration = .seconds(4)
+    /// The undo payload: what was deleted and whether it was read. Lives
+    /// outside observation — the journal itself is not UI state, only
+    /// `deletionNotice` is.
+    @ObservationIgnored private var deletionJournal: [(item: NotchNotification, wasRead: Bool)] = []
+
+    /// Snapshots the about-to-be-deleted messages so the undo toast can put
+    /// them back. Consecutive deletions inside the window accumulate into one
+    /// notice, and the countdown restarts on each.
+    private func journalDeletion(_ items: [NotchNotification], subject: String) {
+        guard !items.isEmpty else { return }
+        deletionJournal.append(contentsOf: items.map { ($0, messages.readIDs.contains($0.id)) })
+        let total = deletionJournal.count
+        deletionNotice = DeletionNotice(count: total, subject: total == items.count ? subject : nil)
+        delayed.schedule(.deletionUndoExpiry, after: undoWindow) { [weak self] in
+            guard let self else { return }
+            deletionJournal = []
+            deletionNotice = nil
+        }
+    }
+
+    /// Brings back everything deleted since the undo window opened. Messages
+    /// re-enter history ordered by timestamp with their read markers restored.
+    func undoDeletion() {
+        guard !deletionJournal.isEmpty else { return }
+        let journal = deletionJournal
+        deletionJournal = []
+        deletionNotice = nil
+        delayed.cancel(.deletionUndoExpiry)
+        messages.reinsert(journal.map(\.item), read: Set(journal.filter(\.wasRead).map(\.item.id)))
+        recomputeUnread()
+        schedulePersist()
+    }
+
+    /// The group row's hover/swipe delete: the same sweep as `clear(group:)`,
+    /// but journaled first so the undo toast can restore the whole cluster.
+    func removeGroupWithUndo(_ key: String) {
+        journalDeletion(messages.history.filter { $0.groupingKey == key }, subject: "「\(key)」组")
+        clear(group: key)
+    }
+
+    /// The group row's hover toggle: marks every entry carrying the key. The
+    /// panel decides the direction (any unread in the group → read them all).
+    func setGroupRead(_ key: String, read: Bool) {
+        for item in messages.history where item.groupingKey == key {
+            if read {
+                messages.markRead(item.id)
+            } else {
+                messages.markUnread(item.id)
+            }
+        }
+        recomputeUnread()
+        schedulePersist()
+    }
+
+    /// The hover row action's read/unread toggle. Public (unlike `markRead`,
+    /// which serves the presence pipeline) because the panel drives it
+    /// directly; the unread badge and the persisted read set both follow.
+    func setRead(_ id: UUID, read: Bool) {
+        if read {
+            messages.markRead(id)
+        } else {
+            messages.markUnread(id)
+        }
+        recomputeUnread()
+        schedulePersist()
+    }
+
+    func markAllRead() {
         messages.markAllRead()
         recomputeUnread()
         schedulePersist()
@@ -1027,9 +1323,32 @@ final class NotificationManager {
     /// The single-message delete the trash-all button always needed beside it:
     /// "clear everything" and "clear this" are different questions.
     func removeHistory(id: UUID) {
+        if let item = messages.history.first(where: { $0.id == id }) {
+            journalDeletion([item], subject: "「\(item.title)」")
+        }
         messages.remove(id)
         recomputeUnread()
         settleAfterRemoval(liveMessageRemoved: presentation?.item.id == id)
+    }
+
+    /// The 待显示 section's 「全部丢弃」: the waiting messages stop competing
+    /// for the screen but stay in history, still unread. No persistence work —
+    /// the queue is runtime-only and never written to disk.
+    func discardPending() {
+        guard !messages.queue.isEmpty else { return }
+        messages.clearQueue()
+    }
+
+    /// The 历史 section's 「清空本区」: everything already shown and no longer
+    /// live or queued goes away; the current message and the waiting list are
+    /// untouched. Routed through the same removal settlement as a single
+    /// delete, so a panel emptied this way still hides itself.
+    func clearPastHistory() {
+        let ids = Set(pastHistory.map(\.id))
+        guard !ids.isEmpty else { return }
+        messages.removeAll(ids)
+        recomputeUnread()
+        settleAfterRemoval(liveMessageRemoved: false)
     }
 
     /// Shared tail for the surgical deletes (`removeHistory`, `clear(group:)`):

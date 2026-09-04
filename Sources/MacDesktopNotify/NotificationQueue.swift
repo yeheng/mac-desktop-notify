@@ -104,6 +104,21 @@ struct NotificationQueue {
         readIDs.remove(id)
     }
 
+    /// Undo path for the panel's deletion journal: puts messages back where
+    /// their timestamps say they belong (timestamps are arrival times, so the
+    /// sort *is* the original order) and restores their read markers. The cap
+    /// still applies — an undo that overflows history drops the oldest, the
+    /// same ruling any arrival gets.
+    mutating func reinsert(_ items: [NotchNotification], read: Set<UUID>) {
+        history.append(contentsOf: items)
+        history.sort { $0.timestamp < $1.timestamp }
+        if history.count > Self.maxHistoryCount {
+            history.removeFirst(history.count - Self.maxHistoryCount)
+        }
+        readIDs.formUnion(read)
+        pruneReadState()
+    }
+
     mutating func clear() {
         history.removeAll()
         queue.removeAll()
@@ -134,5 +149,19 @@ struct NotificationQueue {
     /// Marks every history entry read at once - the explicit-open answer.
     mutating func markAllRead() {
         readIDs.formUnion(history.map(\.id))
+    }
+
+    /// The manual "标为未读" half of the row toggle: read state is a set, so
+    /// un-reading is just removing the id. `pruneReadState` keeps the set
+    /// honest against history, so a recycled id cannot resurrect here.
+    mutating func markUnread(_ id: UUID) {
+        readIDs.remove(id)
+    }
+
+    /// Empties the waiting list only. History and read state stay: dropping a
+    /// message's presentation is not reading it, and the panel's 「全部丢弃」
+    /// must never make a message unfindable.
+    mutating func clearQueue() {
+        queue.removeAll()
     }
 }

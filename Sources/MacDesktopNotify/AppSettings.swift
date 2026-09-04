@@ -93,6 +93,10 @@ final class AppSettings {
     var soundEnabled: Bool { didSet { save(soundEnabled, key: Keys.soundEnabled) } }
     var launchAtLogin: Bool { didSet { save(launchAtLogin, key: Keys.launchAtLogin) } }
     var persistHistory: Bool { didSet { save(persistHistory, key: Keys.persistHistory) } }
+    /// Off by default: the panel opens as a clean list of titles, and the user
+    /// expands what they want. On restores the pre-redesign behavior where the
+    /// newest history entry arrived with its body already open.
+    var autoExpandLatestHistoryOnOpen: Bool { didSet { save(autoExpandLatestHistoryOnOpen, key: Keys.autoExpandLatestHistoryOnOpen) } }
     var quietMode: QuietMode { didSet { save(quietMode.rawValue, key: Keys.quietMode) } }
     /// Critical messages block until dismissed; with this on, an untouched one
     /// demotes itself to the pill after five minutes so the screen is not held
@@ -183,6 +187,7 @@ final class AppSettings {
         soundEnabled = defaults.object(forKey: Keys.soundEnabled.rawValue) as? Bool ?? true
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin.rawValue) as? Bool ?? false
         persistHistory = defaults.object(forKey: Keys.persistHistory.rawValue) as? Bool ?? true
+        autoExpandLatestHistoryOnOpen = defaults.object(forKey: Keys.autoExpandLatestHistoryOnOpen.rawValue) as? Bool ?? false
         quietMode = QuietMode(rawValue: defaults.string(forKey: Keys.quietMode.rawValue) ?? "") ?? .off
         ageOutCriticals = defaults.object(forKey: Keys.ageOutCriticals.rawValue) as? Bool ?? true
         onboardingCompleted = defaults.object(forKey: Keys.onboardingCompleted.rawValue) as? Bool ?? false
@@ -259,6 +264,7 @@ final class AppSettings {
         // `resetAllForTesting` still wipes the stale on-disk key.
         case globalShortcutsEnabled = "island.globalShortcutsEnabled"
         case persistHistory = "island.persistHistory"
+        case autoExpandLatestHistoryOnOpen = "island.autoExpandLatestHistoryOnOpen"
         case quietMode = "island.quietMode"
         case ageOutCriticals = "island.ageOutCriticals"
         case onboardingCompleted = "island.onboardingCompleted"

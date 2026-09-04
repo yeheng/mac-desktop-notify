@@ -11,7 +11,7 @@ import Foundation
 /// Like the tasks it replaces, a fired effect runs its callback on the main
 /// actor, and cancellation is the only way out — there is no tick loop polling
 /// a clock, because every one of these delays is a one-shot (dwell countdown,
-/// hover debounce, panel collapse, critical aging, history persist).
+/// hover debounce, panel collapse, idle aging, history persist).
 @MainActor
 final class DelayedEvents {
     enum Key: Hashable {
@@ -19,7 +19,18 @@ final class DelayedEvents {
         case hoverExpand
         case manualCollapse
         case criticalAging
+        /// The actions-hold release: fires when a message with unanswered
+        /// actions sat untouched long enough to earn a normal dwell budget.
+        case actionHoldAging
         case persist
+        /// The undo toast's countdown: fires to drop the deletion journal.
+        case deletionUndoExpiry
+        /// The dwell gate of the read pipeline: fires when the pointer's total
+        /// stay reaches the settle delay, unlocking visibility-based marking.
+        case readUnlock
+        /// One per row scrolled into view after the unlock (P3): fires to
+        /// mark that row read after its own second on screen.
+        case rowRead(UUID)
     }
 
     private var tasks: [Key: Task<Void, Never>] = [:]

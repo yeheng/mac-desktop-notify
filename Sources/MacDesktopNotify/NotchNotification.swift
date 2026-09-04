@@ -47,6 +47,11 @@ extension Notification.Name {
     /// action row listens: a plain button fires at once, a button asking for a
     /// comment opens (and focuses) its input instead.
     static let islandActionShortcut = Notification.Name("MacDesktopNotify.actionShortcut")
+/// A list-navigation key reached the app while the panel owns the pointer
+/// (P2 keyboard nav). userInfo["key"] is one of: up / down / return /
+/// delete / m. Posted rather than called directly because the list owns the
+/// selection state and the panel view hierarchy is recreated per opening.
+static let islandListKey = Notification.Name("MacDesktopNotify.listKey")
 }
 
 extension Notification.Name {
@@ -55,6 +60,9 @@ extension Notification.Name {
     /// a hover-out or outside-click collapse races the confirmation; the
     /// delegate's NSAlert lives in its own window and cannot.
     static let requestClearAll = Notification.Name("MacDesktopNotify.requestClearAll")
+/// Same modal-confirmation escape hatch as `requestClearAll`, scoped to the
+/// history section only: current and queued messages survive it.
+static let requestClearHistory = Notification.Name("MacDesktopNotify.requestClearHistory")
 }
 
 struct NotchNotification: Identifiable, Sendable, Equatable, Codable {

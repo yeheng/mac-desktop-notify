@@ -32,6 +32,10 @@ final class SystemHotkey {
     private var reference: EventHotKeyRef?
     private var handler: EventHandlerRef?
     private var box: Box?
+    /// Exposed so the app delegate can tell which keys Carbon currently owns:
+    /// while a ⌘n registration is live, the NSEvent monitor path must stand
+    /// down for that key or the action would fire twice.
+    private(set) var keyCode: UInt32 = 0
     /// Carbon teardown in `deinit` touches non-Sendable refs from a nonisolated
     /// context; these mirrors exist only for that path. The main-actor state
     /// above remains the source of truth while the object is alive.
@@ -132,6 +136,7 @@ final class SystemHotkey {
             return false
         }
         reference = ref
+        self.keyCode = keyCode
         carbonReferenceForTeardown = ref
         carbonHandlerForTeardown = handler
         box.retainedPointer = boxPointer
@@ -166,6 +171,10 @@ final class SystemHotkey {
 extension SystemHotkey {
     /// N in Carbon virtual key codes.
     static let nKeyCode: UInt32 = 45
+    /// 1 / 2 / 3 in Carbon virtual key codes — the ⌘-number action shortcuts.
+    static let actionKeyCodes: [UInt32] = [18, 19, 20]
     /// Control + Option in Carbon's modifier vocabulary.
     static let controlOptionModifiers: UInt32 = UInt32(controlKey | optionKey)
+    /// Command alone in Carbon's modifier vocabulary.
+    static let commandModifiers: UInt32 = UInt32(cmdKey)
 }
