@@ -26,7 +26,7 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
     func testMessageWithActionsDoesNotAutoDismiss() async throws {
         let m = NotificationManager()
         m.push(make("approve", timeout: 0.3, actions: [approveAction]))
-        XCTAssertEqual(m.displayState, .transientExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
 
         try await Task.sleep(for: .seconds(1))          // far past the 0.3 s budget
         XCTAssertEqual(m.current?.title, "approve",

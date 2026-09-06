@@ -316,15 +316,12 @@ final class NotchPresenter: NotchPresenting {
             Task { await hide() }
             return
         }
-        let state = manager.displayState
-        Task {
-            if state.isExpanded {
-                await expand()
-            } else if state == .compact {
-                await compact()
-            } else {
-                await hide()
-            }
+        if manager.displayState.isOpened {
+            Task { await expand() }
+        } else if manager.closedMeansHidden {
+            Task { await hide() }
+        } else {
+            Task { await compact() }
         }
     }
 

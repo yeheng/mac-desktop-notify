@@ -440,7 +440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @discardableResult
     private func fireActionShortcut(index: Int) -> Bool {
         let manager = NotificationManager.shared
-        guard manager.displayState.isExpanded, manager.pointerNearPanel,
+        guard manager.displayState.isOpened, manager.pointerNearPanel,
               let current = manager.current, current.actions.indices.contains(index) else { return false }
         let action = current.actions[index]
         IslandHaptics.actionConfirmed()
@@ -471,7 +471,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the front app still reaches it.
     private func handleListNavigation(_ event: NSEvent) -> Bool {
         let manager = NotificationManager.shared
-        guard manager.displayState.isExpanded, manager.pointerNearPanel else { return false }
+        guard manager.displayState.isOpened, manager.pointerNearPanel else { return false }
         // The ActionRow comment field is first responder while open; stealing
         // ⌫ or letters from a text edit would be unforgivable.
         if NSApp.keyWindow?.firstResponder is NSTextView { return false }
@@ -502,7 +502,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the pointer is on it, or the user opened it themselves (click, hover,
         // or keyboard). Firing from the global monitor otherwise would collapse
         // the panel on every Esc press in vim & co.
-        if event.keyCode == 53, NotificationManager.shared.displayState.isExpanded,
+        if event.keyCode == 53, NotificationManager.shared.displayState.isOpened,
            NotificationManager.shared.canDismissWithEscape {
             NotificationManager.shared.dismissPanel()
             return true

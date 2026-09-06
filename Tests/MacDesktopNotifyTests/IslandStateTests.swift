@@ -33,14 +33,14 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         XCTAssertFalse(manager.panelOpenedManually)
 
         manager.openMessageCenter()
-        XCTAssertEqual(manager.displayState, .manualExpanded)
+        XCTAssertEqual(manager.displayState, .opened(reason: .click))
         XCTAssertTrue(manager.panelOpenedManually)
         XCTAssertEqual(manager.current?.id, current.id)
         XCTAssertEqual(manager.queue.map(\.id), [queued.id])
         XCTAssertFalse(manager.isRead(queued), "opening must not mark unseen queued messages read")
 
         manager.openMessageCenter()
-        XCTAssertEqual(manager.displayState, .manualExpanded, "reopening must not toggle closed")
+        XCTAssertEqual(manager.displayState, .opened(reason: .click), "reopening must not toggle closed")
         manager.advance()
         XCTAssertEqual(manager.current?.id, queued.id)
         XCTAssertTrue(manager.panelOpenedManually, "rotation must keep the complete list visible")
@@ -51,7 +51,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
     func testOpenMessageCenterRespectsSuppressionAndEmptyState() {
         let manager = NotificationManager()
         manager.openMessageCenter()
-        XCTAssertEqual(manager.displayState, .hidden)
+        XCTAssertEqual(manager.displayState, .closed)
         manager.setDisplaySuppressed(true)
         manager.push(make("critical", urgency: .critical))
         manager.openMessageCenter()
@@ -79,7 +79,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         manager.push(make("critical", urgency: .critical))
 
         XCTAssertEqual(manager.current?.title, "critical")
-        XCTAssertEqual(manager.displayState, .blockingExpanded)
+        XCTAssertEqual(manager.displayState, .opened(reason: .notification))
         XCTAssertEqual(manager.pendingCount, 1)
     }
 
@@ -126,7 +126,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(make("t", timeout: 0.2))                 // dwell armed at 0.2 s
-        XCTAssertEqual(m.displayState, .compact)
+        XCTAssertEqual(m.displayState, .closed)
 
         m.islandClicked()                               // manual expansion path
         m.setHovering(true)                             // pauses the dwell mid-count
@@ -144,11 +144,11 @@ final class IslandStateTests: SettingsIsolatedTestCase {
 
         m.setDisplaySuppressed(true)
         m.push(make("crit", urgency: .critical))
-        XCTAssertEqual(m.displayState, .blockingExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
         XCTAssertEqual(presenter.expandCount, 0, "suppressed critical must not expand yet")
 
         m.setDisplaySuppressed(false)
-        XCTAssertEqual(m.displayState, .blockingExpanded, "critical must return to blocking, not demote to a compact pill")
+        XCTAssertEqual(m.displayState, .opened(reason: .notification), "critical must return to blocking, not demote to a compact pill")
         for _ in 0..<20 {
             if presenter.expandCount > 0 { break }
             await Task.yield()
@@ -259,7 +259,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
 
         try await Task.sleep(for: .seconds(1))          // 0.26 s collapse timer
         XCTAssertEqual(m.current?.title, "t", "the message must still be live")
-        XCTAssertEqual(m.displayState, .compact, "a live message must keep the pill, not hide the island")
+        XCTAssertEqual(m.displayState, .closed, "a live message must keep the pill, not hide the island")
     }
 
     /// The same inverted argument in the other direction: with no live message,
@@ -274,7 +274,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
 
         try await Task.sleep(for: .seconds(1))
         XCTAssertNil(m.current)
-        XCTAssertEqual(m.displayState, .hidden, "no live message means idle rules apply")
+        XCTAssertEqual(m.displayState, .closed, "no live message means idle rules apply")
     }
 
     /// Clicking outside the island collapses the open panel back to the pill,
@@ -294,11 +294,11 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.push(make("t", timeout: 60))
         m.islandClicked()
-        XCTAssertEqual(m.displayState, .manualExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .click))
 
         m.clickedOutsideIsland()
 
-        XCTAssertEqual(m.displayState, .compact, "outside click collapses to the pill while a message is live")
+        XCTAssertEqual(m.displayState, .closed, "outside click collapses to the pill while a message is live")
         XCTAssertNotNil(m.dwellDeadline, "collapse must resume the dwell")
     }
 
@@ -321,7 +321,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
 
         m.clickedOutsideIsland()
 
-        XCTAssertEqual(m.displayState, .manualExpanded, "with auto-collapse off, an outside click must not close the panel")
+        XCTAssertEqual(m.displayState, .opened(reason: .click), "with auto-collapse off, an outside click must not close the panel")
     }
 
     /// A transient (push-expanded) panel must behave the same as a manual one:
@@ -339,11 +339,11 @@ final class IslandStateTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(make("t", timeout: 60))                    // auto-expand path
-        XCTAssertEqual(m.displayState, .transientExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
 
         m.clickedOutsideIsland()
 
-        XCTAssertEqual(m.displayState, .compact)
+        XCTAssertEqual(m.displayState, .closed)
     }
 
     /// A transient (push-expanded) panel was never claimed by the user, so the
@@ -363,12 +363,12 @@ final class IslandStateTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(make("t", timeout: 0.4))                    // auto-expand: transient, never touched
-        XCTAssertEqual(m.displayState, .transientExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
 
         m.setHovering(true)                                // pointer brushes the panel
         m.setHovering(false)                               // and leaves again
 
-        XCTAssertEqual(m.displayState, .transientExpanded,
+        XCTAssertEqual(m.displayState, .opened(reason: .notification),
                        "an untouched panel must not collapse on pointer exit")
         XCTAssertNotNil(m.dwellDeadline, "the dwell countdown must be running")
 
@@ -392,7 +392,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         presenter.probedSuppression = true            // fullscreen discovered at probe time
         m.push(make("t"))
 
-        XCTAssertEqual(m.displayState, .transientExpanded, "the message is live either way")
+        XCTAssertEqual(m.displayState, .opened(reason: .notification), "the message is live either way")
         for _ in 0..<20 {
             if presenter.hideCount > 0 { break }
             await Task.yield()

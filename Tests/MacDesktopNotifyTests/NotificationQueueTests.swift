@@ -80,7 +80,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(make("a"))
-        XCTAssertEqual(m.displayState, .transientExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
         XCTAssertEqual(m.unreadCount, 1, "a panel that nobody looked at must not clear unread state")
     }
 
@@ -254,9 +254,9 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.push(make("a"))
         m.dismissPanel()                                  // start collapsed: the keyboard-only world
-        XCTAssertEqual(m.displayState, .compact)
+        XCTAssertEqual(m.displayState, .closed)
         m.togglePanel()                                   // keyboard path: no pointer anywhere
-        XCTAssertEqual(m.displayState, .manualExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .click))
         XCTAssertTrue(m.canDismissWithEscape, "a deliberately opened panel is Esc-able")
     }
 
@@ -268,7 +268,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(make("a"))                                // auto-expanded, pointer never arrived
-        XCTAssertEqual(m.displayState, .transientExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
         XCTAssertFalse(m.canDismissWithEscape, "Esc must not reach into an untouched screen from other apps")
     }
 
@@ -277,9 +277,9 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         m.push(make("a"))
         m.dismissPanel()                                  // collapsed world: toggle means open
         m.togglePanel()
-        XCTAssertEqual(m.displayState, .manualExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .click))
         m.togglePanel()
-        XCTAssertEqual(m.displayState, .compact, "second toggle collapses to the pill while the message is live")
+        XCTAssertEqual(m.displayState, .closed, "second toggle collapses to the pill while the message is live")
     }
 
     func testIslandClickedExpandsAndMarksCurrentRead() {
@@ -287,11 +287,11 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         m.push(make("a"))
         m.dismissPanel()           // → .compact, before the read-settle delay
         m.push(make("b"))          // queued
-        XCTAssertEqual(m.displayState, .compact)
+        XCTAssertEqual(m.displayState, .closed)
         XCTAssertEqual(m.unreadCount, 2, "a was dismissed unseen, b never surfaced")
 
         m.islandClicked()
-        XCTAssertEqual(m.displayState, .manualExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .click))
         XCTAssertTrue(m.current.map { m.isRead($0) } ?? false,
                       "an explicit click marks the live message read at once")
         XCTAssertEqual(m.unreadCount, 1,
@@ -318,7 +318,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     func testIslandClickedIgnoredWithoutContent() {
         let m = NotificationManager()
         m.islandClicked()
-        XCTAssertEqual(m.displayState, .hidden)
+        XCTAssertEqual(m.displayState, .closed)
     }
 
     func testDismissedPanelDoesNotReexpandUntilPointerLeaves() async throws {
@@ -330,16 +330,16 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.push(make("a"))
         m.dismissPanel()
-        XCTAssertEqual(m.displayState, .compact)
+        XCTAssertEqual(m.displayState, .closed)
 
         m.setPointerNearIsland(true)
         try await Task.sleep(for: .milliseconds(80))
-        XCTAssertEqual(m.displayState, .compact)   // suppressed after manual dismissal
+        XCTAssertEqual(m.displayState, .closed)   // suppressed after manual dismissal
 
         m.setPointerNearIsland(false)              // leaving the zone re-arms hover
         m.setPointerNearIsland(true)
         try await Task.sleep(for: .milliseconds(80))
-        XCTAssertEqual(m.displayState, .manualExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .hover))
     }
 
     // MARK: - Sneak Peek (display=peek)
@@ -349,7 +349,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     func testPeekPushStaysCompactWhenAutoExpandEnabled() {
         let m = NotificationManager()
         m.push(NotchNotification(title: "p", bodyMarkdown: "", urgency: .normal, timeout: 60, displayPeek: true))
-        XCTAssertEqual(m.displayState, .compact, "a peek message must not open the panel")
+        XCTAssertEqual(m.displayState, .closed, "a peek message must not open the panel")
         XCTAssertEqual(m.current?.displayPeek, true)
     }
 
@@ -358,7 +358,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     func testCriticalIgnoresPeekAndBlocks() {
         let m = NotificationManager()
         m.push(NotchNotification(title: "c", bodyMarkdown: "", urgency: .critical, timeout: nil, displayPeek: true))
-        XCTAssertEqual(m.displayState, .blockingExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
         XCTAssertEqual(m.current?.displayPeek, false, "critical strips the peek flag at resolution")
     }
 
@@ -373,12 +373,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.push(make("a"))   // no explicit displayPeek → inherits the setting
         XCTAssertEqual(m.current?.displayPeek, true)
-        XCTAssertEqual(m.displayState, .compact)
+        XCTAssertEqual(m.displayState, .closed)
 
         // A fresh run isolates the override from the first message's state.
         let m2 = NotificationManager()
         m2.push(NotchNotification(title: "b", bodyMarkdown: "", urgency: .normal, timeout: 60, displayPeek: false))
-        XCTAssertEqual(m2.displayState, .transientExpanded, "an explicit display=expand overrides the setting")
+        XCTAssertEqual(m2.displayState, .opened(reason: .notification), "an explicit display=expand overrides the setting")
     }
 
     /// Peek dwell: when the sender left the timeout to the app, a peek message
