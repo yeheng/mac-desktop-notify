@@ -63,8 +63,14 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
     }
 
     /// Messages without actions are untouched by all of this: same dwell,
-    /// same auto-dismissal as before.
+    /// same auto-dismissal as before. v3 (§3.1) runs the dwell on the pill
+    /// layer, so the push stays off the panel for the budget to govern.
     func testMessageWithoutActionsStillAutoDismisses() async throws {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = old }
+
         let m = NotificationManager()
         m.actionHoldIdleLimit = .milliseconds(300)      // must be irrelevant here
         m.push(make("plain", timeout: 0.3))

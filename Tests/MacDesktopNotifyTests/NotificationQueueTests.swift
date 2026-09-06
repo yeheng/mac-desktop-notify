@@ -17,6 +17,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     }
 
     func testSecondPushQueues() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -25,6 +31,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     }
 
     func testAdvancePromotesNextInFIFOOrder() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -41,6 +53,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     }
 
     func testDismissCurrentAdvances() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -49,6 +67,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     }
 
     func testQueueCapDropsOldestPending() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         for i in 0..<12 { m.push(make("n\(i)")) }   // n0 shown; pending capped to 10
         XCTAssertEqual(m.current?.title, "n0")
@@ -90,7 +114,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     func testDwellUnlockMarksVisibleRowsOnly() async throws {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = true
+        settings.autoExpandOnMessage = false   // v3 §3.1: pushes must queue here, not displace
         defer { settings.autoExpandOnMessage = old }
 
         let m = NotificationManager()
@@ -113,7 +137,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     func testScrolledInRowEarnsReadAfterOneSecond() async throws {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = true
+        settings.autoExpandOnMessage = false   // v3 §3.1: pushes must queue here, not displace
         defer { settings.autoExpandOnMessage = old }
 
         let m = NotificationManager()
@@ -137,7 +161,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     func testRowHiddenBeforeItsSecondStaysUnread() async throws {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = true
+        settings.autoExpandOnMessage = false   // v3 §3.1: pushes must queue here, not displace
         defer { settings.autoExpandOnMessage = old }
 
         let m = NotificationManager()
@@ -176,6 +200,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     }
 
     func testQueuedMessageCountsAsUnread() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))          // waiting in queue → unread
@@ -218,7 +248,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     func testDequeuePrefersCriticalFIFO() {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = true
+        settings.autoExpandOnMessage = false   // v3 §3.1: pushes must queue here, not displace
         defer { settings.autoExpandOnMessage = old }
 
         let m = NotificationManager()
@@ -301,6 +331,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     /// Click unlocks, then visibility does the rest: a history row reported
     /// visible after the click earns its mark after its own second.
     func testClickUnlockThenVisibilityMarksRows() async throws {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))       // current
         m.push(make("b"))       // queued
@@ -402,6 +438,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     // MARK: - List model
 
     func testPastHistoryExcludesCurrentAndQueued() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -415,6 +457,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
 
     /// The hover row action toggles one message without touching its siblings.
     func testSetReadTogglesSingleMessage() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -431,6 +479,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     /// 「全部丢弃」empties the waiting list but keeps every message in
     /// history, still unread: discarding presentation is not reading.
     func testDiscardPendingKeepsHistoryAndUnread() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -445,6 +499,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     /// 「清空本区」on the history section removes only past messages; the
     /// live message and the queue survive untouched.
     func testClearPastHistoryKeepsCurrentAndQueued() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("old"))
         m.push(make("live"))
@@ -460,6 +520,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
 
     /// The one-click header action marks everything read at once.
     func testMarkAllReadClearsUnreadCount() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -481,6 +547,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     /// Deleting a row keeps a snapshot for the undo window; undo restores the
     /// message and its read marker.
     func testUndoDeletionRestoresMessageAndReadState() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -500,6 +572,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     /// Deletions inside the same window merge into one notice, and one undo
     /// brings all of them back.
     func testConsecutiveDeletesMergeNoticeAndUndoRestoresAll() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))

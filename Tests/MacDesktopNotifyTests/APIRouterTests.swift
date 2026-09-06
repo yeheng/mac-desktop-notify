@@ -45,7 +45,12 @@ final class APIRouterTests: SettingsIsolatedTestCase {
     }
 
     func testSecondPushWhileOneIsLiveQueues() async {
-        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json(["title": "a"])))
+        // v3 (§3.1): an operable card holds the surface, so the second push
+        // queues behind it - an unattended info card would be displaced instead.
+        _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json([
+            "title": "a",
+            "actions": [["label": "允许", "url": "notch-notify://ack?token=t&result=ok"]]
+        ])))
         let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])
         ))

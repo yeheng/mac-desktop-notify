@@ -18,15 +18,27 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         }
     }
 
-    private func make(_ title: String, urgency: UrgencyLevel = .normal, timeout: TimeInterval = 60) -> NotchNotification {
-        NotchNotification(title: title, bodyMarkdown: "body", urgency: urgency, timeout: timeout)
+    private func make(
+        _ title: String,
+        urgency: UrgencyLevel = .normal,
+        timeout: TimeInterval = 60,
+        actions: [NotificationAction] = []
+    ) -> NotchNotification {
+        NotchNotification(title: title, bodyMarkdown: "body", urgency: urgency, timeout: timeout, actions: actions)
     }
+
+    private let approveAction = NotificationAction(
+        label: "允许",
+        url: URL(string: "notch-notify://ack?token=t&result=ok")!
+    )
 
     func testOpenMessageCenterFromAutomaticCardPreservesMessagesAndSurvivesRotation() {
         AppSettings.shared.autoExpandOnMessage = true
         AppSettings.shared.normalMessagesPeek = false
         let manager = NotificationManager()
-        let current = make("current")
+        // The automatic card is operable so the second push queues behind it
+        // (§3.1: an unattended info card would be displaced instead).
+        let current = make("current", actions: [approveAction])
         let queued = make("queued")
         manager.push(current)
         manager.push(queued)
@@ -121,16 +133,27 @@ final class IslandStateTests: SettingsIsolatedTestCase {
     func testHoverExpandedTransientResumesDwellAfterCollapse() async throws {
         let settings = AppSettings.shared
         let oldAutoExpand = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = false            // keep the push compact; expand manually
-        defer { settings.autoExpandOnMessage = oldAutoExpand }
+        let oldHoverToExpand = settings.hoverToExpand
+        let oldDelay = settings.hoverDelayMilliseconds
+        settings.autoExpandOnMessage = false            // keep the push on the pill; expand by hover
+        settings.hoverToExpand = true
+        settings.hoverDelayMilliseconds = 10
+        defer {
+            settings.autoExpandOnMessage = oldAutoExpand
+            settings.hoverToExpand = oldHoverToExpand
+            settings.hoverDelayMilliseconds = oldDelay
+        }
 
         let m = NotificationManager()
         m.push(make("t", timeout: 0.2))                 // dwell armed at 0.2 s
         XCTAssertEqual(m.displayState, .closed)
 
-        m.islandClicked()                               // manual expansion path
+        m.setPointerNearIsland(true)                    // hover expansion path (§3.2)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(m.displayState, .opened(reason: .hover))
         m.setHovering(true)                             // pauses the dwell mid-count
-        m.setHovering(false)                            // collapses via scheduleManualCollapse
+        m.setHovering(false)                            // back into the zone: no collapse yet
+        m.setPointerNearIsland(false)                   // leaving the zone collapses (.hover panel)
 
         try await Task.sleep(for: .seconds(2))          // 0.2 s dwell + 0.26 s collapse: plenty
         XCTAssertNil(m.current, "transient must resume its paused dwell after manual collapse")
@@ -187,19 +210,21 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         defer { settings.autoExpandOnMessage = oldAutoExpand }
 
         let m = NotificationManager()
+        m.notificationAutoCloseDelay = .milliseconds(900)
         m.push(make("first", timeout: 0.2))
         m.islandClicked()
         m.setHovering(true)
         m.dismissPanel()
 
         m.push(make("second", timeout: 0.2))
-        try await Task.sleep(for: .seconds(1))
+        try await Task.sleep(for: .milliseconds(500))
         XCTAssertEqual(m.current?.title, "second",
                        "'second' must take over, not sit buried behind a stranded message")
 
-        // The pointer leaves with the panel, so the countdown runs and retires it too.
+        // The pointer leaves with the panel; v3 (§3.1) holds the dwell while
+        // the rotation-opened panel is up, so the auto-close rule retires it.
         m.setHovering(false)
-        try await Task.sleep(for: .seconds(1))
+        try await Task.sleep(for: .milliseconds(1500))
         XCTAssertNil(m.current)
     }
 
@@ -248,33 +273,61 @@ final class IslandStateTests: SettingsIsolatedTestCase {
     func testManualCollapseKeepsPillWhileMessageIsLive() async throws {
         let settings = AppSettings.shared
         let oldAutoExpand = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = false
-        defer { settings.autoExpandOnMessage = oldAutoExpand }
+        let oldHoverToExpand = settings.hoverToExpand
+        let oldDelay = settings.hoverDelayMilliseconds
+        settings.autoExpandOnMessage = false            // keep the push on the pill
+        settings.hoverToExpand = true
+        settings.hoverDelayMilliseconds = 10
+        defer {
+            settings.autoExpandOnMessage = oldAutoExpand
+            settings.hoverToExpand = oldHoverToExpand
+            settings.hoverDelayMilliseconds = oldDelay
+        }
 
         let m = NotificationManager()
         m.push(make("t", timeout: 60))
-        m.islandClicked()                               // manual expansion
+        m.setPointerNearIsland(true)                    // hover expansion (§3.2: only
+        try await Task.sleep(for: .milliseconds(80))    // hover panels collapse on leave)
+        XCTAssertEqual(m.displayState, .opened(reason: .hover))
         m.setHovering(true)
-        m.setHovering(false)                            // schedules the manual collapse
+        m.setHovering(false)                            // still inside the zone
+        m.setPointerNearIsland(false)                   // schedules the manual collapse
 
         try await Task.sleep(for: .seconds(1))          // 0.26 s collapse timer
         XCTAssertEqual(m.current?.title, "t", "the message must still be live")
-        XCTAssertEqual(m.displayState, .closed, "a live message must keep the pill, not hide the island")
+        XCTAssertEqual(m.displayState, .closed)
+        XCTAssertFalse(m.closedMeansHidden, "a live message must keep the pill, not hide the island")
     }
 
     /// The same inverted argument in the other direction: with no live message,
     /// manual collapse must respect hide-when-idle instead of parking the pill.
     func testManualCollapseHidesWhenOnlyHistoryRemains() async throws {
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        let oldHoverToExpand = settings.hoverToExpand
+        let oldDelay = settings.hoverDelayMilliseconds
+        settings.autoExpandOnMessage = false
+        settings.hoverToExpand = true
+        settings.hoverDelayMilliseconds = 10
+        defer {
+            settings.autoExpandOnMessage = oldAutoExpand
+            settings.hoverToExpand = oldHoverToExpand
+            settings.hoverDelayMilliseconds = oldDelay
+        }
+
         let m = NotificationManager()
         m.push(make("t", timeout: 0.1))
         try await Task.sleep(for: .seconds(1))          // dwell retires it into history
-        m.islandClicked()                               // browsing pure history
+        m.setPointerNearIsland(true)                    // browsing pure history, via hover
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(m.displayState, .opened(reason: .hover))
         m.setHovering(true)
         m.setHovering(false)
+        m.setPointerNearIsland(false)
 
         try await Task.sleep(for: .seconds(1))
         XCTAssertNil(m.current)
-        XCTAssertEqual(m.displayState, .closed, "no live message means idle rules apply")
+        XCTAssertTrue(m.closedMeansHidden, "no live message means idle rules apply")
     }
 
     /// Clicking outside the island collapses the open panel back to the pill,
@@ -344,36 +397,6 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         m.clickedOutsideIsland()
 
         XCTAssertEqual(m.displayState, .closed)
-    }
-
-    /// A transient (push-expanded) panel was never claimed by the user, so the
-    /// pointer leaving must NOT collapse it: the panel stays open on its own
-    /// dwell countdown and settles when that budget runs out. Only a manual
-    /// panel (click/hover/keyboard) collapses on pointer exit.
-    func testPointerExitDoesNotCollapseTransientPanel() async throws {
-        let settings = AppSettings.shared
-        let oldAutoCollapse = settings.autoCollapseOnLeave
-        let oldAutoExpand = settings.autoExpandOnMessage
-        settings.autoCollapseOnLeave = true
-        settings.autoExpandOnMessage = true
-        defer {
-            settings.autoCollapseOnLeave = oldAutoCollapse
-            settings.autoExpandOnMessage = oldAutoExpand
-        }
-
-        let m = NotificationManager()
-        m.push(make("t", timeout: 0.4))                    // auto-expand: transient, never touched
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
-
-        m.setHovering(true)                                // pointer brushes the panel
-        m.setHovering(false)                               // and leaves again
-
-        XCTAssertEqual(m.displayState, .opened(reason: .notification),
-                       "an untouched panel must not collapse on pointer exit")
-        XCTAssertNotNil(m.dwellDeadline, "the dwell countdown must be running")
-
-        try await Task.sleep(for: .seconds(2))             // 0.4 s budget retires it
-        XCTAssertNil(m.current, "only the countdown may retire a transient panel")
     }
 
     /// Regression: suppression used to be re-derived only when the pointer

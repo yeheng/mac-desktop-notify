@@ -31,6 +31,8 @@ final class DelayedEvents {
         /// One per row scrolled into view after the unlock (P3): fires to
         /// mark that row read after its own second on screen.
         case rowRead(UUID)
+        /// §3.1: the informational card's auto-close countdown.
+        case notificationAutoClose
     }
 
     private var tasks: [Key: Task<Void, Never>] = [:]
