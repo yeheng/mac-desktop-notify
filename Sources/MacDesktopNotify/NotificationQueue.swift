@@ -159,8 +159,8 @@ struct NotificationQueue {
     }
 
     /// Empties the waiting list only. History and read state stay: dropping a
-    /// message's presentation is not reading it, and the panel's 「全部丢弃」
-    /// must never make a message unfindable.
+    /// message's presentation is not reading it, and the context menu's
+    /// 「丢弃待显示消息」 must never make a message unfindable.
     mutating func clearQueue() {
         queue.removeAll()
     }

@@ -99,24 +99,22 @@ struct SettingsView: View {
 
 // MARK: - 页面骨架
 
-/// Centered pane header in the System Settings style: the section's icon tile
-/// enlarged, its title, and one line about what lives here.
+/// Compact page heading leaves the form visible at the minimum window size.
 private struct PaneHeader: View {
     let section: SettingsSection
 
     var body: some View {
-        VStack(spacing: 8) {
-            SettingsIconTile(symbol: section.symbol, color: section.color, size: 60)
-                .padding(.bottom, 2)
+        VStack(alignment: .leading, spacing: 4) {
             Text(section.title)
-                .font(.system(size: 22, weight: .bold))
+                .font(.system(size: 20, weight: .bold))
             Text(section.subtitle)
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 24)
+        .padding(.top, 18)
         .padding(.bottom, 8)
     }
 }

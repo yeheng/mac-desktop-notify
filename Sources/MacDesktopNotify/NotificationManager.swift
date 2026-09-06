@@ -635,17 +635,19 @@ final class NotificationManager {
         if displayState.isExpanded {
             dismissPanel()
         } else {
-            guard hasContent else { return }
-            // Same open path as `islandClicked`, minus its pointer events — a
-            // hotkey or menu open has no click to feed the pointer reducer.
-            // The hover timer still must die here: the user can arm it by
-            // crossing the zone on the way to the keyboard, and a late fire
-            // would re-present (and un-mark-read) the panel this just opened.
-            delayed.cancel(.hoverExpand)
-            displayState = .manualExpanded
-            presentExpanded(marksRead: true)
-            reconcileDwell()
+            openMessageCenter()
         }
+    }
+
+    /// Explicitly opens the complete list, including from an automatic card.
+    /// Unlike togglePanel, invoking this while expanded must never collapse it.
+    func openMessageCenter() {
+        guard !displaySuppressed, hasContent else { return }
+        delayed.cancel(.hoverExpand)
+        delayed.cancel(.manualCollapse)
+        displayState = .manualExpanded
+        presentExpanded(marksRead: true)
+        reconcileDwell()
     }
 
     func setDisplaySuppressed(_ suppressed: Bool) {
@@ -1331,7 +1333,7 @@ final class NotificationManager {
         settleAfterRemoval(liveMessageRemoved: presentation?.item.id == id)
     }
 
-    /// The 待显示 section's 「全部丢弃」: the waiting messages stop competing
+    /// The context menu's 「丢弃待显示消息」: the waiting messages stop competing
     /// for the screen but stay in history, still unread. No persistence work —
     /// the queue is runtime-only and never written to disk.
     func discardPending() {
@@ -1339,7 +1341,8 @@ final class NotificationManager {
         messages.clearQueue()
     }
 
-    /// The 历史 section's 「清空本区」: everything already shown and no longer
+    /// 「清空历史」 (history window, menu bar, ⌘⇧⌫): everything already shown
+    /// and no longer
     /// live or queued goes away; the current message and the waiting list are
     /// untouched. Routed through the same removal settlement as a single
     /// delete, so a panel emptied this way still hides itself.

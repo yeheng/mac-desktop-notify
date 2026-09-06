@@ -9,6 +9,7 @@ struct OnboardingView: View {
     var onDismiss: () -> Void
     @Bindable private var settings: AppSettings = .shared
     @State private var step = 0
+    @State private var testFeedback: String?
 
     /// The levels come from `AttentionPreset` (AppSettings.swift): onboarding
     /// and Settings -> 通知 offer the same three choices, writing the same
@@ -21,8 +22,7 @@ struct OnboardingView: View {
                 Text("欢迎使用 NotchNotify")
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                 Spacer()
-                Button("跳过") { finish(preset: nil) }
-                    .buttonStyle(.borderless)
+
             }
             .padding(.bottom, 4)
 
@@ -41,6 +41,9 @@ struct OnboardingView: View {
             Divider().padding(.vertical, 14)
 
             HStack {
+                Button("稍后设置") { finish(preset: nil) }
+                    .buttonStyle(.borderless)
+                    .help("可从设置 → 关于重新打开引导")
                 ProgressView(value: Double(step + 1), total: 3)
                     .frame(maxWidth: 120)
                 Spacer()
@@ -79,14 +82,32 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 12) {
             stepHeader("第 1 步 · 看一眼效果", "发一条真实的通知，亲眼看看它长什么样。")
             Button {
-                let url = URL(string: "notch-notify://push?title=%E8%AF%95%E4%B8%80%E8%AF%95&body=%E8%BF%99%E6%98%AF%E5%BC%95%E5%AF%BC%E5%8F%91%E9%80%81%E7%9A%84%E6%B5%8B%E8%AF%95%E9%80%9A%E7%9F%A5&urgency=normal")!
-                NSWorkspace.shared.open(url)
+                let outcome = NotificationManager.shared.push(NotchNotification(
+                    title: "试一试", bodyMarkdown: "这是引导发送的测试通知", urgency: .normal, timeout: 10
+                ))
+                switch outcome {
+                case .displayed:
+                    testFeedback = "测试通知已发送，请查看屏幕顶部；全屏时请先退出全屏。"
+                case .queued:
+                    testFeedback = "测试通知已加入队列，可打开历史信息查看。"
+                case .withheld:
+                    testFeedback = "测试通知已保存；静默或离开状态下不会弹出，可在历史信息中查看。"
+                }
             } label: {
                 Label("发送一条测试通知", systemImage: "paperplane.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            Text("通知会出现在屏幕顶部的刘海区域。鼠标靠近即可展开，上滑可关闭。")
+            if let testFeedback {
+                Text(testFeedback)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Button("查看历史信息") {
+                    NotificationCenter.default.post(name: .openHistoryWindow, object: nil)
+                }
+                .buttonStyle(.borderless)
+            }
+            Text("通知出现在屏幕顶部。点击摘要栏打开消息中心；在设置允许时，鼠标靠近也可展开。拖动卡片顶部上滑可收起当前消息，消息仍保留在历史中。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

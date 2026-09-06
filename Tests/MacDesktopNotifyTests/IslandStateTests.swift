@@ -22,6 +22,44 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         NotchNotification(title: title, bodyMarkdown: "body", urgency: urgency, timeout: timeout)
     }
 
+    func testOpenMessageCenterFromAutomaticCardPreservesMessagesAndSurvivesRotation() {
+        AppSettings.shared.autoExpandOnMessage = true
+        AppSettings.shared.normalMessagesPeek = false
+        let manager = NotificationManager()
+        let current = make("current")
+        let queued = make("queued")
+        manager.push(current)
+        manager.push(queued)
+        XCTAssertFalse(manager.panelOpenedManually)
+
+        manager.openMessageCenter()
+        XCTAssertEqual(manager.displayState, .manualExpanded)
+        XCTAssertTrue(manager.panelOpenedManually)
+        XCTAssertEqual(manager.current?.id, current.id)
+        XCTAssertEqual(manager.queue.map(\.id), [queued.id])
+        XCTAssertFalse(manager.isRead(queued), "opening must not mark unseen queued messages read")
+
+        manager.openMessageCenter()
+        XCTAssertEqual(manager.displayState, .manualExpanded, "reopening must not toggle closed")
+        manager.advance()
+        XCTAssertEqual(manager.current?.id, queued.id)
+        XCTAssertTrue(manager.panelOpenedManually, "rotation must keep the complete list visible")
+        XCTAssertEqual(manager.historyCount, 2)
+        manager.clear()
+    }
+
+    func testOpenMessageCenterRespectsSuppressionAndEmptyState() {
+        let manager = NotificationManager()
+        manager.openMessageCenter()
+        XCTAssertEqual(manager.displayState, .hidden)
+        manager.setDisplaySuppressed(true)
+        manager.push(make("critical", urgency: .critical))
+        manager.openMessageCenter()
+        XCTAssertFalse(manager.panelOpenedManually)
+        XCTAssertEqual(manager.current?.title, "critical")
+        manager.clear()
+    }
+
     func testHistorySurvivesTransientDismissal() {
         let presenter = PresenterSpy()
         let manager = NotificationManager(presenter: presenter)

@@ -52,13 +52,35 @@ private enum HistoryRowStatus {
 private struct HistoryView: View {
     private var manager: NotificationManager { .shared }
     @State private var expandedID: UUID?
+    @State private var searchText = ""
+    @State private var filter = "全部"
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Newest first, matching the panel's ordering.
-    private var items: [NotchNotification] { manager.history.reversed() }
+    private var items: [NotchNotification] {
+        manager.history.reversed().filter { item in
+            (searchText.isEmpty || item.title.localizedStandardContains(searchText)
+                || item.bodyMarkdown.localizedStandardContains(searchText))
+                && (filter != "未读" || !manager.isRead(item))
+                && (filter != "紧急" || item.urgency == .critical)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
+            HStack {
+                TextField("搜索标题或正文", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("搜索历史消息")
+                Picker("筛选消息", selection: $filter) {
+                    ForEach(["全部", "未读", "紧急"], id: \.self) { Text($0) }
+                }
+                .labelsHidden()
+                .frame(width: 95)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
             Divider()
             if items.isEmpty {
                 emptyState
@@ -85,7 +107,7 @@ private struct HistoryView: View {
         .frame(minWidth: 460, minHeight: 300)
         // The same take-back the panel offers after a delete, mirrored here so
         // a deletion made from this window is not the one place undo is missing.
-        .overlay(alignment: .bottom) {
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             if let notice = manager.deletionNotice {
                 HStack(spacing: 10) {
                     Text(notice.subject.map { "已删除 \($0)" } ?? "已删除 \(notice.count) 条消息")
@@ -101,13 +123,19 @@ private struct HistoryView: View {
                 .padding(.bottom, 12)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: manager.deletionNotice)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: manager.deletionNotice)
+        .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
     }
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text("历史信息")
-                .font(.system(size: 14, weight: .semibold))
+            VStack(alignment: .leading, spacing: 3) {
+                Text("历史信息")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("逐条浏览 · 最新在前 · 同组消息分别列出")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if manager.unreadCount > 0 {
                 Text("未读 \(manager.unreadCount)")
                     .font(.system(size: 11, weight: .medium))
@@ -119,7 +147,7 @@ private struct HistoryView: View {
                 .disabled(manager.unreadCount == 0)
             // Clearing is destructive, so it routes through the app delegate's
             // modal confirmation - the same path as the panel and the menus.
-            Button("清空…") {
+            Button("清除历史…") {
                 NotificationCenter.default.post(name: .requestClearHistory, object: nil)
             }
             .controlSize(.small)
@@ -134,9 +162,12 @@ private struct HistoryView: View {
             Image(systemName: "tray")
                 .font(.system(size: 28, weight: .light))
                 .foregroundStyle(.tertiary)
-            Text("暂无历史消息")
+            Text(manager.history.isEmpty ? "暂无历史消息" : "没有匹配的消息")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
+            if !manager.history.isEmpty {
+                Button("显示全部消息") { searchText = ""; filter = "全部" }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -200,6 +231,7 @@ private struct HistoryWindowRow: View {
                     }
                     .buttonStyle(.borderless)
                     .help(isUnread ? "标为已读" : "标为未读")
+                    .accessibilityLabel(isUnread ? "标为已读" : "标为未读")
 
                     Button {
                         manager.removeHistory(id: notification.id)
@@ -210,7 +242,8 @@ private struct HistoryWindowRow: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.borderless)
-                    .help("从历史中删除这条消息")
+                    .help("删除这条消息（包括当前或待显示状态）")
+                    .accessibilityLabel("删除这条消息")
                 }
                 .foregroundStyle(.secondary)
 
@@ -223,9 +256,10 @@ private struct HistoryWindowRow: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: toggle)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(isUnread ? "未读消息" : "消息")：\(notification.title)")
+            .accessibilityLabel("\(isUnread ? "未读消息" : "消息")：\(notification.title)，\(notification.urgency.accessibilityLabel)")
             .accessibilityHint(isExpanded ? "收起正文" : "展开正文")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { toggle() }
             .accessibilityAction(named: isUnread ? "标为已读" : "标为未读") {
                 manager.setRead(notification.id, read: isUnread)
             }
@@ -234,6 +268,13 @@ private struct HistoryWindowRow: View {
             }
 
             if isExpanded {
+                Text(notification.title)
+                    .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                Text(notification.urgency.accessibilityLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 HistoryWindowBody(bodyMarkdown: notification.bodyMarkdown)
                     .padding(.leading, 25)
             }
@@ -256,7 +297,7 @@ private struct HistoryWindowRow: View {
         case .queued:
             badge("待显示", tint: .orange)
         case .past:
-            EmptyView()
+            badge("历史", tint: .secondary)
         }
     }
 

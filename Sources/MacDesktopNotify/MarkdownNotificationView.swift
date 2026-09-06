@@ -79,38 +79,36 @@ private enum PanelTextOpacity {
     static let subtle: Double = 0.66
 }
 
-/// One-line text clipped to `maxWidth`; while `active` (pointer near the
-/// island), any overflow scrolls back and forth so a long title stays readable
-/// without widening the pill. The width cap is also what keeps the pill's
-/// reported width - and thus the activation frame - stable across titles.
-private struct MarqueeText: View {
+/// A stable summary width keeps the activation area predictable. The full
+/// title remains available without waiting for a scrolling animation.
+private struct SummaryTitleText: View {
     let text: String
-    let active: Bool
-    var maxWidth: CGFloat = 220
-
-    @State private var textWidth: CGFloat = 0
-    @State private var scrollOffset: CGFloat = 0
-
-    private var overflow: CGFloat { max(0, textWidth - maxWidth) }
 
     var body: some View {
         Text(text)
             .lineLimit(1)
-            .fixedSize()
-            .onGeometryChange(for: CGFloat.self, of: \.size.width) { textWidth = $0 }
-            .offset(x: -scrollOffset)
-            .frame(maxWidth: maxWidth, alignment: .leading)
-            .clipped()
-            .onChange(of: active) { _, isActive in
-                if isActive, overflow > 0 {
-                    withAnimation(.linear(duration: Double(overflow) / 30).repeatForever(autoreverses: true)) {
-                        scrollOffset = overflow
-                    }
-                } else {
-                    withAnimation(.easeOut(duration: 0.15)) { scrollOffset = 0 }
-                }
-            }
-            .onChange(of: text) { _, _ in scrollOffset = 0 }
+            .truncationMode(.tail)
+            .frame(maxWidth: 220, alignment: .leading)
+            .help(text)
+    }
+}
+
+/// Shared by the panel toolbar and context menu so cleanup scopes agree.
+private struct MessageManagementActions: View {
+    private var manager: NotificationManager { .shared }
+
+    var body: some View {
+        Button("停止待显示提醒（保留消息）") { manager.discardPending() }
+            .disabled(manager.queue.isEmpty)
+        Button("清除历史消息…") {
+            NotificationCenter.default.post(name: .requestClearHistory, object: nil)
+        }
+        .disabled(manager.pastHistory.isEmpty)
+        Divider()
+        Button("清除全部消息…", role: .destructive) {
+            NotificationCenter.default.post(name: .requestClearAll, object: nil)
+        }
+        .disabled(!manager.hasContent)
     }
 }
 
@@ -139,6 +137,7 @@ struct IslandContextMenu: ViewModifier {
                 NotificationCenter.default.post(name: .openHistoryWindow, object: nil)
             }
             .disabled(manager.history.isEmpty)
+            Menu("管理消息") { MessageManagementActions() }
             Button(manager.isSilenced ? "取消静默" : "静默 1 小时") {
                 if manager.isSilenced {
                     manager.resumeFromSilence()
@@ -146,10 +145,6 @@ struct IslandContextMenu: ViewModifier {
                     manager.silence(until: Date().addingTimeInterval(3600))
                 }
             }
-            Button("清除全部消息…") {
-                NotificationCenter.default.post(name: .requestClearAll, object: nil)
-            }
-            .disabled(!manager.hasContent)
             Divider()
             Button("设置…") {
                 NotificationCenter.default.post(name: .openSettings, object: nil)
@@ -159,6 +154,7 @@ struct IslandContextMenu: ViewModifier {
 }
 
 struct CompactIslandView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let side: CompactIslandSide
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
@@ -177,7 +173,7 @@ struct CompactIslandView: View {
                             .accessibilityHidden(true)
                     }
                     if manager.compactShowsMessageTitle, let title = manager.current?.title {
-                        MarqueeText(text: title, active: manager.pointerNearIsland)
+                        SummaryTitleText(text: title)
                             .contentTransition(.opacity)
                     } else {
                         Text(manager.compactStatus)
@@ -205,7 +201,7 @@ struct CompactIslandView: View {
         // larger) the moment the pointer enters the activation zone, so the
         // hover-delayed panel never appears out of nowhere. `scaleEffect` is a
         // render transform - it does not feed back into `setCompactContentWidth`.
-        .scaleEffect(manager.pointerNearIsland ? 1.06 : 1)
+        .scaleEffect(manager.pointerNearIsland && !reduceMotion ? 1.06 : 1)
         .animation(.easeOut(duration: 0.12), value: manager.pointerNearIsland)
         .padding(.horizontal, max(4, 8 + settings.notchWidthOffset / 4))
         .padding(.vertical, max(2, 4 + settings.notchHeightOffset / 4))
@@ -220,6 +216,7 @@ struct CompactIslandView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(manager.current.map { "通知：\($0.title)" } ?? "通知中心")
         .modifier(IslandContextMenu(expanded: false))
+        .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
     }
 }
 
@@ -259,8 +256,29 @@ struct IslandExpandedView: View {
                 .scrollIndicators(.hidden)
                 .frame(maxHeight: max(160, settings.panelHeight - 75))
             }
+            if !showsFullList {
+                Button {
+                    manager.openMessageCenter()
+                } label: {
+                    Label("查看队列与历史（\(manager.unreadCount) 条未读）", systemImage: "list.bullet")
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(ActionCapsuleStyle(primary: false))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+            }
         }
-        .offset(y: panelDragOffset)
+        // Insets reserve scroll space so the last row remains reachable.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let notice = manager.deletionNotice {
+                UndoToast(notice: notice) { manager.undoDeletion() }
+                    .padding(10)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .offset(y: reduceMotion ? 0 : panelDragOffset)
         .opacity(1 - min(1, panelDragOffset / 120) * 0.4)
         .frame(width: max(320, settings.panelWidth))
         // The outer frame already clamps to `minHeight...maxHeight`, so the list
@@ -271,21 +289,20 @@ struct IslandExpandedView: View {
         .background(Color.black)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .foregroundStyle(.white)
-        // The deletion undo toast floats over the list's bottom edge.
-        .overlay(alignment: .bottom) {
-            if let notice = manager.deletionNotice {
-                UndoToast(notice: notice) { manager.undoDeletion() }
-                    .padding(.bottom, 10)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: manager.deletionNotice)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: manager.current?.id)
         .animation(reduceMotion ? nil : .default, value: panelDragOffset)
         .onHover { manager.setHovering($0) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("通知面板")
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(.white.opacity(0.18), lineWidth: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         .modifier(IslandContextMenu(expanded: true))
+        .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
     }
 
     /// The two panel modes: the full message center belongs to a deliberate
@@ -309,10 +326,10 @@ struct IslandExpandedView: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(manager.current?.title ?? "通知中心")
+                Text(showsFullList ? "通知中心" : "当前通知")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .lineLimit(1)
-                Text(manager.current == nil ? "最近消息" : manager.compactStatus)
+                Text(showsFullList ? "\(manager.unreadCount) 条未读 · \(manager.pendingCount) 条待显示" : manager.compactStatus)
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.66))
             }
@@ -322,34 +339,32 @@ struct IslandExpandedView: View {
             Button {
                 manager.markAllRead()
             } label: {
-                Image(systemName: "envelope.open")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.75))
-                    .frame(width: 28, height: 28)
+                Text("全部已读")
+                    .font(.system(size: 11, weight: .medium))
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
             }
-            .buttonStyle(PanelIconButtonStyle())
+            .buttonStyle(ActionCapsuleStyle(primary: false))
             .help("全部标为已读")
             .accessibilityLabel("全部标为已读")
             .disabled(manager.unreadCount == 0)
 
-            // The confirmation must outlive this panel window: a hover-out or
-            // outside-click collapse tears the window - and any inline
-            // confirmationDialog inside it - down before the click lands.
-            // Routing through the app delegate's modal NSAlert (same as the
-            // right-click menu below) keeps one confirmation contract and one
-            // window that no pointer state can destroy.
-            Button {
-                NotificationCenter.default.post(name: .requestClearAll, object: nil)
+            Menu {
+                Button("历史信息…") {
+                    NotificationCenter.default.post(name: .openHistoryWindow, object: nil)
+                }
+                Divider()
+                MessageManagementActions()
             } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.75))
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12, weight: .bold))
                     .frame(width: 28, height: 28)
             }
-            .buttonStyle(PanelIconButtonStyle())
-            .help("清空全部消息")
-            .accessibilityLabel("清空全部消息")
-            .disabled(!manager.hasContent)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("更多操作")
+            .accessibilityLabel("更多操作")
 
             Button {
                 manager.dismissPanel()
@@ -386,76 +401,6 @@ struct IslandExpandedView: View {
                 }
                 panelDragOffset = 0
             }
-    }
-}
-
-/// Small label separating the list's three zones (正在显示 / 待显示 / 历史).
-/// Section-wide operations （全部丢弃 / 清空 / 筛选 chips) live in the
-/// trailing slot: neither in the panel header nor repeated on every row.
-private struct SectionHeader<Trailing: View>: View {
-    let title: String
-    var detail: String? = nil
-    @ViewBuilder var trailing: Trailing
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(title)
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.55))
-            if let detail {
-                Text(detail)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.4))
-            }
-            Spacer(minLength: 0)
-            trailing
-        }
-        .padding(.horizontal, 4)
-        .padding(.top, 2)
-    }
-}
-
-extension SectionHeader where Trailing == EmptyView {
-    init(title: String, detail: String? = nil) {
-        self.init(title: title, detail: detail, trailing: { EmptyView() })
-    }
-}
-
-/// The small text button a section header carries （全部丢弃 / 清空）.
-private struct SectionActionButton: View {
-    let title: String
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(hovering ? 0.95 : 0.6))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .animation(.easeInOut(duration: 0.12), value: hovering)
-    }
-}
-
-/// One filter chip in the history section header (P2). Single-select.
-private struct FilterChip: View {
-    let title: String
-    let isOn: Bool
-    let tap: () -> Void
-
-    var body: some View {
-        Button(action: tap) {
-            Text(title)
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(isOn ? 0.95 : 0.55))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .background(.white.opacity(isOn ? 0.22 : 0.08), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }
 
@@ -579,7 +524,14 @@ private struct HorizontalSwipeCatcher: NSViewRepresentable {
                 }
                 onChanged(accX)
                 return true
-            case .ended, .cancelled:
+            case .cancelled:
+                let consumed = swipeActive
+                swipeActive = false
+                accX = 0
+                accY = 0
+                onChanged(0)
+                return consumed
+            case .ended:
                 guard swipeActive else { return false }
                 swipeActive = false
                 onEnded(accX)
@@ -610,11 +562,12 @@ private struct RowSwipe<Content: View>: View {
     // never varies per row anyway.
     private let threshold: CGFloat = 60
     @State private var offset: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
             revealedLayer
-            content.offset(x: offset)
+            content.offset(x: reduceMotion ? 0 : offset)
         }
         .background(HorizontalSwipeCatcher(armed: armed, onChanged: { offset = $0 }, onEnded: finish))
         .clipped()
@@ -689,23 +642,11 @@ private struct UndoToast: View {
     }
 }
 
-/// The history section's filter chips (P2). Single-select.
-private enum HistoryFilter: String, CaseIterable {
-    case all, unread, critical
-
-    var title: String {
-        switch self {
-        case .all: "全部"
-        case .unread: "未读"
-        case .critical: "紧急"
-        }
-    }
-}
-
-/// Single scrolling list in three labeled sections: the live message on top,
+/// Single scrolling list with no section headers: the live message on top,
 /// queued (not yet shown) messages dimmed below it, and tappable past
 /// messages at the bottom.
 private struct MessageListView: View {
+    @AppStorage("historySwipeHintDismissed") private var swipeHintDismissed = false
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
 
@@ -728,17 +669,12 @@ private struct MessageListView: View {
         get { manager.selectedRowID }
         nonmutating set { manager.selectedRowID = newValue }
     }
-    /// Filter chips for the history section. Not persisted (Q4): a forgotten
-    /// filter hiding unread messages is worse than re-tapping a chip, so it
-    /// deliberately resets to 「全部」 on every opening.
-    @State private var historyFilter: HistoryFilter = .all
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     if let current = manager.current {
-                        SectionHeader(title: "正在显示")
                         CurrentCard(notification: current)
                             .id(current.id)
                             .transition(.asymmetric(
@@ -748,13 +684,6 @@ private struct MessageListView: View {
                     }
 
                     if manager.pendingCount > 0 {
-                        SectionHeader(title: "待显示", detail: "\(manager.pendingCount) 条") {
-                            SectionActionButton(title: "全部丢弃") {
-                                manager.discardPending()
-                            }
-                        }
-                        .help("待显示消息移出队列、不再弹出，保留在历史中")
-
                         if manager.pendingCount > NotificationManager.shownPendingCap {
                             Text("还有 \(manager.pendingCount - NotificationManager.shownPendingCap) 条未展示")
                                 .font(.system(size: 10, weight: .medium, design: .rounded))
@@ -767,63 +696,52 @@ private struct MessageListView: View {
                         }
                     }
 
-                    if !historyEntries.isEmpty {
-                        SectionHeader(
-                            title: "历史",
-                            detail: unreadHistoryCount > 0 ? "未读 \(unreadHistoryCount)" : nil
-                        ) {
-                            HStack(spacing: 6) {
-                                ForEach(HistoryFilter.allCases, id: \.self) { filter in
-                                    FilterChip(title: filter.title, isOn: historyFilter == filter) {
-                                        withAnimation(.easeInOut(duration: 0.15)) { historyFilter = filter }
-                                    }
-                                }
-                                SectionActionButton(title: "清空") {
-                                    NotificationCenter.default.post(name: .requestClearHistory, object: nil)
-                                }
+                    if !historyEntries.isEmpty, !swipeHintDismissed {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("行尾按钮可标读或删除；触控板右滑标读、左滑删除，删除后可撤销。")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.white.opacity(0.7))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button("知道了") { swipeHintDismissed = true }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 11, weight: .semibold))
+                                .padding(4)
+                        }
+                        .padding(.vertical, 4)
+                    }
+
+                    ForEach(historyEntries) { entry in
+                        switch entry {
+                        case .single(let notification):
+                            HistoryRow(
+                                notification: notification,
+                                isExpanded: expandedHistoryID == notification.id,
+                                isUnread: !manager.isRead(notification),
+                                isSelected: selectedRowID == notification.id.uuidString
+                            ) {
+                                toggleExpanded(notification.id)
                             }
-                        }
-
-                        if filteredHistoryEntries.isEmpty {
-                            Text("没有匹配的\(historyFilter.title)消息")
-                                .font(.system(size: 10, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.5))
-                                .padding(.horizontal, 4)
-                        }
-
-                        ForEach(filteredHistoryEntries) { entry in
-                            switch entry {
-                            case .single(let notification):
-                                HistoryRow(
-                                    notification: notification,
-                                    isExpanded: expandedHistoryID == notification.id,
-                                    isUnread: !manager.isRead(notification),
-                                    isSelected: selectedRowID == notification.id.uuidString
-                                ) {
-                                    toggleExpanded(notification.id)
-                                }
-                                .id(entry.id)
-                            case .grouped(let key, let items):
-                                HistoryGroupRow(
-                                    groupKey: key,
-                                    items: items,
-                                    isExpanded: expandedGroupKeys.contains(key),
-                                    expandedItemID: expandedHistoryID,
-                                    isSelected: selectedRowID == entry.id,
-                                    selectedRowID: selectedRowID,
-                                    toggleGroup: {
-                                        withAnimation(.easeInOut(duration: 0.15)) {
-                                            if expandedGroupKeys.contains(key) {
-                                                expandedGroupKeys.remove(key)
-                                            } else {
-                                                expandedGroupKeys.insert(key)
-                                            }
+                            .id(entry.id)
+                        case .grouped(let key, let items):
+                            HistoryGroupRow(
+                                groupKey: key,
+                                items: items,
+                                isExpanded: expandedGroupKeys.contains(key),
+                                expandedItemID: expandedHistoryID,
+                                isSelected: selectedRowID == entry.id,
+                                selectedRowID: selectedRowID,
+                                toggleGroup: {
+                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                        if expandedGroupKeys.contains(key) {
+                                            expandedGroupKeys.remove(key)
+                                        } else {
+                                            expandedGroupKeys.insert(key)
                                         }
-                                    },
-                                    toggleItem: toggleExpanded
-                                )
-                                .id(entry.id)
-                            }
+                                    }
+                                },
+                                toggleItem: toggleExpanded
+                            )
+                            .id(entry.id)
                         }
                     }
                 }
@@ -882,44 +800,14 @@ private struct MessageListView: View {
         }
     }
 
-    /// Unread messages inside the history section only — the header's 「未读 N」
-    /// must not count the live or queued messages the other sections own.
-    private var unreadHistoryCount: Int {
-        manager.pastHistory.reduce(0) { $0 + (manager.isRead($1) ? 0 : 1) }
-    }
-
-    /// History entries after the filter chips. A group survives a filter if
-    /// any member matches; its rows still render whole — the group is the
-    /// unit the user reasons about.
-    private var filteredHistoryEntries: [HistoryEntry] {
-        switch historyFilter {
-        case .all:
-            return historyEntries
-        case .unread:
-            return historyEntries.filter { entry in
-                switch entry {
-                case .single(let notification): return !manager.isRead(notification)
-                case .grouped(_, let items): return items.contains { !manager.isRead($0) }
-                }
-            }
-        case .critical:
-            return historyEntries.filter { entry in
-                switch entry {
-                case .single(let notification): return notification.urgency == .critical
-                case .grouped(_, let items): return items.contains { $0.urgency == .critical }
-                }
-            }
-        }
-    }
-
     // MARK: - Keyboard navigation (P2)
 
-    /// Rows the keyboard can land on, top to bottom: every visible history
-    /// entry, with an expanded group's members inserted right after the group
+    /// Rows the keyboard can land on, top to bottom: every history entry,
+    /// with an expanded group's members inserted right after the group
     /// row. The current card and the queue stay out of it (Q5).
     private var selectableIDs: [String] {
         var ids: [String] = []
-        for entry in filteredHistoryEntries {
+        for entry in historyEntries {
             ids.append(entry.id)
             if case .grouped(let key, let items) = entry, expandedGroupKeys.contains(key) {
                 ids.append(contentsOf: items.map { $0.id.uuidString })
@@ -1067,6 +955,7 @@ private struct HistoryGroupRow: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
                         Text(latest.title)
+                            .help(latest.title)
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .lineLimit(1)
                         if unreadCount > 0 {
@@ -1094,7 +983,7 @@ private struct HistoryGroupRow: View {
                         Image(systemName: unreadCount > 0 ? "envelope.open" : "envelope.badge")
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.85))
-                            .frame(width: 20, height: 20)
+                            .frame(width: 24, height: 24)
                     }
                     .buttonStyle(PanelIconButtonStyle())
                     .help(unreadCount > 0 ? "整组标为已读" : "整组标为未读")
@@ -1106,7 +995,7 @@ private struct HistoryGroupRow: View {
                         Image(systemName: "trash")
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.85))
-                            .frame(width: 20, height: 20)
+                            .frame(width: 24, height: 24)
                     }
                     .buttonStyle(PanelIconButtonStyle())
                     .help("删除整个分组")
@@ -1121,9 +1010,10 @@ private struct HistoryGroupRow: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: toggleGroup)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(unreadCount > 0 ? "未读分组" : "消息分组")：\(latest.title)，共 \(items.count) 条")
+            .accessibilityLabel("\(unreadCount > 0 ? "未读分组" : "消息分组")：\(latest.title)，共 \(items.count) 条，\(latest.urgency.accessibilityLabel)")
             .accessibilityHint(isExpanded ? "收起分组" : "展开分组")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { toggleGroup() }
             .accessibilityAction(named: unreadCount > 0 ? "整组标为已读" : "整组标为未读") {
                 manager.setGroupRead(groupKey, read: unreadCount > 0)
             }
@@ -1164,11 +1054,11 @@ private struct CurrentCard: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(notification.urgency.color)
                     .accessibilityLabel(notification.urgency.accessibilityLabel)
-                Text(notification.urgency == .critical ? "需要注意" : "新消息")
+                Text("正在显示 · \(notification.urgency.accessibilityLabel)")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.66))
                 Spacer()
-                Text(notification.timestamp, style: .time)
+                Text(notification.timestamp.formatted(.relative(presentation: .named)))
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(PanelTextOpacity.timestamp))
             }
@@ -1191,6 +1081,11 @@ private struct CurrentCard: View {
                 manager.dismissCurrent()
             }
 
+            Text(notification.title)
+                .font(.system(size: 14, weight: .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+
             NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
 
             if !notification.actions.isEmpty {
@@ -1205,7 +1100,7 @@ private struct CurrentCard: View {
         }
         .padding(12)
         .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .offset(y: dragOffset)
+        .offset(y: reduceMotion ? 0 : dragOffset)
         .opacity(1 - min(1, abs(dragOffset) / 80) * 0.6)
         .animation(reduceMotion ? nil : .default, value: dragOffset)
     }
@@ -1270,14 +1165,16 @@ private struct PendingRow: View {
                 .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(1)
             Spacer(minLength: 0)
-            Text("待显示")
+            Text("待显示 · \(notification.urgency.accessibilityLabel)")
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(PanelTextOpacity.pending))
         }
         .padding(10)
         .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("等待中的消息：\(notification.title)")
+        .accessibilityLabel("等待显示的消息：\(notification.title)，\(notification.urgency.accessibilityLabel)")
+        .accessibilityHint("按紧急度依次显示；同一紧急度按到达顺序显示")
+        .help("按紧急度依次显示；当前消息停留或正在操作时，等待时间会延长")
     }
 }
 
@@ -1305,11 +1202,6 @@ private struct HistoryRow: View {
         }
         .onHover { hovering = $0 }
         .animation(.easeInOut(duration: 0.12), value: hovering)
-        // Read rows drop the two-line preview and collapse to one line
-        // (unread rows keep it). Read-state flips have no call-site
-        // `withAnimation` - the visibility pipeline can mark a row at any
-        // moment - so the collapse gets its own, matching the accordion's.
-        .animation(.easeInOut(duration: 0.15), value: isUnread)
         // P3 visibility-based read marking: entering the viewport starts (or,
         // before the unlock, merely tracks) this row's one-second read budget.
         .onAppear { manager.noteRowVisible(notification.id) }
@@ -1339,7 +1231,7 @@ private struct HistoryRow: View {
                                 .accessibilityHidden(true)
                         }
                     }
-                    if !isExpanded, isUnread, let previewText {
+                    if !isExpanded, let previewText {
                         Text(previewText)
                             .font(.system(size: 11, weight: .regular, design: .rounded))
                             .foregroundStyle(.white.opacity(0.68))
@@ -1363,7 +1255,7 @@ private struct HistoryRow: View {
                         Image(systemName: isUnread ? "envelope.open" : "envelope.badge")
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.85))
-                            .frame(width: 20, height: 20)
+                            .frame(width: 24, height: 24)
                     }
                     .buttonStyle(PanelIconButtonStyle())
                     .help(isUnread ? "标为已读" : "标为未读")
@@ -1378,7 +1270,7 @@ private struct HistoryRow: View {
                         Image(systemName: "trash")
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.85))
-                            .frame(width: 20, height: 20)
+                            .frame(width: 24, height: 24)
                     }
                     .buttonStyle(PanelIconButtonStyle())
                     .help("从历史中删除这条消息")
@@ -1396,9 +1288,10 @@ private struct HistoryRow: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: toggle)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(isUnread ? "未读消息" : "消息")：\(notification.title)")
+            .accessibilityLabel("\(isUnread ? "未读消息" : "消息")：\(notification.title)，\(notification.urgency.accessibilityLabel)")
             .accessibilityHint(isExpanded ? "收起正文" : "展开正文")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { toggle() }
             .accessibilityAction(named: isUnread ? "标为已读" : "标为未读") {
                 manager.setRead(notification.id, read: isUnread)
             }
@@ -1407,6 +1300,13 @@ private struct HistoryRow: View {
             }
 
             if isExpanded {
+                Text(notification.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                Text(notification.urgency.accessibilityLabel)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.7))
                 NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
                 if !notification.actions.isEmpty {
                     ActionRow(actions: notification.actions) { action, comment in
