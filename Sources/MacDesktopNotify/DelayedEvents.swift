@@ -25,12 +25,6 @@ final class DelayedEvents {
         case persist
         /// The undo toast's countdown: fires to drop the deletion journal.
         case deletionUndoExpiry
-        /// The dwell gate of the read pipeline: fires when the pointer's total
-        /// stay reaches the settle delay, unlocking visibility-based marking.
-        case readUnlock
-        /// One per row scrolled into view after the unlock (P3): fires to
-        /// mark that row read after its own second on screen.
-        case rowRead(UUID)
         /// §3.1: the informational card's auto-close countdown.
         case notificationAutoClose
     }

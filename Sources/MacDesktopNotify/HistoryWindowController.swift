@@ -97,6 +97,10 @@ private struct HistoryView: View {
                                 withAnimation(.easeInOut(duration: 0.15)) {
                                     expandedID = expandedID == notification.id ? nil : notification.id
                                 }
+                                // §4: expanding a body is an explicit act of reading.
+                                if expandedID == notification.id, !manager.isRead(notification) {
+                                    manager.setRead(notification.id, read: true)
+                                }
                             }
                         }
                     }

@@ -42,11 +42,10 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         let queued = make("queued")
         manager.push(current)
         manager.push(queued)
-        XCTAssertFalse(manager.panelOpenedManually)
+        XCTAssertNotEqual(manager.displayState.openReason, .click, "an automatic card is not a deliberate open")
 
         manager.openMessageCenter()
         XCTAssertEqual(manager.displayState, .opened(reason: .click))
-        XCTAssertTrue(manager.panelOpenedManually)
         XCTAssertEqual(manager.current?.id, current.id)
         XCTAssertEqual(manager.queue.map(\.id), [queued.id])
         XCTAssertFalse(manager.isRead(queued), "opening must not mark unseen queued messages read")
@@ -55,7 +54,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         XCTAssertEqual(manager.displayState, .opened(reason: .click), "reopening must not toggle closed")
         manager.advance()
         XCTAssertEqual(manager.current?.id, queued.id)
-        XCTAssertTrue(manager.panelOpenedManually, "rotation must keep the complete list visible")
+        XCTAssertEqual(manager.displayState.openReason, .click, "rotation must keep the complete list visible")
         XCTAssertEqual(manager.historyCount, 2)
         manager.clear()
     }
@@ -67,7 +66,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         manager.setDisplaySuppressed(true)
         manager.push(make("critical", urgency: .critical))
         manager.openMessageCenter()
-        XCTAssertFalse(manager.panelOpenedManually)
+        XCTAssertNotEqual(manager.displayState.openReason, .click)
         XCTAssertEqual(manager.current?.title, "critical")
         manager.clear()
     }

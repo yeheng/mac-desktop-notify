@@ -91,112 +91,109 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.unreadCount, 0)
     }
 
-    // MARK: - Read state
+    // MARK: - Read state (§4 latch)
 
-    /// Read is attention, not pixels: an automatically expanded panel that
-    /// nobody looked at must not clear the unread count. Presence is latched
-    /// on pointer edges, so there is no timer to race here.
+    /// 自动弹卡无人进入 → 不清未读（v2 管线防的事由门闩防住）。
     func testAutoExpandedPanelWithoutPointerStaysUnread() {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
         settings.autoExpandOnMessage = true
         defer { settings.autoExpandOnMessage = old }
-
         let m = NotificationManager()
         m.push(make("a"))
         XCTAssertEqual(m.displayState, .opened(reason: .notification))
-        XCTAssertEqual(m.unreadCount, 1, "a panel that nobody looked at must not clear unread state")
+        XCTAssertEqual(m.unreadCount, 1)
     }
 
-    /// Dwell unlock marks only what was on screen: the current message and
-    /// rows the view reported visible. A queued message never shown stays
-    /// unread (P3 visibility-based read marking).
-    func testDwellUnlockMarksVisibleRowsOnly() async throws {
-        let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = false   // v3 §3.1: pushes must queue here, not displace
-        defer { settings.autoExpandOnMessage = old }
-
-        let m = NotificationManager()
-        m.push(make("a"))
-        m.push(make("b"))
-        m.push(make("c"))
-        m.dismissCurrent()           // b current; a past; c queued
-        m.noteRowVisible(m.pastHistory[0].id)   // a is on screen
-        m.setPointerNearIsland(true)
-        try await Task.sleep(for: .milliseconds(1200))  // past the settle delay
-
-        XCTAssertTrue(m.isRead(m.pastHistory[0]), "the visible history row is read")
-        XCTAssertTrue(m.current.map { m.isRead($0) } ?? false, "the live message is read")
-        XCTAssertEqual(m.unreadCount, 1, "the queued message was never shown, so it stays unread")
-        m.dismissPanel()
-    }
-
-    /// After the unlock, a row scrolled into view earns its read mark after
-    /// one full second on screen — not on the frame it appears.
-    func testScrolledInRowEarnsReadAfterOneSecond() async throws {
-        let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = false   // v3 §3.1: pushes must queue here, not displace
-        defer { settings.autoExpandOnMessage = old }
-
-        let m = NotificationManager()
-        m.push(make("a"))
-        m.push(make("b"))
-        m.dismissCurrent()           // b current, a past
-        m.setPointerNearIsland(true)
-        try await Task.sleep(for: .milliseconds(1200))  // unlock
-        let a = m.pastHistory[0]
-        XCTAssertFalse(m.isRead(a), "a was never on screen during the dwell")
-
-        m.noteRowVisible(a.id)
-        try await Task.sleep(for: .milliseconds(300))
-        XCTAssertFalse(m.isRead(a), "200ms on screen is a scroll-past, not a read")
-        try await Task.sleep(for: .milliseconds(1000))
-        XCTAssertTrue(m.isRead(a), "a full second on screen earns the read mark")
-        m.dismissPanel()
-    }
-
-    /// A row scrolled away before its second elapses keeps its unread state.
-    func testRowHiddenBeforeItsSecondStaysUnread() async throws {
-        let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = false   // v3 §3.1: pushes must queue here, not displace
-        defer { settings.autoExpandOnMessage = old }
-
-        let m = NotificationManager()
-        m.push(make("a"))
-        m.push(make("b"))
-        m.dismissCurrent()           // b current, a past
-        m.setPointerNearIsland(true)
-        try await Task.sleep(for: .milliseconds(1200))  // unlock
-        let a = m.pastHistory[0]
-
-        m.noteRowVisible(a.id)
-        try await Task.sleep(for: .milliseconds(300))
-        m.noteRowHidden(a.id)
-        try await Task.sleep(for: .milliseconds(1000))
-        XCTAssertFalse(m.isRead(a), "the row left the viewport before earning the mark")
-        m.dismissPanel()
-    }
-
-    /// A brush past the notch is not attention either: presence shorter than
-    /// the settle delay never unlocks read marking.
-    func testBriefPointerVisitDoesNotMarkRead() async throws {
+    /// 门闩翻转瞬间：屏上可见行全部立即已读；从未显示的排队消息保持未读。
+    func testPointerEntryMarksVisibleRowsOnly() {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
         settings.autoExpandOnMessage = true
         defer { settings.autoExpandOnMessage = old }
+        let m = NotificationManager()
+        // v3 §3.1: an operable first card keeps the surface, so b/c queue.
+        m.push(NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [
+            NotificationAction(label: "允许", url: URL(string: "notch-notify://ack?token=t&result=ok")!)
+        ]))
+        m.push(make("b"))
+        m.push(make("c"))
+        m.dismissCurrent()                            // b current; a past; c queued
+        m.noteRowVisible(m.pastHistory[0].id)         // a on screen
+        m.setHovering(true)                           // latch flip
 
+        XCTAssertTrue(m.isRead(m.pastHistory[0]))
+        XCTAssertTrue(m.current.map { m.isRead($0) } ?? false)
+        XCTAssertEqual(m.unreadCount, 1, "the queued message was never shown")
+    }
+
+    /// 门闩已开时滚入的新行：onAppear 上报即读，无每秒预算。
+    func testRowScrolledInWhileEligibleReadsImmediately() {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = old }
+        let m = NotificationManager()
+        // v3 §3.1: an operable first card keeps the surface, so b queues.
+        m.push(NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [
+            NotificationAction(label: "允许", url: URL(string: "notch-notify://ack?token=t&result=ok")!)
+        ]))
+        m.push(make("b"))
+        m.dismissCurrent()
+        m.setHovering(true)                           // latch open
+        let a = m.pastHistory[0]
+        XCTAssertFalse(m.isRead(a), "never reported visible yet")
+
+        m.noteRowVisible(a.id)
+        XCTAssertTrue(m.isRead(a), "§4: eligible periods read rows the frame they report")
+    }
+
+    /// 触发区不是面板：只靠近不进入，一个都不读。
+    func testZonePresenceAloneDoesNotMarkRead() {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = old }
         let m = NotificationManager()
         m.push(make("a"))
         m.setPointerNearIsland(true)
-        try await Task.sleep(for: .milliseconds(150))   // well under the settle delay
-        m.setPointerNearIsland(false)
-        try await Task.sleep(for: .milliseconds(100))
-        m.dismissPanel()
+        XCTAssertEqual(m.unreadCount, 1, "near is not looking")
+    }
 
-        XCTAssertEqual(m.unreadCount, 1, "a brush past the notch is not attention")
+    /// hover 打开需进入：面板开了但指针没上去，不读。
+    func testHoverOpenRequiresPanelEntryToRead() async throws {
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        let oldHoverToExpand = settings.hoverToExpand
+        let oldDelay = settings.hoverDelayMilliseconds
+        settings.autoExpandOnMessage = false
+        settings.hoverToExpand = true
+        settings.hoverDelayMilliseconds = 10
+        defer {
+            settings.autoExpandOnMessage = oldAutoExpand
+            settings.hoverToExpand = oldHoverToExpand
+            settings.hoverDelayMilliseconds = oldDelay
+        }
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.setPointerNearIsland(true)                  // hover opens…
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(m.displayState, .opened(reason: .hover))
+        XCTAssertEqual(m.unreadCount, 1, "opened by hover, but the pointer never entered")
+    }
+
+    /// click 开即读（含之后滚入的行）。
+    func testClickOpenReadsImmediatelyAndRowsFollow() {
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.push(make("b"))
+        m.dismissCurrent()                            // b current, a past
+        m.dismissPanel()
+        m.islandClicked()
+        XCTAssertTrue(m.current.map { m.isRead($0) } ?? false, "click reads the live message at once")
+        let a = m.pastHistory[0]
+        m.noteRowVisible(a.id)
+        XCTAssertTrue(m.isRead(a), "rows arriving during a click-open period read on report")
     }
 
     func testQueuedMessageCountsAsUnread() {

@@ -306,13 +306,11 @@ struct IslandExpandedView: View {
     }
 
     /// The two panel modes: the full message center belongs to a deliberate
-    /// open (`panelOpenedManually` - displayState alone loses that bit when a
-    /// message rotates into the open panel); automatic openings show the live
-    /// card alone. `current == nil` in an automatic mode should not happen,
-    /// but a panel with nothing live is exactly the history browser, so it
-    /// falls back to the full list rather than rendering an empty shell.
+    /// open (click/hover - the reason travels with the state); notification
+    /// openings show the live card alone. `current == nil` falls back to the
+    /// full list rather than an empty shell.
     private var showsFullList: Bool {
-        manager.panelOpenedManually || manager.current == nil
+        manager.displayState.openReason != .notification || manager.current == nil
     }
 
     private var header: some View {
