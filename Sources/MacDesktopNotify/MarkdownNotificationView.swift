@@ -223,7 +223,6 @@ struct CompactIslandView: View {
 struct IslandExpandedView: View {
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
-    @State private var panelDragOffset: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -270,16 +269,6 @@ struct IslandExpandedView: View {
                 .padding(.bottom, 12)
             }
         }
-        // Insets reserve scroll space so the last row remains reachable.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if let notice = manager.deletionNotice {
-                UndoToast(notice: notice) { manager.undoDeletion() }
-                    .padding(10)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
-        .offset(y: reduceMotion ? 0 : panelDragOffset)
-        .opacity(1 - min(1, panelDragOffset / 120) * 0.4)
         .frame(width: max(320, settings.panelWidth))
         // The outer frame already clamps to `minHeight...maxHeight`, so the list
         // only needs an upper bound: with a fixed height here, a one-line message
@@ -289,9 +278,7 @@ struct IslandExpandedView: View {
         .background(Color.black)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .foregroundStyle(.white)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: manager.deletionNotice)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: manager.current?.id)
-        .animation(reduceMotion ? nil : .default, value: panelDragOffset)
         .onHover { manager.setHovering($0) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("通知面板")
@@ -379,415 +366,74 @@ struct IslandExpandedView: View {
         .padding(.horizontal, 16)
         .padding(.top, 14)
         .padding(.bottom, 12)
-        // Swipe-down collapses the panel but keeps the message - the gentle
-        // counterpart to the card's swipe-up, which discards it. Header-only,
-        // for the same reason the card's gesture is header-only: a panel-wide
-        // drag would fight the message list's scroll and text selection.
-        .contentShape(Rectangle())
-        .gesture(collapseDrag)
-    }
-
-    private var collapseDrag: some Gesture {
-        DragGesture(minimumDistance: 10)
-            .onChanged { value in
-                panelDragOffset = max(0, value.translation.height)
-            }
-            .onEnded { value in
-                if value.translation.height > 40 {
-                    IslandHaptics.actionConfirmed()
-                    manager.dismissPanel()
-                }
-                panelDragOffset = 0
-            }
-    }
-}
-
-/// History flattened into display entries: messages sharing a `group` collapse
-/// into one row fronted by the newest, singles stay as they are. Grouping
-/// happens at render time only - persistence and unread state stay per message.
-private enum HistoryEntry: Identifiable {
-    case single(NotchNotification)
-    /// Newest first; only ever built for groups with two or more entries.
-    case grouped(key: String, items: [NotchNotification])
-
-    var id: String {
-        switch self {
-        case .single(let notification): notification.id.uuidString
-        case .grouped(let key, _): "grouped-\(key)"
-        }
-    }
-}
-
-/// Trackpad two-finger pans arrive as `.scrollWheel` events, never as drag
-/// gestures, so SwiftUI's DragGesture is blind to them. This view installs a
-/// local monitor *while the row is hovered* (`armed`) and converts
-/// horizontally-dominant pans into swipe callbacks; vertical scrolls and
-/// momentum phases pass through to the list untouched. One monitor per
-/// hovered row, so at most one exists at a time.
-///
-/// `hitTest` returns nil: the view is click-transparent and events arrive
-/// through the monitor, which filters by the view's frame in its window.
-private struct HorizontalSwipeCatcher: NSViewRepresentable {
-    var armed: Bool
-    var onChanged: (CGFloat) -> Void
-    var onEnded: (CGFloat) -> Void
-
-    func makeNSView(context: Context) -> CatcherView { CatcherView() }
-
-    func updateNSView(_ view: CatcherView, context: Context) {
-        view.onChanged = onChanged
-        view.onEnded = onEnded
-        view.armed = armed
-    }
-
-    final class CatcherView: NSView {
-        var onChanged: (CGFloat) -> Void = { _ in }
-        var onEnded: (CGFloat) -> Void = { _ in }
-        var armed = false {
-            didSet { armed ? install() : remove() }
-        }
-
-        // Installed/removed on the main thread only (SwiftUI updates, AppKit
-        // window hooks, and event delivery are all main), but `deinit` is
-        // nonisolated — hence unsafe opt-out. NSEvent.removeMonitor is
-        // thread-safe in practice, and the closure only ever holds `weak self`.
-        private nonisolated(unsafe) var monitor: Any?
-        private var swipeActive = false
-        private var decidedVertical = false
-        private var accX: CGFloat = 0
-        private var accY: CGFloat = 0
-
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            // The panel window is recreated per presentation; when this row
-            // leaves its window the monitor must not outlive it.
-            if window == nil { remove() }
-        }
-
-        deinit {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-        }
-
-        private func install() {
-            guard monitor == nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-                guard let self, self.handle(event) else { return event }
-                return nil
-            }
-        }
-
-        private func remove() {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-            monitor = nil
-            swipeActive = false
-        }
-
-        /// Returns true when the event was consumed by the swipe.
-        private func handle(_ event: NSEvent) -> Bool {
-            guard let window, event.window == window else { return false }
-            guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return false }
-            // Mouse wheels and inertia scrolls are not swipes.
-            guard event.hasPreciseScrollingDeltas, event.momentumPhase == [] else { return false }
-
-            // Finger direction, not content direction: with natural scrolling
-            // content follows the fingers so the raw delta already matches;
-            // classic scrolling reports the content's movement instead.
-            let dx = event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX
-            let dy = event.scrollingDeltaY
-
-            switch event.phase {
-            case .began:
-                swipeActive = false
-                decidedVertical = false
-                accX = 0
-                accY = 0
-                return false
-            case .changed:
-                if decidedVertical { return false }
-                accX += dx
-                accY += dy
-                if !swipeActive {
-                    // Wait for a decisive delta before claiming the gesture,
-                    // so a mostly-vertical scroll that grazes the row still
-                    // scrolls the list.
-                    guard abs(accX) + abs(accY) > 3 else { return false }
-                    if abs(accX) > abs(accY) {
-                        swipeActive = true
-                    } else {
-                        decidedVertical = true
-                        return false
-                    }
-                }
-                onChanged(accX)
-                return true
-            case .cancelled:
-                let consumed = swipeActive
-                swipeActive = false
-                accX = 0
-                accY = 0
-                onChanged(0)
-                return consumed
-            case .ended:
-                guard swipeActive else { return false }
-                swipeActive = false
-                onEnded(accX)
-                accX = 0
-                accY = 0
-                return true
-            default:
-                return false
-            }
-        }
-    }
-}
-
-/// Adds the horizontal swipe actions (left = delete, right = toggle read) to
-/// a history row: the content slides with the fingers, revealing the action
-/// layer underneath, and past the threshold the action fires with a haptic
-/// tick. Deleting drops straight into the manager's undo journal.
-private struct RowSwipe<Content: View>: View {
-    /// Drives the right-swipe icon: unread rows offer 已读, read rows 未读.
-    let isUnread: Bool
-    /// The catcher only listens while the row is hovered (see it above).
-    let armed: Bool
-    let onDelete: () -> Void
-    let onToggleRead: () -> Void
-    @ViewBuilder let content: Content
-
-    // Not static: generic types cannot hold stored statics, and the value
-    // never varies per row anyway.
-    private let threshold: CGFloat = 60
-    @State private var offset: CGFloat = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        ZStack {
-            revealedLayer
-            content.offset(x: reduceMotion ? 0 : offset)
-        }
-        .background(HorizontalSwipeCatcher(armed: armed, onChanged: { offset = $0 }, onEnded: finish))
-        .clipped()
-    }
-
-    private var revealedLayer: some View {
-        ZStack {
-            if offset != 0 {
-                (offset > 0 ? Color.blue : Color.red)
-                    .opacity(min(1, abs(offset) / threshold) * 0.45)
-                HStack {
-                    if offset > 0 {
-                        Image(systemName: isUnread ? "envelope.open" : "envelope.badge")
-                        Spacer()
-                    } else {
-                        Spacer()
-                        Image(systemName: "trash")
-                    }
-                }
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    private func finish(_ translation: CGFloat) {
-        if translation < -threshold {
-            IslandHaptics.actionConfirmed()
-            // The row vanishes via the list's own removal animation; the undo
-            // toast is the feedback, so no slide-out choreography here.
-            offset = 0
-            onDelete()
-        } else {
-            if translation > threshold {
-                IslandHaptics.actionConfirmed()
-                onToggleRead()
-            }
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { offset = 0 }
-        }
-    }
-}
-
-/// The 4-second take-back after a delete: what was removed, plus the button
-/// that puts it back. The journal lives in the manager; the toast is pure
-/// reflection, so the panel collapsing mid-window costs nothing.
-private struct UndoToast: View {
-    let notice: NotificationManager.DeletionNotice
-    let undo: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Text(notice.subject.map { "已删除 \($0)" } ?? "已删除 \(notice.count) 条消息")
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.9))
-                .lineLimit(1)
-            Button(action: undo) {
-                Text("撤销")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(hovering ? 1 : 0.75))
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering = $0 }
-            .accessibilityLabel("撤销删除")
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.white.opacity(0.16), in: Capsule())
-        .accessibilityElement(children: .contain)
     }
 }
 
 /// Single scrolling list with no section headers: the live message on top,
 /// queued (not yet shown) messages dimmed below it, and tappable past
-/// messages at the bottom.
+/// messages at the bottom. §5.2: read-only - management lives in the history
+/// window.
 private struct MessageListView: View {
-    @AppStorage("historySwipeHintDismissed") private var swipeHintDismissed = false
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
 
-    // Accordion (one open body at a time), group expansion, and the keyboard
-    // selection live on the manager: the notch window is recreated per
+    // The accordion lives on the manager: the notch window is recreated per
     // presentation, and view-local @State died with it - reopening the panel
-    // used to reset all three. These forwards keep the body's reads and
+    // used to reset the expansion. This forward keeps the body's reads and
     // writes spelled the same.
     private var expandedHistoryID: UUID? {
         get { manager.expandedHistoryID }
         nonmutating set { manager.expandedHistoryID = newValue }
     }
-    private var expandedGroupKeys: Set<String> {
-        get { manager.expandedGroupKeys }
-        nonmutating set { manager.expandedGroupKeys = newValue }
-    }
-    /// The current card is deliberately not selectable (Q5) - it keeps its
-    /// own ⌘1–⌘3 channel.
-    private var selectedRowID: String? {
-        get { manager.selectedRowID }
-        nonmutating set { manager.selectedRowID = newValue }
-    }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    if let current = manager.current {
-                        CurrentCard(notification: current)
-                            .id(current.id)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .top).combined(with: .opacity),
-                                removal: .opacity
-                            ))
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                if let current = manager.current {
+                    CurrentCard(notification: current)
+                        .id(current.id)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .top).combined(with: .opacity),
+                            removal: .opacity
+                        ))
+                }
+
+                if manager.pendingCount > 0 {
+                    if manager.pendingCount > NotificationManager.shownPendingCap {
+                        Text("还有 \(manager.pendingCount - NotificationManager.shownPendingCap) 条未展示")
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .padding(.horizontal, 4)
                     }
-
-                    if manager.pendingCount > 0 {
-                        if manager.pendingCount > NotificationManager.shownPendingCap {
-                            Text("还有 \(manager.pendingCount - NotificationManager.shownPendingCap) 条未展示")
-                                .font(.system(size: 10, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.55))
-                                .padding(.horizontal, 4)
-                        }
-
-                        ForEach(manager.queue.prefix(NotificationManager.shownPendingCap)) { notification in
-                            PendingRow(notification: notification)
-                        }
-                    }
-
-                    if !historyEntries.isEmpty, !swipeHintDismissed {
-                        HStack(alignment: .top, spacing: 8) {
-                            Text("行尾按钮可标读或删除；触控板右滑标读、左滑删除，删除后可撤销。")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.white.opacity(0.7))
-                                .fixedSize(horizontal: false, vertical: true)
-                            Button("知道了") { swipeHintDismissed = true }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 11, weight: .semibold))
-                                .padding(4)
-                        }
-                        .padding(.vertical, 4)
-                    }
-
-                    ForEach(historyEntries) { entry in
-                        switch entry {
-                        case .single(let notification):
-                            HistoryRow(
-                                notification: notification,
-                                isExpanded: expandedHistoryID == notification.id,
-                                isUnread: !manager.isRead(notification),
-                                isSelected: selectedRowID == notification.id.uuidString
-                            ) {
-                                toggleExpanded(notification.id)
-                            }
-                            .id(entry.id)
-                        case .grouped(let key, let items):
-                            HistoryGroupRow(
-                                groupKey: key,
-                                items: items,
-                                isExpanded: expandedGroupKeys.contains(key),
-                                expandedItemID: expandedHistoryID,
-                                isSelected: selectedRowID == entry.id,
-                                selectedRowID: selectedRowID,
-                                toggleGroup: {
-                                    withAnimation(.easeInOut(duration: 0.15)) {
-                                        if expandedGroupKeys.contains(key) {
-                                            expandedGroupKeys.remove(key)
-                                        } else {
-                                            expandedGroupKeys.insert(key)
-                                        }
-                                    }
-                                },
-                                toggleItem: toggleExpanded
-                            )
-                            .id(entry.id)
-                        }
+                    ForEach(manager.queue.prefix(NotificationManager.shownPendingCap)) { notification in
+                        PendingRow(notification: notification)
                     }
                 }
-                .padding(16)
-                // Animate queue/history churn so pushes slide in instead of popping.
-                .animation(.easeInOut(duration: 0.2), value: manager.queue)
-                .animation(.easeInOut(duration: 0.2), value: manager.pastHistory)
-            }
-            .scrollIndicators(.hidden)
-            // Upper bound only, so the panel shrinks to its content (see the outer
-            // frame's note). The header above costs ~75pt, which is the only fixed
-            // tax on the panel's height.
-            .frame(maxHeight: max(160, settings.panelHeight - 75))
-            .onAppear(perform: expandFirstHistoryEntry)
-            .onReceive(NotificationCenter.default.publisher(for: .islandListKey)) { note in
-                guard let key = note.userInfo?["key"] as? String else { return }
-                handleListKey(key)
-            }
-            .onChange(of: selectedRowID) { _, id in
-                // Keep the keyboard-selected row visible while arrowing
-                // through a long list.
-                guard let id else { return }
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    proxy.scrollTo(id, anchor: .center)
+
+                // §5.2: flat read-only history - push-time collapseGroup already
+                // keeps one entry per group, so view-level grouping bought nothing
+                // but the O(n²) historyEntries computation.
+                ForEach(manager.pastHistory.reversed()) { notification in
+                    HistoryRow(
+                        notification: notification,
+                        isExpanded: expandedHistoryID == notification.id,
+                        isUnread: !manager.isRead(notification)
+                    ) {
+                        toggleExpanded(notification.id)
+                    }
+                    .id(notification.id)
                 }
             }
+            .padding(16)
+            // Animate queue/history churn so pushes slide in instead of popping.
+            .animation(.easeInOut(duration: 0.2), value: manager.queue)
+            .animation(.easeInOut(duration: 0.2), value: manager.pastHistory)
         }
-    }
-
-    /// The pre-redesign default state, now opt-in (设置 → 通用 →
-    /// 「打开面板时展开最新一条历史」, off by default): when enabled, the
-    /// newest history entry opens with its body already rendered. Only applied
-    /// when no expansion survives from the previous opening - the accordion
-    /// lives on the manager now, so an open row the user picked themselves
-    /// must not be stomped by the default.
-    private func expandFirstHistoryEntry() {
-        guard settings.autoExpandLatestHistoryOnOpen else { return }
-        guard expandedHistoryID == nil, expandedGroupKeys.isEmpty else { return }
-        guard let first = historyEntries.first else { return }
-        switch first {
-        case .single(let notification):
-            expandedHistoryID = notification.id
-        case .grouped(let key, let items):
-            // Both levels open when the newest message lives inside a group:
-            // the cluster's rows, and the newest row's body underneath them.
-            expandedGroupKeys.insert(key)
-            if let id = items.first?.id { expandedHistoryID = id }
-        }
+        .scrollIndicators(.hidden)
+        // Upper bound only, so the panel shrinks to its content (see the outer
+        // frame's note). The header above costs ~75pt, which is the only fixed
+        // tax on the panel's height.
+        .frame(maxHeight: max(160, settings.panelHeight - 75))
     }
 
     /// Accordion toggle: tapping the open row folds it; tapping any other row
@@ -797,252 +443,11 @@ private struct MessageListView: View {
             expandedHistoryID = expandedHistoryID == id ? nil : id
         }
     }
-
-    // MARK: - Keyboard navigation (P2)
-
-    /// Rows the keyboard can land on, top to bottom: every history entry,
-    /// with an expanded group's members inserted right after the group
-    /// row. The current card and the queue stay out of it (Q5).
-    private var selectableIDs: [String] {
-        var ids: [String] = []
-        for entry in historyEntries {
-            ids.append(entry.id)
-            if case .grouped(let key, let items) = entry, expandedGroupKeys.contains(key) {
-                ids.append(contentsOf: items.map { $0.id.uuidString })
-            }
-        }
-        return ids
-    }
-
-    private func handleListKey(_ key: String) {
-        let ids = selectableIDs
-        guard !ids.isEmpty else { return }
-        switch key {
-        case "up":
-            // Nothing selected yet: ↑ lands on the bottom row, ↓ on the top —
-            // the direction the user pressed is the direction they think in.
-            selectRow(at: (selectedRowID.flatMap { ids.firstIndex(of: $0) } ?? ids.count) - 1, in: ids)
-        case "down":
-            selectRow(at: (selectedRowID.flatMap { ids.firstIndex(of: $0) } ?? -1) + 1, in: ids)
-        case "return":
-            if let id = selectedRowID { toggleRow(id) }
-        case "delete":
-            guard let id = selectedRowID, let index = ids.firstIndex(of: id) else { return }
-            deleteRow(id)
-            // Keep the selection on the neighbor that slid into the deleted
-            // row's slot, so repeated ⌫ walks down the list.
-            let remaining = selectableIDs
-            selectedRowID = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)]
-        case "m":
-            if let id = selectedRowID { toggleReadRow(id) }
-        default:
-            break
-        }
-    }
-
-    private func selectRow(at index: Int, in ids: [String]) {
-        selectedRowID = ids[min(max(index, 0), ids.count - 1)]
-    }
-
-    private func toggleRow(_ id: String) {
-        if let key = groupKey(ofRowID: id) {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                if expandedGroupKeys.contains(key) {
-                    expandedGroupKeys.remove(key)
-                } else {
-                    expandedGroupKeys.insert(key)
-                }
-            }
-        } else if let uuid = UUID(uuidString: id) {
-            toggleExpanded(uuid)
-        }
-    }
-
-    private func deleteRow(_ id: String) {
-        if let key = groupKey(ofRowID: id) {
-            manager.removeGroupWithUndo(key)
-        } else if let uuid = UUID(uuidString: id) {
-            manager.removeHistory(id: uuid)
-        }
-    }
-
-    private func toggleReadRow(_ id: String) {
-        if let key = groupKey(ofRowID: id) {
-            let hasUnread = manager.pastHistory.contains { $0.groupingKey == key && !manager.isRead($0) }
-            manager.setGroupRead(key, read: hasUnread)
-        } else if let uuid = UUID(uuidString: id),
-                  let notification = manager.pastHistory.first(where: { $0.id == uuid }) {
-            manager.setRead(uuid, read: !manager.isRead(notification))
-        }
-    }
-
-    /// Row ids double as ForEach identities: bare UUID strings for messages,
-    /// "grouped-<key>" for clusters. This peels the prefix back off.
-    private func groupKey(ofRowID id: String) -> String? {
-        id.hasPrefix("grouped-") ? String(id.dropFirst("grouped-".count)) : nil
-    }
-
-    /// Newest-first history with same-group runs collapsed. A group only
-    /// aggregates when it holds at least two entries - a lone message with a
-    /// group key is not a cluster, it is a message.
-    private var historyEntries: [HistoryEntry] {
-        let ordered = Array(manager.pastHistory.reversed())
-        var groupCounts: [String: Int] = [:]
-        for notification in ordered {
-            if let key = notification.groupingKey {
-                groupCounts[key, default: 0] += 1
-            }
-        }
-        var emitted: Set<String> = []
-        var entries: [HistoryEntry] = []
-        for notification in ordered {
-            guard let key = notification.groupingKey, (groupCounts[key] ?? 0) > 1 else {
-                entries.append(.single(notification))
-                continue
-            }
-            guard emitted.insert(key).inserted else { continue }
-            entries.append(.grouped(key: key, items: ordered.filter { $0.groupingKey == key }))
-        }
-        return entries
-    }
 }
 
-/// A collapsed cluster of same-group history: the newest message fronts for
-/// the rest, with the count and any unread state rolled up. Expanding reveals
-/// the individual rows, which behave exactly like ungrouped history.
-private struct HistoryGroupRow: View {
-    let groupKey: String
-    let items: [NotchNotification]
-    let isExpanded: Bool
-    /// The accordion's one open body, when it lives inside this group.
-    let expandedItemID: UUID?
-    /// Keyboard selection (P2) reaches both the group row and its members.
-    var isSelected: Bool = false
-    var selectedRowID: String? = nil
-    let toggleGroup: () -> Void
-    let toggleItem: (UUID) -> Void
-    private var manager: NotificationManager { .shared }
-    @State private var hovering = false
-
-    private var latest: NotchNotification { items[0] }
-    private var unreadCount: Int { items.reduce(0) { $0 + (manager.isRead($1) ? 0 : 1) } }
-    /// Keyboard selection and hover share one highlight language.
-    private var highlighted: Bool { hovering || isSelected }
-
-    var body: some View {
-        RowSwipe(
-            isUnread: unreadCount > 0,
-            armed: hovering,
-            onDelete: { manager.removeGroupWithUndo(groupKey) },
-            onToggleRead: { manager.setGroupRead(groupKey, read: unreadCount > 0) }
-        ) {
-            content
-        }
-        .onHover { hovering = $0 }
-        .animation(.easeInOut(duration: 0.12), value: hovering)
-    }
-
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 9) {
-                Image(systemName: latest.urgency.symbolName)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(latest.urgency.color)
-                    .frame(width: 16, height: 16)
-                    .accessibilityLabel(latest.urgency.accessibilityLabel)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 5) {
-                        Text(latest.title)
-                            .help(latest.title)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .lineLimit(1)
-                        if unreadCount > 0 {
-                            Circle()
-                                .fill(Color.blue)
-                                .frame(width: 5, height: 5)
-                                .accessibilityHidden(true)
-                        }
-                    }
-                    Text("共 \(items.count) 条同组消息")
-                        .font(.system(size: 11, weight: .regular, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.68))
-                }
-                Spacer(minLength: 0)
-                Text(latest.timestamp.formatted(.relative(presentation: .named)))
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(PanelTextOpacity.timestamp))
-                    .lineLimit(1)
-                // Group-wide actions, persistent for the same reason as the
-                // single row's: hover-revealed buttons were undiscoverable.
-                HStack(spacing: 4) {
-                    Button {
-                        manager.setGroupRead(groupKey, read: unreadCount > 0)
-                    } label: {
-                        Image(systemName: unreadCount > 0 ? "envelope.open" : "envelope.badge")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(PanelIconButtonStyle())
-                    .help(unreadCount > 0 ? "整组标为已读" : "整组标为未读")
-                    .accessibilityHidden(true)
-
-                    Button {
-                        manager.removeGroupWithUndo(groupKey)
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(PanelIconButtonStyle())
-                    .help("删除整个分组")
-                    .accessibilityHidden(true)
-                }
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .accessibilityHidden(true)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture(perform: toggleGroup)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(unreadCount > 0 ? "未读分组" : "消息分组")：\(latest.title)，共 \(items.count) 条，\(latest.urgency.accessibilityLabel)")
-            .accessibilityHint(isExpanded ? "收起分组" : "展开分组")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { toggleGroup() }
-            .accessibilityAction(named: unreadCount > 0 ? "整组标为已读" : "整组标为未读") {
-                manager.setGroupRead(groupKey, read: unreadCount > 0)
-            }
-            .accessibilityAction(named: "删除整个分组") {
-                manager.removeGroupWithUndo(groupKey)
-            }
-
-            if isExpanded {
-                ForEach(items) { notification in
-                    HistoryRow(
-                        notification: notification,
-                        isExpanded: expandedItemID == notification.id,
-                        isUnread: !manager.isRead(notification),
-                        isSelected: selectedRowID == notification.id.uuidString
-                    ) {
-                        toggleItem(notification.id)
-                    }
-                    .id(notification.id.uuidString)
-                }
-            }
-        }
-        .padding(10)
-        .background(.white.opacity(highlighted ? 0.12 : 0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-}
-
-/// The message currently being presented: full Markdown body, actions, swipe-up to dismiss.
+/// The message currently being presented: full Markdown body and actions.
 private struct CurrentCard: View {
     let notification: NotchNotification
-    @State private var dragOffset: CGFloat = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var manager: NotificationManager { .shared }
 
     var body: some View {
@@ -1060,11 +465,6 @@ private struct CurrentCard: View {
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(PanelTextOpacity.timestamp))
             }
-            // The swipe-up-to-dismiss gesture lives on this header row only.
-            // On the whole card it fought the body's text selection: dragging
-            // to select upwards could dismiss the message mid-gesture.
-            .contentShape(Rectangle())
-            .gesture(dismissDrag)
             // Combine the header only, never the whole card: a card-level
             // `.combine` folds ActionRow's buttons and the critical snooze
             // control out of VoiceOver. The header is also the only place the
@@ -1072,9 +472,8 @@ private struct CurrentCard: View {
             // actions - so the combined label carries it along with urgency.
             .accessibilityElement(children: .combine)
             .accessibilityLabel("当前消息：\(notification.title)，\(notification.urgency.accessibilityLabel)")
-            // Swipe-up dismiss is a gesture, invisible to assistive tech; expose
-            // it as a named action, the same escape hatch HistoryRow gives its
-            // hidden delete button.
+            // §5.5: the swipe gesture is gone; VoiceOver keeps a named way to
+            // put the card away.
             .accessibilityAction(named: "收起当前消息") {
                 manager.dismissCurrent()
             }
@@ -1098,9 +497,6 @@ private struct CurrentCard: View {
         }
         .padding(12)
         .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .offset(y: reduceMotion ? 0 : dragOffset)
-        .opacity(1 - min(1, abs(dragOffset) / 80) * 0.6)
-        .animation(reduceMotion ? nil : .default, value: dragOffset)
     }
 
     /// Critical-specific affordances: snooze (it stays, but stops hogging the
@@ -1127,21 +523,6 @@ private struct CurrentCard: View {
             }
             Spacer(minLength: 0)
         }
-    }
-
-    private var dismissDrag: some Gesture {
-        DragGesture(minimumDistance: 10)
-            .onChanged { value in
-                dragOffset = min(0, value.translation.height)
-            }
-            .onEnded { value in
-                if value.translation.height < -40 {
-                    IslandHaptics.actionConfirmed()
-                    manager.dismissCurrent()
-                } else {
-                    dragOffset = 0
-                }
-            }
     }
 }
 
@@ -1176,41 +557,31 @@ private struct PendingRow: View {
     }
 }
 
-/// A past message. Tap to expand the rendered Markdown body inline.
+/// A past message. Tap to expand the rendered Markdown body inline. §5.2:
+/// read-only - delete/read toggles live in the history window.
 private struct HistoryRow: View {
     let notification: NotchNotification
     let isExpanded: Bool
     let isUnread: Bool
-    /// Keyboard selection (P2) shares the hover look: one highlight language,
-    /// two ways to land on a row.
-    var isSelected: Bool = false
     let toggle: () -> Void
     private var manager: NotificationManager { .shared }
     @State private var hovering = false
-    private var highlighted: Bool { hovering || isSelected }
 
     var body: some View {
-        RowSwipe(
-            isUnread: isUnread,
-            armed: hovering,
-            onDelete: { manager.removeHistory(id: notification.id) },
-            onToggleRead: { manager.setRead(notification.id, read: isUnread) }
-        ) {
-            content
-        }
-        .onHover { hovering = $0 }
-        .animation(.easeInOut(duration: 0.12), value: hovering)
-        // P3 visibility-based read marking: entering the viewport starts (or,
-        // before the unlock, merely tracks) this row's one-second read budget.
-        .onAppear { manager.noteRowVisible(notification.id) }
-        .onDisappear { manager.noteRowHidden(notification.id) }
+        content
+            .onHover { hovering = $0 }
+            .animation(.easeInOut(duration: 0.12), value: hovering)
+            // §4: entering the viewport reports the row; an eligible open
+            // period marks it read the frame it appears.
+            .onAppear { manager.noteRowVisible(notification.id) }
+            .onDisappear { manager.noteRowHidden(notification.id) }
     }
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Header-only tap, and no Button wrapper: a Button's label
             // swallows clicks for every control inside it, which would kill
-            // the delete button embedded here and the action row below.
+            // the action row below.
             HStack(alignment: .top, spacing: 9) {
                 Image(systemName: notification.urgency.symbolName)
                     .font(.system(size: 10, weight: .bold))
@@ -1243,37 +614,6 @@ private struct HistoryRow: View {
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(PanelTextOpacity.timestamp))
                     .lineLimit(1)
-                // Per-row read/delete actions stay visible at all times: an
-                // action that only appears on hover is an action users never
-                // find, and these two are the list's highest-frequency verbs.
-                HStack(spacing: 4) {
-                    Button {
-                        manager.setRead(notification.id, read: isUnread)
-                    } label: {
-                        Image(systemName: isUnread ? "envelope.open" : "envelope.badge")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(PanelIconButtonStyle())
-                    .help(isUnread ? "标为已读" : "标为未读")
-                    // The header below folds its children into one element,
-                    // which would swallow these buttons; they stay reachable
-                    // through the header's named accessibility actions.
-                    .accessibilityHidden(true)
-
-                    Button {
-                        manager.removeHistory(id: notification.id)
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(PanelIconButtonStyle())
-                    .help("从历史中删除这条消息")
-                    .accessibilityHidden(true)
-                }
                 // Rows are tappable; without an affordance that was
                 // undiscoverable. The chevron sits at the row's trailing edge,
                 // rotating to signal the open state.
@@ -1290,12 +630,6 @@ private struct HistoryRow: View {
             .accessibilityHint(isExpanded ? "收起正文" : "展开正文")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { toggle() }
-            .accessibilityAction(named: isUnread ? "标为已读" : "标为未读") {
-                manager.setRead(notification.id, read: isUnread)
-            }
-            .accessibilityAction(named: "删除这条消息") {
-                manager.removeHistory(id: notification.id)
-            }
 
             if isExpanded {
                 Text(notification.title)
@@ -1314,7 +648,7 @@ private struct HistoryRow: View {
             }
         }
         .padding(10)
-        .background(.white.opacity(highlighted ? 0.12 : 0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(.white.opacity(hovering ? 0.12 : 0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     /// Collapsed preview renders inline Markdown instead of showing raw source

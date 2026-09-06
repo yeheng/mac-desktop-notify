@@ -216,10 +216,6 @@ final class NotificationManager {
 
     /// Accordion model: one expanded history body at a time.
     var expandedHistoryID: UUID?
-    /// Group rows open independently of the accordion (two separate levels).
-    var expandedGroupKeys: Set<String> = []
-    /// The row the keyboard (↑/↓) has landed on.
-    var selectedRowID: String?
 
     // MARK: - Ingress
 
