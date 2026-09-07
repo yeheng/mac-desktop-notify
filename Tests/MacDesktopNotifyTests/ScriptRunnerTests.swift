@@ -84,3 +84,70 @@ final class ScriptEngineTests: XCTestCase {
         XCTAssertEqual(outcome.error, "timeout")
     }
 }
+
+// MARK: - ScriptRunner facade（Task 4）
+
+@MainActor
+final class ScriptRunnerTests: XCTestCase {
+    private func makeRunner(dir: URL) -> ScriptRunner {
+        let engine = ScriptEngine(
+            fetch: { _, _ in FetchResponse(status: 200, ok: true, body: "{}") },
+            notify: { _ in "displayed" })
+        return ScriptRunner(store: ScriptStore(directory: dir), engine: engine)
+    }
+
+    private func makeDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("runner-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    func testRunLoadsAndExecutes() async throws {
+        let dir = try makeDir()
+        try "return { title: input.title + '!' }".write(
+            to: dir.appendingPathComponent("t.js"), atomically: true, encoding: .utf8)
+        let runner = makeRunner(dir: dir)
+        let outcome = await runner.run(
+            named: "t", input: .object(["title": .string("hi")]), budget: .seconds(5))
+        XCTAssertNil(outcome.error)
+        XCTAssertEqual(outcome.result?.dictionary?["title"], .string("hi!"))
+    }
+
+    func testRunMissingScriptIsError() async throws {
+        let runner = makeRunner(dir: try makeDir())
+        let outcome = await runner.run(named: "nope", input: .object([:]), budget: .seconds(5))
+        XCTAssertNotNil(outcome.error)
+    }
+
+    /// 并发闸：4 个占位（闸在 facade 层，用 semaphore 挂起 engine 的 fetch
+    /// 让执行持续在跑），第 5 个立即被拒。
+    func testConcurrencyCapRejectsFifth() async throws {
+        let dir = try makeDir()
+        try "fetch('https://x.test')".write(
+            to: dir.appendingPathComponent("slow.js"), atomically: true, encoding: .utf8)
+        let gate = DispatchSemaphore(value: 0)
+        let engine = ScriptEngine(
+            fetch: { _, _ in
+                gate.wait()
+                return FetchResponse(status: 200, ok: true, body: "{}")
+            },
+            notify: { _ in "displayed" })
+        let runner = ScriptRunner(store: ScriptStore(directory: dir), engine: engine)
+        var handles: [Task<ScriptOutcome, Never>] = []
+        for _ in 0..<5 {
+            handles.append(Task { await runner.run(named: "slow", input: .object([:]), budget: .seconds(30)) })
+        }
+        // 第 5 个立即被拒（busy）——不等 gate 放行，轮询有界时间。
+        let deadline = Date().addingTimeInterval(5)
+        var sawBusy = false
+        while Date() < deadline {
+            if await runner.activeExecutions < 5 { sawBusy = true; break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        for _ in 0..<4 { gate.signal() }  // 放行全部执行——不在测试进程留永久阻塞线程
+        var outcomes: [ScriptOutcome] = []
+        for handle in handles { outcomes.append(await handle.value) }
+        XCTAssertEqual(outcomes[4].error, "busy")
+    }
+}

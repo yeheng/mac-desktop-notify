@@ -250,3 +250,167 @@ final class ScriptEngine: @unchecked Sendable {
         return .string(value.toString())
     }
 }
+
+// MARK: - ScriptRunner facade
+
+/// 编排层：按名加载（ScriptStore）→ 执行（ScriptEngine）→ 并发闸。
+/// @MainActor：决策（busy 判定、后续 backfill/钩子的 manager 写入）都在主线程，
+/// engine.run 的等待是 async 不占主线程。
+@MainActor
+final class ScriptRunner {
+    static let shared = ScriptRunner()
+    /// 设计 §3.1：并发上限 4，超出的执行立即失败 "busy"。
+    static let maxConcurrent = 4
+    /// 设计 §3.2：回填/钩子预算 15s（无人等待，但泄漏线程要有界）。
+    static let backfillBudget: Duration = .seconds(15)
+
+    private let store: ScriptStore
+    private let engine: ScriptEngine
+    /// 只读调试属性（测试观察闸行为用）。
+    private(set) var activeExecutions = 0
+
+    init(store: ScriptStore = .shared, engine: ScriptEngine? = nil) {
+        self.store = store
+        self.engine = engine ?? ScriptRunner.productionEngine()
+    }
+
+    func run(named name: String, input: ScriptValue, budget: Duration) async -> ScriptOutcome {
+        guard activeExecutions < Self.maxConcurrent else {
+            return ScriptOutcome(result: nil, logs: [], error: "busy")
+        }
+        guard let source = try? store.load(name) else {
+            return ScriptOutcome(result: nil, logs: [], error: "脚本未找到：\(name)")
+        }
+        activeExecutions += 1
+        defer { activeExecutions -= 1 }
+        return await engine.run(source: source, input: input, budget: budget)
+    }
+
+    /// 脚本的 input：消息的已解析字段（设计 §1 契约）。
+    /// 本任务用现有 NotificationAction 形态（label+url）；Task 5 把 url 改可选
+    /// 并加 script 字段后，同步把这里改成 if-let 写法（Task 5 有明确步骤）。
+    static func notificationInput(_ n: NotchNotification) -> ScriptValue {
+        var fields: [String: ScriptValue] = [
+            "id": .string(n.id.uuidString),
+            "title": .string(n.title),
+            "body": .string(n.bodyMarkdown),
+            "urgency": .string(n.urgency.rawValue),
+        ]
+        if let timeout = n.timeout { fields["timeout"] = .number(timeout) }
+        if let group = n.group { fields["group"] = .string(group) }
+        if !n.actions.isEmpty {
+            fields["actions"] = .array(n.actions.map { action in
+                .object(["label": .string(action.label), "url": .string(action.url.absoluteString)])
+            })
+        }
+        return .object(fields)
+    }
+
+    // MARK: 生产引擎装配
+
+    /// fetch：脚本线程内同步 URLSession（semaphore），仅 http/https，
+    /// 超时 10s。notify：semaphore 等 MainActor Task 完成——主线程从不同步
+    /// 等脚本线程，无死锁环（设计 §3.1）。
+    private static func productionEngine() -> ScriptEngine {
+        ScriptEngine(fetch: scriptFetch, notify: scriptNotify)
+    }
+}
+
+/// 生产 fetch 桥（file-private 自由函数：放在 @MainActor 类里会被静态隔离，
+/// 而它在脚本线程上执行）。
+private let scriptFetch: @Sendable (String, [String: ScriptValue]?) -> FetchResponse = { url, options in
+    guard let request = makeScriptRequest(url: url, options: options) else {
+        return FetchResponse(status: 0, ok: false, body: "")
+    }
+    let semaphore = DispatchSemaphore(value: 0)
+    // 两个并发 fetch 各自持栈，carrier 只在本闭包栈上读写——数据竞争不存在，
+    // 借 nonisolated(unsafe) 告知编译器。
+    nonisolated(unsafe) var carrier = FetchResponse(status: 0, ok: false, body: "")
+    let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+        let http = response as? HTTPURLResponse
+        let body = String(data: data ?? Data(), encoding: .utf8) ?? ""
+        carrier = FetchResponse(
+            status: http?.statusCode ?? 0,
+            ok: (http?.statusCode ?? 0) >= 200 && (http?.statusCode ?? 0) < 300,
+            body: body)
+        semaphore.signal()
+    }
+    task.resume()
+    _ = semaphore.wait(timeout: .now() + 10)
+    return carrier
+}
+
+private func makeScriptRequest(url: String, options: [String: ScriptValue]?) -> URLRequest? {
+    guard let target = URL(string: url),
+          target.scheme == "http" || target.scheme == "https" else { return nil }
+    var request = URLRequest(url: target)
+    request.timeoutInterval = 10
+    if let options {
+        if let method = options["method"]?.stringValue { request.httpMethod = method.uppercased() }
+        if let body = options["body"]?.stringValue { request.httpBody = Data(body.utf8) }
+        if case .object(let headers)? = options["headers"] {
+            for (key, value) in headers {
+                if let v = value.stringValue { request.setValue(v, forHTTPHeaderField: key) }
+            }
+        }
+    }
+    return request
+}
+
+/// 生产 notify 桥：脚本线程同步等 MainActor Task 完成后返回。
+private let scriptNotify: @Sendable (NotifyOp) -> String = { op in
+    let semaphore = DispatchSemaphore(value: 0)
+    nonisolated(unsafe) var result = ""
+    Task { @MainActor in
+        result = performScriptNotify(op)
+        semaphore.signal()
+    }
+    semaphore.wait()
+    return result
+}
+
+/// notify.push 拒绝 script 字段（决策 #2）；走 PushValidator 复用全部限制。
+/// actions 从 JS 构建时 script 键直接忽略（notify.push 不递归）。
+@MainActor
+private func performScriptNotify(_ op: NotifyOp) -> String {
+    switch op {
+    case .push(let fields):
+        if fields["script"] != nil { return "rejected: script" }
+        let actions = scriptActionsFromScriptValue(fields["actions"])
+        let result = PushValidator.makeNotification(
+            title: fields["title"]?.stringValue ?? "",
+            body: fields["body"]?.stringValue,
+            urgencyRaw: fields["urgency"]?.stringValue,
+            timeout: fields["timeout"]?.doubleValue,
+            group: fields["group"]?.stringValue,
+            actions: actions
+        )
+        switch result {
+        case .success(let notification):
+            switch NotificationManager.shared.push(notification) {
+            case .displayed: return "displayed"
+            case .queued: return "queued"
+            case .withheld: return "withheld"
+            }
+        case .failure(let rejection): return "rejected: \(rejection.description)"
+        }
+    case .clear(let group):
+        if let group { NotificationManager.shared.clear(group: group) }
+        else { NotificationManager.shared.clear() }
+        return "ok"
+    }
+}
+
+/// JS 侧 actions：[{label, url}]（script 键忽略——notify.push 不递归）。
+/// url 失败的条目被丢弃而不是整组失败。
+@MainActor
+private func scriptActionsFromScriptValue(_ value: ScriptValue?) -> [NotificationAction] {
+    guard case .array(let items)? = value else { return [] }
+    return items.compactMap { item in
+        guard let dict = item.dictionary,
+              let label = dict["label"]?.stringValue,
+              let urlString = dict["url"]?.stringValue,
+              let url = URL(string: urlString), url.scheme != nil else { return nil }
+        return NotificationAction(label: label, url: url)
+    }
+}
