@@ -40,6 +40,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NotificationActionHandler(ackStore: .default)
         )
 
+        // Sound lives in the delegate (setting read, low-urgency mute,
+        // per-urgency throttle); the manager owns the timing: `soundPlayer`
+        // fires exactly when a push turns `.displayed`, so every ingress —
+        // URL scheme, HTTP, WebSocket, script `notify.push` — sounds the
+        // same, not just the URL one.
+        NotificationManager.shared.soundPlayer = { [weak self] in
+            self?.playSound(for: $0)
+        }
+
         let presence = PresenceMonitor()
         presenceMonitor = presence                 // retain; the manager also holds it
         NotificationManager.shared.attachPresenceMonitor(presence)
@@ -139,14 +148,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "push":
             switch URLNotificationParser.parsePushDetailed(url) {
             case .success(let notification):
-                // A withheld message is stored but never shown, and "静默" has to
-                // mean silent too. One parked behind a critical stays silent as
-                // well: it surfaces in the list on the next open, and that
-                // transition — not a sound arriving seconds early — is what
-                // tells the user.
-                if NotificationManager.shared.push(notification) == .displayed {
-                    playSound(for: notification)
-                }
+                // Sound is the manager's call now (`soundPlayer` fires exactly
+                // when a push turns `.displayed`; withheld and queued stay
+                // silent by the same rule).
+                NotificationManager.shared.push(notification)
                 if notification.script != nil {
                     Task { await ScriptRunner.shared.backfill(notification: notification) }
                 }

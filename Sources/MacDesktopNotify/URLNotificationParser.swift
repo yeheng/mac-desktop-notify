@@ -5,31 +5,6 @@ enum URLNotificationParser {
     /// only. Field limits and truncation live in `PushValidator`.
     static let maxActionsPayloadLength = 1000
 
-    private struct ActionDTO: Decodable {
-        let label: String
-        let url: String?
-        let script: String?
-        let input: Bool?
-        let args: ScriptValue?
-        private enum CodingKeys: String, CodingKey { case label, url, script, input, args }
-
-        /// true——两种都收，否则整组 actions 解码作废。
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            label = try container.decode(String.self, forKey: .label)
-            url = try container.decodeIfPresent(String.self, forKey: .url)
-            script = try container.decodeIfPresent(String.self, forKey: .script)
-            if let b = try? container.decode(Bool.self, forKey: .input) {
-                input = b
-            } else if let n = try? container.decode(Int.self, forKey: .input) {
-                input = n != 0
-            } else {
-                input = nil
-            }
-            args = try container.decodeIfPresent(ScriptValue.self, forKey: .args)
-        }
-    }
-
     /// Parses a `notch-notify://push?...` URL, reporting why it failed.
     static func parsePushDetailed(_ url: URL) -> Result<NotchNotification, PushRejection> {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -133,7 +108,7 @@ enum URLNotificationParser {
         guard let raw, raw.count <= maxActionsPayloadLength, let data = raw.data(using: .utf8) else {
             return []
         }
-        let dtos = (try? JSONDecoder().decode([ActionDTO].self, from: data)) ?? []
+        let dtos = (try? JSONDecoder().decode([PushValidator.ActionDTO].self, from: data)) ?? []
         return dtos.compactMap { dto -> NotificationAction? in
             let label = dto.label.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !label.isEmpty else { return nil }

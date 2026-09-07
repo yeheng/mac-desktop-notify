@@ -57,6 +57,20 @@ final class APIRouter: Sendable {
     }
 
     // MARK: - Endpoints
+    /// DTO actions → model actions, shared by the HTTP and WS push paths.
+    /// XOR truncation/caps live in `PushValidator.normalizedActions`, which
+    /// `makeNotification` runs anyway - this only resolves script-vs-url.
+    private static func makeActions(_ dtos: [PushValidator.ActionDTO]) -> [NotificationAction] {
+        dtos.compactMap { dto in
+            if let script = dto.script, ScriptStore.isValidName(script) {
+                return NotificationAction(label: dto.label, script: script,
+                                          wantsComment: dto.input ?? false, args: dto.args)
+            }
+            guard let urlString = dto.url, let url = URL(string: urlString) else { return nil }
+            return NotificationAction(label: dto.label, url: url)
+        }
+    }
+
 
     private struct PushDTO: Decodable {
         let title: String?
@@ -64,33 +78,8 @@ final class APIRouter: Sendable {
         let urgency: String?
         let timeout: Double?
         let group: String?
-        let actions: [ActionDTO]?
+        let actions: [PushValidator.ActionDTO]?
         let script: String?
-    }
-    private struct ActionDTO: Decodable {
-        let label: String
-        let url: String?
-        let script: String?
-        let input: Bool?
-        let args: ScriptValue?
-
-        private enum CodingKeys: String, CodingKey { case label, url, script, input, args }
-
-        /// `input` 可能是 1（URL query 习惯）或 true，两种都收。
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            label = try container.decode(String.self, forKey: .label)
-            url = try container.decodeIfPresent(String.self, forKey: .url)
-            script = try container.decodeIfPresent(String.self, forKey: .script)
-            if let b = try? container.decode(Bool.self, forKey: .input) {
-                input = b
-            } else if let n = try? container.decode(Int.self, forKey: .input) {
-                input = n != 0
-            } else {
-                input = nil
-            }
-            args = try container.decodeIfPresent(ScriptValue.self, forKey: .args)
-        }
     }
 
     private struct PushResponse: Codable {
@@ -108,14 +97,7 @@ final class APIRouter: Sendable {
               let dto = try? JSONDecoder().decode(PushDTO.self, from: body) else {
             return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
         }
-        let actions = (dto.actions ?? []).compactMap { dto -> NotificationAction? in
-            if let script = dto.script, ScriptStore.isValidName(script) {
-                return NotificationAction(label: dto.label, script: script,
-                                          wantsComment: dto.input ?? false, args: dto.args)
-            }
-            guard let urlString = dto.url, let url = URL(string: urlString) else { return nil }
-            return NotificationAction(label: dto.label, url: url)
-        }
+        let actions = Self.makeActions(dto.actions ?? [])
         switch PushValidator.makeNotification(
             title: dto.title ?? "", body: dto.body, urgencyRaw: dto.urgency,
             timeout: dto.timeout, group: dto.group, actions: actions,
@@ -248,7 +230,7 @@ final class APIRouter: Sendable {
         let urgency: String?
         let timeout: Double?
         let group: String?
-        let actions: [ActionDTO]?
+        let actions: [PushValidator.ActionDTO]?
         let script: String?
         let input: ScriptValue?
         let timeoutMs: Int?
@@ -291,14 +273,7 @@ final class APIRouter: Sendable {
             // where the old path decoded (WSCommandDTO), re-parsed
             // (JSONSerialization), re-encoded, and decoded again (PushDTO):
             // four JSON passes per frame for a problem Decodable never had.
-            let actions = (dto.actions ?? []).compactMap { dto -> NotificationAction? in
-                if let script = dto.script, ScriptStore.isValidName(script) {
-                    return NotificationAction(label: dto.label, script: script,
-                                              wantsComment: dto.input ?? false, args: dto.args)
-                }
-                guard let urlString = dto.url, let url = URL(string: urlString) else { return nil }
-                return NotificationAction(label: dto.label, url: url)
-            }
+            let actions = Self.makeActions(dto.actions ?? [])
             switch PushValidator.makeNotification(
                 title: dto.title ?? "", body: dto.body, urgencyRaw: dto.urgency,
                 timeout: dto.timeout, group: dto.group, actions: actions,

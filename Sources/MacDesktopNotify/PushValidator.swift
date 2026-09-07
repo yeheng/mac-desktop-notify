@@ -25,6 +25,38 @@ enum PushValidator {
     static let maxActionLabelLength = 24
     static let maxGroupLength = 64
 
+    /// An inbound action as every JSON ingress decodes it (HTTP body, WS
+    /// frame, URL `actions=` payload). One type for all three doors: two
+    /// private copies of this had already drifted apart in their comments -
+    /// the next drift would have been behavioral.
+    struct ActionDTO: Decodable {
+        let label: String
+        let url: String?
+        let script: String?
+        let input: Bool?
+        let args: ScriptValue?
+
+        private enum CodingKeys: String, CodingKey { case label, url, script, input, args }
+
+        /// `input` may be `1` (URL query habit) or `true`; both decode. Any
+        /// other shape leaves it nil, so the button simply never asks for a
+        /// comment.
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            label = try container.decode(String.self, forKey: .label)
+            url = try container.decodeIfPresent(String.self, forKey: .url)
+            script = try container.decodeIfPresent(String.self, forKey: .script)
+            if let b = try? container.decode(Bool.self, forKey: .input) {
+                input = b
+            } else if let n = try? container.decode(Int.self, forKey: .input) {
+                input = n != 0
+            } else {
+                input = nil
+            }
+            args = try container.decodeIfPresent(ScriptValue.self, forKey: .args)
+        }
+    }
+
     static func makeNotification(
         title: String,
         body: String?,

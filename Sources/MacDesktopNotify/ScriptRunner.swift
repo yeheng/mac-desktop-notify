@@ -385,14 +385,21 @@ final class ScriptRunner {
         }
     }
 
-    /// 失败（决策 #4）：body = ⚠️ 前缀 + 原文 + 日志尾 3 行；占位标题换失败标题。
-    static func applyFailure(error: String, logs: [String], scriptName: String,
-                             to message: inout NotchNotification) {
-        var body = "⚠️ 脚本失败：\(error)\n\n\(message.bodyMarkdown)"
+    /// 失败（决策 #4）：⚠️ 前缀 + 触发上下文 + 日志尾 3 行。Backfill 的上下文是
+    /// 原正文；action hook 的是触发通知标题。占位标题换失败标题由调用方处理。
+    static func failureBody(error: String, logs: [String], context: String) -> String {
+        var body = "⚠️ 脚本失败：\(error)\n\n\(context)"
         if !logs.isEmpty {
             body += "\n\n```\n" + logs.suffix(3).joined(separator: "\n") + "\n```"
         }
-        message.bodyMarkdown = String(body.prefix(PushValidator.maxBodyLength))
+        return body
+    }
+
+    static func applyFailure(error: String, logs: [String], scriptName: String,
+                             to message: inout NotchNotification) {
+        message.bodyMarkdown = String(
+            failureBody(error: error, logs: logs, context: message.bodyMarkdown)
+                .prefix(PushValidator.maxBodyLength))
         if message.title.hasPrefix("⏳ 脚本生成中") {
             message.title = "脚本失败：\(scriptName)"
         }
@@ -415,10 +422,8 @@ final class ScriptRunner {
         ])
         let outcome = await run(named: name, input: input, budget: Self.backfillBudget)
         guard let error = outcome.error else { return }
-        var body = "⚠️ 脚本失败：\(error)\n\n触发：\(notification.title)"
-        if !outcome.logs.isEmpty {
-            body += "\n\n```\n" + outcome.logs.suffix(3).joined(separator: "\n") + "\n```"
-        }
+        let body = Self.failureBody(error: error, logs: outcome.logs,
+                                    context: "触发：\(notification.title)")
         targetManager.push(NotchNotification(
             title: "脚本失败：\(name)",
             bodyMarkdown: String(body.prefix(PushValidator.maxBodyLength)),

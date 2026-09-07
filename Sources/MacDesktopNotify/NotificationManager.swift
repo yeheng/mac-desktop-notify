@@ -102,9 +102,16 @@ final class NotificationManager {
     /// Nil until the app hands over a store, which keeps tests off the real disk.
     @ObservationIgnored private var historyStore: NotificationHistoryStore?
     /// Tests swap in a fresh store-less handler; production attaches one owning
+    /// an ack store. Same pattern below for `soundPlayer`.
     @ObservationIgnored private(set) var actionHandler = NotificationActionHandler()
     @ObservationIgnored private let clock = ContinuousClock()
     @ObservationIgnored private weak var presenter: NotchPresenting?
+    /// Whether a push that took the display should make noise. Attached by the
+    /// app delegate (the throttling, low-urgency mute, and `AppSettings`
+    /// reading all live there); the manager only guarantees the timing: one
+    /// call per push, exactly when it turns `.displayed`. Attached once at
+    /// launch, so unlike `actionHandler` there is no re-attach churn to model.
+    @ObservationIgnored var soundPlayer: ((NotchNotification) -> Void)?
     /// Retained so the observers outlive the launch scope that installed them.
     @ObservationIgnored private var presenceMonitor: PresenceMonitor?
     /// Backing store for `isAway`. The public setter runs the return transition,
@@ -204,6 +211,7 @@ final class NotificationManager {
 
         if incoming.urgency == .critical {
             present(incoming)
+            soundPlayer?(resolved)
             return .displayed
         }
 
@@ -213,6 +221,7 @@ final class NotificationManager {
         guard presentation?.item.urgency != .critical else { return .queued }
 
         present(incoming)
+        soundPlayer?(resolved)
         return .displayed
     }
 
