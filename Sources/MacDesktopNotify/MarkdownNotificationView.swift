@@ -497,11 +497,23 @@ private struct CurrentCard: View {
     }
 }
 
-/// A message still waiting in the queue: dimmed, title only.
+/// A message still waiting in the queue: dimmed, title only. The one tap the
+/// read-only list keeps: clicking promotes it to the live card now instead of
+/// waiting out the current message's countdown.
 private struct PendingRow: View {
     let notification: NotchNotification
+    private var manager: NotificationManager { .shared }
+    @State private var hovering = false
 
     var body: some View {
+        content
+            .onHover { hovering = $0 }
+            .animation(.easeInOut(duration: 0.12), value: hovering)
+            .contentShape(Rectangle())
+            .onTapGesture { manager.promoteQueued(id: notification.id) }
+    }
+
+    private var content: some View {
         HStack(spacing: 9) {
             // The urgency glyph carries more information than a generic clock;
             // the trailing "待显示" label already says it is waiting.
@@ -515,16 +527,20 @@ private struct PendingRow: View {
                 .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(1)
             Spacer(minLength: 0)
-            Text("待显示 · \(notification.urgency.accessibilityLabel)")
+            // The affordance swap says what hover is for; the resting label
+            // keeps the row's meaning ("waiting") when the pointer is away.
+            Text(hovering ? "立即显示" : "待显示 · \(notification.urgency.accessibilityLabel)")
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(PanelTextOpacity.pending))
         }
         .padding(10)
-        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(.white.opacity(hovering ? 0.12 : 0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("等待显示的消息：\(notification.title)，\(notification.urgency.accessibilityLabel)")
-        .accessibilityHint("按紧急度依次显示；同一紧急度按到达顺序显示")
-        .help("按紧急度依次显示；当前消息停留或正在操作时，等待时间会延长")
+        .accessibilityHint("点按立即显示这条消息；否则按紧急度依次等待轮换")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { manager.promoteQueued(id: notification.id) }
+        .help("点按立即显示这条消息；否则按紧急度依次等待轮换")
     }
 }
 

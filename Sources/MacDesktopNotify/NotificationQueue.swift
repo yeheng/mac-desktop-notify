@@ -63,8 +63,12 @@ struct NotificationQueue {
 
     /// Drops a message from the pending queue only — history and read state
     /// stay, e.g. for the critical that is being promoted to live right now.
-    mutating func removeQueued(id: UUID) {
-        queue.removeAll { $0.id == id }
+    /// Returns the removed message, so a caller can present it instead of
+    /// just forgetting it.
+    @discardableResult
+    mutating func removeQueued(id: UUID) -> NotchNotification? {
+        guard let index = queue.firstIndex(where: { $0.id == id }) else { return nil }
+        return queue.remove(at: index)
     }
 
     /// Next message to present: the most urgent one waiting, oldest first.

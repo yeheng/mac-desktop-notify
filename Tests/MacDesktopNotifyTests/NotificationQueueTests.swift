@@ -30,6 +30,28 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.pendingCount, 1)
     }
 
+    /// The pending row is the one panel interaction that is not management:
+    /// clicking it means "show me this one now". The clicked message becomes
+    /// the live card in place (open reason survives, §2.3), and the card it
+    /// replaces rejoins the queue — the same displaced fairness a fresh push
+    /// triggers (§3.1).
+    func testClickingPendingRowPromotesItNow() {
+        let action = NotificationAction(label: "ok", url: URL(string: "notch-notify://ack?token=t")!)
+        let operable = NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [action])
+        let m = NotificationManager()
+        m.push(operable)                    // operable card holds the surface...
+        m.push(make("b"))                   // ...so "b" genuinely queues
+        XCTAssertEqual(m.pendingCount, 1)
+
+        m.openMessageCenter()               // the full list is where the row lives
+        m.promoteQueued(id: m.queue[0].id)
+
+        XCTAssertEqual(m.current?.title, "b")
+        XCTAssertEqual(m.queue.map(\.title), ["a"], "the displaced card rejoins the queue")
+        XCTAssertEqual(m.displayState, .opened(reason: .click), "rotation keeps the open reason")
+        XCTAssertTrue(m.isRead(m.current!), "an explicitly requested message in a click-open panel reads immediately")
+    }
+
     func testAdvancePromotesNextInFIFOOrder() {
         // v3 §3.1: pushes must queue here, not displace.
         let settings = AppSettings.shared

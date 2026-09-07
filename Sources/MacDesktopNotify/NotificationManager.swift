@@ -590,6 +590,19 @@ final class NotificationManager {
         beginPresenting(incoming, as: .opened(reason: .notification))
     }
 
+    /// Clicking a pending row: the user asked for that message now, which is
+    /// reading intent, not management — the one tap the read-only list keeps.
+    /// The clicked message becomes the live card in place (the open reason
+    /// survives the swap, §2.3), and the card it replaces rejoins the queue
+    /// with the same displaced fairness a fresh push triggers.
+    func promoteQueued(id: UUID) {
+        guard displayState.isOpened, let item = messages.removeQueued(id: id) else { return }
+        if let previous = presentation, previous.item.id != item.id {
+            messages.requeueDisplaced(previous.item)
+        }
+        beginPresenting(item, as: displayState)
+    }
+
     private func hoverDelay() -> Duration {
         Duration.milliseconds(Int(AppSettings.shared.hoverDelayMilliseconds))
     }
