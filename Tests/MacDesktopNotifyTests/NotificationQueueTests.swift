@@ -671,4 +671,34 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         XCTAssertEqual(opened?.absoluteString, "http://localhost:8080/ok")
         XCTAssertEqual(m.current?.title, "b")
     }
+
+    // MARK: - Script backfill base (§2.4)
+
+    func testUpdateRewritesQueueHistoryAndLiveCard() {
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.push(make("b"))                       // queued
+        let aID = m.current!.id
+        let bID = m.queue[0].id
+
+        m.update(id: aID) { $0.title = "a2" }   // live card + history
+        m.update(id: bID) { $0.title = "b2" }   // queue + history
+
+        XCTAssertEqual(m.current?.title, "a2")
+        XCTAssertEqual(m.queue.map(\.title), ["b2"])
+        XCTAssertEqual(m.history.map(\.title).sorted(), ["a2", "b2"])
+    }
+
+    func testUpdateOnUnknownIDIsNoOp() {
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.update(id: UUID()) { $0.title = "ghost" }
+        XCTAssertEqual(m.current?.title, "a")
+        XCTAssertEqual(m.history.count, 1)
+    }
 }

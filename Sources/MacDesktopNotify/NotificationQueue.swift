@@ -71,6 +71,21 @@ struct NotificationQueue {
         return queue.remove(at: index)
     }
 
+    /// Field-level rewrite wherever the message lives (queue or history).
+    /// Returns whether anything changed, so the caller decides on persistence.
+    mutating func update(id: UUID, _ transform: (inout NotchNotification) -> Void) -> Bool {
+        var changed = false
+        if let index = queue.firstIndex(where: { $0.id == id }) {
+            transform(&queue[index])
+            changed = true
+        }
+        if let index = history.firstIndex(where: { $0.id == id }) {
+            transform(&history[index])
+            changed = true
+        }
+        return changed
+    }
+
     /// Next message to present: the most urgent one waiting, oldest first.
     ///
     /// Urgency is the dequeue key rather than an insert-time trick, so the queue

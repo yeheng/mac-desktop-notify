@@ -55,7 +55,9 @@ static let requestClearHistory = Notification.Name("MacDesktopNotify.requestClea
 
 struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
     let id: UUID
-    let title: String
+    /// Script backfill rewrites this in place (`NotificationManager.update`),
+    /// so it is the one field widened past `let` here (设计 §2.4)。
+    var title: String
     let bodyMarkdown: String
     let urgency: UrgencyLevel
     /// Seconds before the message retires itself. Nil means the sender left it

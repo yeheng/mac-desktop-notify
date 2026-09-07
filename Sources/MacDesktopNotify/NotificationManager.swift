@@ -31,7 +31,9 @@ extension NotchPresenting {
 /// is a one-shot privilege, otherwise the release would re-hold itself on the
 /// very next reconcile.
 struct Presentation: Equatable, Sendable {
-    let item: NotchNotification
+    /// `var` solely so the script-backfill path (`update(id:)`) can rewrite the
+    /// live card's fields in place; nothing else mutates it after presentation.
+    var item: NotchNotification
     var remaining: Duration?
     var actionsHoldReleased = false
 }
@@ -87,7 +89,10 @@ final class NotificationManager {
 
     /// Pure queue/history/read-state data, extracted so the invariants live in
     /// one place; the facades below keep the observed surface stable.
-    @ObservationIgnored private var messages = NotificationQueue()
+    /// Observed (v3 修隐患): `queue`/`pastHistory` 是计算属性，读取它们时只有
+    /// messages 本身被注册才触发重绘。push 至今能刷新是因为 presentation/
+    /// unreadCount 总是同变；脚本回填只改字段时会踩空——update(id:) 依赖它。
+    private var messages = NotificationQueue()
     private(set) var displayState: NotchDisplayState = .closed
     private(set) var unreadCount = 0
 
@@ -601,6 +606,23 @@ final class NotificationManager {
             messages.requeueDisplaced(previous.item)
         }
         beginPresenting(item, as: displayState)
+    }
+
+    // MARK: - Script backfill (§2.4)
+
+    /// Field-level rewrite wherever the message lives — live card, queue, or
+    /// history — the script-backfill path's only write into the model. A
+    /// retired/deleted message is a no-op: the backfill targeted a moment
+    /// that has passed.
+    func update(id: UUID, _ transform: (inout NotchNotification) -> Void) {
+        var changed = false
+        if presentation?.item.id == id, var live = presentation {
+            transform(&live.item)
+            presentation = live
+            changed = true
+        }
+        changed = messages.update(id: id, transform) || changed
+        if changed { schedulePersist() }
     }
 
     private func hoverDelay() -> Duration {
