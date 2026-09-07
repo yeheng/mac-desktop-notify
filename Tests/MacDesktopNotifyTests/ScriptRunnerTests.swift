@@ -88,12 +88,12 @@ final class ScriptEngineTests: XCTestCase {
 // MARK: - ScriptRunner facade（Task 4）
 
 @MainActor
-final class ScriptRunnerTests: XCTestCase {
-    private func makeRunner(dir: URL) -> ScriptRunner {
+final class ScriptRunnerTests: SettingsIsolatedTestCase {
+    private func makeRunner(dir: URL, target: NotificationManager = .shared) -> ScriptRunner {
         let engine = ScriptEngine(
             fetch: { _, _ in FetchResponse(status: 200, ok: true, body: "{}") },
             notify: { _ in "displayed" })
-        return ScriptRunner(store: ScriptStore(directory: dir), engine: engine)
+        return ScriptRunner(store: ScriptStore(directory: dir), engine: engine, target: target)
     }
 
     private func makeDir() throws -> URL {
@@ -149,5 +149,43 @@ final class ScriptRunnerTests: XCTestCase {
         var outcomes: [ScriptOutcome] = []
         for handle in handles { outcomes.append(await handle.value) }
         XCTAssertEqual(outcomes[4].error, "busy")
+    }
+
+    // MARK: - Push backfill (§2.1)
+
+    func testBackfillReplacesPlaceholderFields() async throws {
+        let dir = try makeDir()
+        try "return { title: 'CI #42', urgency: 'critical' }".write(
+            to: dir.appendingPathComponent("ci.js"), atomically: true, encoding: .utf8)
+        let m = NotificationManager()
+        let runner = makeRunner(dir: dir, target: m)
+
+        var n = NotchNotification(title: "⏳ 脚本生成中：ci", bodyMarkdown: "orig",
+                                  urgency: .normal, timeout: 60)
+        n.script = "ci"
+        m.push(n)
+        await runner.backfill(notification: n)
+
+        XCTAssertEqual(m.current?.title, "CI #42")
+        XCTAssertEqual(m.current?.urgency, .critical)
+        XCTAssertEqual(m.current?.bodyMarkdown, "orig", "未返回的字段保持原值")
+    }
+
+    func testBackfillFailureWritesErrorBody() async throws {
+        let dir = try makeDir()
+        try "throw new Error('boom')".write(
+            to: dir.appendingPathComponent("bad.js"), atomically: true, encoding: .utf8)
+        let m = NotificationManager()
+        let runner = makeRunner(dir: dir, target: m)
+
+        var n = NotchNotification(title: "⏳ 脚本生成中：bad", bodyMarkdown: "orig",
+                                  urgency: .normal, timeout: 60)
+        n.script = "bad"
+        m.push(n)
+        await runner.backfill(notification: n)
+
+        XCTAssertEqual(m.current?.title, "脚本失败：bad")
+        XCTAssertTrue(m.current?.bodyMarkdown.hasPrefix("⚠️ 脚本失败：") == true)
+        XCTAssertTrue(m.current?.bodyMarkdown.contains("orig") == true)
     }
 }

@@ -37,6 +37,17 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertNotNil(payload["error"] as? String)
     }
 
+    func testPushWithScriptKicksBackfill() async throws {
+        // 走 router 的 push：响应立即返回（不等脚本），script 已落进通知。
+        let body = #"{"script":"ci","body":"hello"}"#
+        let response = await router.handle(APIRequest(
+            method: "POST", path: "/v1/push", query: [:], body: Data(body.utf8)))
+        XCTAssertEqual(response.status, 200)
+        // script 通知已进 manager（占位标题）；backfill 是 fire-and-forget，
+        // 这里只断言落地，不等回填（回填语义 ScriptRunnerTests 已覆盖）。
+        XCTAssertTrue(manager.history.contains { $0.script == "ci" })
+    }
+
     func testPushWithMalformedJSONIs400() async {
         let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/push", query: [:], body: Data("not json".utf8)

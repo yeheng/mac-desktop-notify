@@ -55,10 +55,29 @@ final class APIRouter: Sendable {
         let timeout: Double?
         let group: String?
         let actions: [ActionDTO]?
+        let script: String?
     }
     private struct ActionDTO: Decodable {
         let label: String
         let url: String?
+        let script: String?
+        let input: Bool?
+
+        private enum CodingKeys: String, CodingKey { case label, url, script, input }
+        /// `input` 可能是 1（URL query 习惯）或 true，两种都收。
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            label = try container.decode(String.self, forKey: .label)
+            url = try container.decodeIfPresent(String.self, forKey: .url)
+            script = try container.decodeIfPresent(String.self, forKey: .script)
+            if let b = try? container.decode(Bool.self, forKey: .input) {
+                input = b
+            } else if let n = try? container.decode(Int.self, forKey: .input) {
+                input = n != 0
+            } else {
+                input = nil
+            }
+        }
     }
 
     private struct PushResponse: Codable {
@@ -77,22 +96,28 @@ final class APIRouter: Sendable {
             return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
         }
         let actions = (dto.actions ?? []).compactMap { dto -> NotificationAction? in
+            if let script = dto.script, ScriptStore.isValidName(script) {
+                return NotificationAction(label: dto.label, script: script, wantsComment: dto.input ?? false)
+            }
             guard let urlString = dto.url, let url = URL(string: urlString) else { return nil }
             return NotificationAction(label: dto.label, url: url)
         }
         switch PushValidator.makeNotification(
             title: dto.title ?? "", body: dto.body, urgencyRaw: dto.urgency,
-            timeout: dto.timeout, group: dto.group, actions: actions
+            timeout: dto.timeout, group: dto.group, actions: actions,
+            script: dto.script
         ) {
         case .success(let notification):
             // Only jump to MainActor when calling manager
             let outcome = await MainActor.run { manager.push(notification) }
+            if notification.script != nil {
+                Task { await ScriptRunner.shared.backfill(notification: notification) }
+            }
             return .ok(PushResponse(outcome: outcome.label, id: notification.id.uuidString))
         case .failure(let rejection):
             return .error(status: 400, reason: rejection.description, field: "title")
         }
     }
-
     private struct ClearDTO: Decodable {
         let group: String?
     }
@@ -180,6 +205,7 @@ final class APIRouter: Sendable {
         let timeout: Double?
         let group: String?
         let actions: [ActionDTO]?
+        let script: String?
     }
 
     private struct WSResultFrame: Encodable {
@@ -215,15 +241,22 @@ final class APIRouter: Sendable {
             // (JSONSerialization), re-encoded, and decoded again (PushDTO):
             // four JSON passes per frame for a problem Decodable never had.
             let actions = (dto.actions ?? []).compactMap { dto -> NotificationAction? in
+                if let script = dto.script, ScriptStore.isValidName(script) {
+                    return NotificationAction(label: dto.label, script: script, wantsComment: dto.input ?? false)
+                }
                 guard let urlString = dto.url, let url = URL(string: urlString) else { return nil }
                 return NotificationAction(label: dto.label, url: url)
             }
             switch PushValidator.makeNotification(
                 title: dto.title ?? "", body: dto.body, urgencyRaw: dto.urgency,
-                timeout: dto.timeout, group: dto.group, actions: actions
+                timeout: dto.timeout, group: dto.group, actions: actions,
+                script: dto.script
             ) {
             case .success(let notification):
                 let outcome = await MainActor.run { manager.push(notification) }
+                if notification.script != nil {
+                    Task { await ScriptRunner.shared.backfill(notification: notification) }
+                }
                 return encodeFrame(WSResultFrame(
                     ref: dto.ref,
                     ok: true,

@@ -8,6 +8,24 @@ enum URLNotificationParser {
     private struct ActionDTO: Decodable {
         let label: String
         let url: String?
+        let script: String?
+        let input: Bool?
+        private enum CodingKeys: String, CodingKey { case label, url, script, input }
+
+        /// true——两种都收，否则整组 actions 解码作废。
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            label = try container.decode(String.self, forKey: .label)
+            url = try container.decodeIfPresent(String.self, forKey: .url)
+            script = try container.decodeIfPresent(String.self, forKey: .script)
+            if let b = try? container.decode(Bool.self, forKey: .input) {
+                input = b
+            } else if let n = try? container.decode(Int.self, forKey: .input) {
+                input = n != 0
+            } else {
+                input = nil
+            }
+        }
     }
 
     /// Parses a `notch-notify://push?...` URL, reporting why it failed.
@@ -23,7 +41,8 @@ enum URLNotificationParser {
             urgencyRaw: value("urgency"),
             timeout: timeout,
             group: value("group"),
-            actions: parseActions(value("actions"))
+            actions: parseActions(value("actions")),
+            script: value("script")
         ) {
         case .success(var notification):
             // The `display` hint is a URL-scheme concern; `PushValidator` is the
@@ -108,18 +127,25 @@ enum URLNotificationParser {
         return parseGroup(items.first { $0.name == "group" }?.value)
     }
 
-    /// Decodes the `actions` parameter: a JSON array of `{"label": "...", "url": "..."}`.
-    /// Malformed payloads degrade to no actions instead of failing the push. The
-    /// decoded actions are returned as-is; `PushValidator` does the truncating.
+    /// Decodes the `actions` parameter: a JSON array of
+    /// `{"label": "...", "url": "..."}` or `{"label": "...", "script": "...", "input": 1}`.
+    /// Malformed payloads degrade to no actions instead of failing the push.
+    /// XOR（都有/都没有）由 PushValidator.normalizedActions 在下游裁决。
     static func parseActions(_ raw: String?) -> [NotificationAction] {
         guard let raw, raw.count <= maxActionsPayloadLength, let data = raw.data(using: .utf8) else {
             return []
         }
         let dtos = (try? JSONDecoder().decode([ActionDTO].self, from: data)) ?? []
-        let actions = dtos.compactMap { dto -> NotificationAction? in
+        return dtos.compactMap { dto -> NotificationAction? in
             let label = dto.label.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !label.isEmpty, let urlString = dto.url,
-                  let url = URL(string: urlString), url.scheme != nil else {
+            guard !label.isEmpty else { return nil }
+            if let script = dto.script, ScriptStore.isValidName(script) {
+                return NotificationAction(
+                    label: String(label.prefix(PushValidator.maxActionLabelLength)),
+                    script: script,
+                    wantsComment: dto.input ?? false)
+            }
+            guard let urlString = dto.url, let url = URL(string: urlString), url.scheme != nil else {
                 return nil
             }
             return NotificationAction(
@@ -130,6 +156,5 @@ enum URLNotificationParser {
                 wantsComment: parseAck(url)?.wantsComment ?? false
             )
         }
-        return actions
     }
 }

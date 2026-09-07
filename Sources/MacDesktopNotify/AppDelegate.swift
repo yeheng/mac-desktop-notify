@@ -146,6 +146,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if NotificationManager.shared.push(notification) == .displayed {
                     playSound(for: notification)
                 }
+                if notification.script != nil {
+                    Task { await ScriptRunner.shared.backfill(notification: notification) }
+                }
             case .failure(let rejection):
                 reportPushRejection(rejection, url: url)
             }

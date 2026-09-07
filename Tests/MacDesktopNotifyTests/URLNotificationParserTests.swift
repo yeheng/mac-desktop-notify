@@ -117,4 +117,24 @@ final class URLNotificationParserTests: XCTestCase {
         let json = #"[{"label":"  ","url":"https://a.com"}]"#
         XCTAssertEqual(parse("notch-notify://push?title=Hi&actions=\(encodedActions(json))")?.actions, [])
     }
+
+    // MARK: - Script (§2.1)
+
+    func testScriptParameterFlowsThrough() {
+        let url = URL(string: "notch-notify://push?script=ci-status&body=hello")!
+        guard case .success(let n) = URLNotificationParser.parsePushDetailed(url) else {
+            return XCTFail("script 推送应放行（title 可省）")
+        }
+        XCTAssertEqual(n.script, "ci-status")
+        XCTAssertEqual(n.title, "⏳ 脚本生成中：ci-status")
+    }
+
+    func testActionScriptKeyParses() {
+        let raw = #"[{"label":"批准","script":"approve","input":1}]"#
+        let actions = URLNotificationParser.parseActions(raw)
+        XCTAssertEqual(actions.count, 1)
+        XCTAssertNil(actions[0].url)
+        XCTAssertEqual(actions[0].script, "approve")
+        XCTAssertTrue(actions[0].wantsComment)
+    }
 }

@@ -266,12 +266,17 @@ final class ScriptRunner {
 
     private let store: ScriptStore
     private let engine: ScriptEngine
+    /// 回填/钩子的写入目标；测试注入本地实例避免动全局单例。
+    private let targetManager: NotificationManager
     /// 只读调试属性（测试观察闸行为用）。
     private(set) var activeExecutions = 0
 
-    init(store: ScriptStore = .shared, engine: ScriptEngine? = nil) {
+    init(store: ScriptStore = .shared,
+         engine: ScriptEngine? = nil,
+         target: NotificationManager = .shared) {
         self.store = store
         self.engine = engine ?? ScriptRunner.productionEngine()
+        self.targetManager = target
     }
 
     func run(named name: String, input: ScriptValue, budget: Duration) async -> ScriptOutcome {
@@ -306,6 +311,57 @@ final class ScriptRunner {
             })
         }
         return .object(fields)
+    }
+
+    // MARK: - Push backfill (§2.1)
+
+    /// 推送已落地后执行脚本并回填（设计 §2.1 异步回填）。失败也是回填——
+    /// 把错误写进消息本身就是诊断。无人等待：预算 15s 由看门狗兜底。
+    func backfill(notification: NotchNotification) async {
+        guard let name = notification.script else { return }
+        let outcome = await run(named: name, input: Self.notificationInput(notification),
+                                budget: Self.backfillBudget)
+        targetManager.update(id: notification.id) { message in
+            if let error = outcome.error {
+                Self.applyFailure(error: error, logs: outcome.logs, scriptName: name, to: &message)
+            } else if let fields = outcome.result?.dictionary {
+                Self.applySuccess(fields: fields, to: &message)
+            }
+        }
+    }
+
+    /// 成功：返回对象里出现的字段覆盖消息（§1 契约），未出现保持原值。
+    static func applySuccess(fields: [String: ScriptValue], to message: inout NotchNotification) {
+        if let title = fields["title"]?.stringValue, !title.isEmpty { message.title = String(title.prefix(200)) }
+        if let body = fields["body"]?.stringValue { message.bodyMarkdown = String(body.prefix(PushValidator.maxBodyLength)) }
+        if let urgency = fields["urgency"]?.stringValue, let parsed = UrgencyLevel(rawValue: urgency) {
+            message.urgency = parsed
+        }
+        if let timeout = fields["timeout"]?.doubleValue { message.timeout = timeout }
+        if let group = fields["group"]?.stringValue { message.group = group }
+        if case .array(let items)? = fields["actions"] {
+            let actions = items.compactMap { item -> NotificationAction? in
+                guard let dict = item.dictionary,
+                      let label = dict["label"]?.stringValue else { return nil }
+                let url = dict["url"]?.stringValue.flatMap(URL.init(string:))
+                let script = dict["script"]?.stringValue
+                return NotificationAction(label: label, url: url, script: script)
+            }
+            message.actions = PushValidator.normalizedActions(actions)
+        }
+    }
+
+    /// 失败（决策 #4）：body = ⚠️ 前缀 + 原文 + 日志尾 3 行；占位标题换失败标题。
+    static func applyFailure(error: String, logs: [String], scriptName: String,
+                             to message: inout NotchNotification) {
+        var body = "⚠️ 脚本失败：\(error)\n\n\(message.bodyMarkdown)"
+        if !logs.isEmpty {
+            body += "\n\n```\n" + logs.suffix(3).joined(separator: "\n") + "\n```"
+        }
+        message.bodyMarkdown = String(body.prefix(PushValidator.maxBodyLength))
+        if message.title.hasPrefix("⏳ 脚本生成中") {
+            message.title = "脚本失败：\(scriptName)"
+        }
     }
 
     // MARK: 生产引擎装配

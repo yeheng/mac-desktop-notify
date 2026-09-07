@@ -92,6 +92,7 @@ struct SettingsView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .navigationSplitViewColumnWidth(min: 470, ideal: 620, max: .infinity)
         }
         .frame(minWidth: 800, minHeight: 520)
     }
@@ -99,29 +100,12 @@ struct SettingsView: View {
 
 // MARK: - 页面骨架
 
-/// Compact page heading leaves the form visible at the minimum window size.
-private struct PaneHeader: View {
-    let section: SettingsSection
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(section.title)
-                .font(.system(size: 20, weight: .bold))
-            Text(section.subtitle)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 24)
-        .padding(.top, 18)
-        .padding(.bottom, 8)
-    }
-}
-
-/// A pane is a centered header above a grouped Form - the card look is the
+/// A pane is the section subtitle above a grouped Form - the card look is the
 /// form style's job, not something we draw by hand. Width is capped so the
-/// cards read like System Settings instead of stretching edge to edge.
+/// cards read like System Settings instead of stretching edge to edge. The
+/// section title lives in the toolbar (navigationTitle), again like System
+/// Settings; keeping a custom fixed header above the scroll view mislaid the
+/// whole split view whenever the subtitle wrapped to a second line.
 private struct SettingsPane<Content: View>: View {
     let section: SettingsSection
     let content: Content
@@ -132,20 +116,23 @@ private struct SettingsPane<Content: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            PaneHeader(section: section)
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                Form {
-                    content
-                }
-                .formStyle(.grouped)
-                // System Settings uses switches, not checkboxes.
-                .toggleStyle(.switch)
-                .frame(maxWidth: 640)
-                Spacer(minLength: 0)
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            Form {
+                Text(section.subtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .listRowBackground(Color.clear)
+                content
             }
+            .formStyle(.grouped)
+            // System Settings uses switches, not checkboxes.
+            .toggleStyle(.switch)
+            .frame(maxWidth: 640)
+            Spacer(minLength: 0)
         }
+        .navigationTitle(section.title)
     }
 }
 
@@ -230,6 +217,7 @@ private struct SliderRow: View {
             } maximumValueLabel: {
                 Text(maximum).font(.caption2).foregroundStyle(.secondary)
             }
+            .labelsHidden()
         }
     }
 }

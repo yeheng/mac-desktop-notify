@@ -62,19 +62,20 @@ static let requestClearHistory = Notification.Name("MacDesktopNotify.requestClea
 
 struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
     let id: UUID
-    /// Script backfill rewrites this in place (`NotificationManager.update`),
-    /// so it is the one field widened past `let` here (设计 §2.4)。
+    /// Script backfill rewrites this in place (`NotificationManager.update`)，
+    /// as do the var fields below（设计 §2.4）。
     var title: String
-    let bodyMarkdown: String
-    let urgency: UrgencyLevel
+    /// 以下字段 var 仅为脚本回填（`update(id:)` 原地改写）放宽。
+    var bodyMarkdown: String
+    var urgency: UrgencyLevel
     /// Seconds before the message retires itself. Nil means the sender left it
     /// to the app's dwell setting, so there is no fake number to interpret.
-    let timeout: TimeInterval?
+    var timeout: TimeInterval?
     let timestamp: Date
-    let actions: [NotificationAction]
+    var actions: [NotificationAction]
     /// Sender-defined grouping key. A push replaces any earlier message carrying
     /// the same non-empty group, which keeps repeat jobs from piling up.
-    let group: String?
+    var group: String?
     /// Name of a user script (scripts directory, no extension) that runs at
     /// push time and backfills the fields (设计 §2.1). Ingress-validated
     /// ([A-Za-z0-9_-]{1,64}) by PushValidator; optional so history written

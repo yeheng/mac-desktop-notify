@@ -14,14 +14,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
         let hostingView = NSHostingView(rootView: SettingsView())
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 450),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 940, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "NotchNotify 设置"
         window.contentView = hostingView
-        window.contentMinSize = NSSize(width: 760, height: 420)
+        window.contentMinSize = NSSize(width: 800, height: 520)
         window.center()
         window.delegate = self
         window.isReleasedWhenClosed = false
