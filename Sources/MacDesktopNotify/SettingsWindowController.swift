@@ -20,6 +20,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             defer: false
         )
         window.title = "NotchNotify 设置"
+        // Tahoe's System Settings shows no title text in its (tall) title bar;
+        // the pane header carries the name. Keep `title` for window
+        // management, just hide its rendering.
+        window.titleVisibility = .hidden
         window.contentView = hostingView
         window.contentMinSize = NSSize(width: 800, height: 520)
         window.center()

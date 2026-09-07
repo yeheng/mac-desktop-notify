@@ -488,13 +488,20 @@ private func makeScriptRequest(url: String, options: [String: ScriptValue]?) -> 
 /// 生产 notify 桥：脚本线程同步等 MainActor Task 完成后返回。
 private let scriptNotify: @Sendable (NotifyOp) -> String = { op in
     let semaphore = DispatchSemaphore(value: 0)
-    nonisolated(unsafe) var result = ""
+    // 结果盒而非 nonisolated(unsafe) 变量：后者被 MainActor 闭包捕获时，
+    // 新编译器会报 sending-risks-data-race（隔离闭包内写入与非隔离读取并发）。
+    // semaphore 保证 happens-before，盒子只是把这个保证告知类型系统。
+    let box = ScriptNotifyResultBox()
     Task { @MainActor in
-        result = performScriptNotify(op)
+        box.value = performScriptNotify(op)
         semaphore.signal()
     }
     semaphore.wait()
-    return result
+    return box.value
+}
+
+private final class ScriptNotifyResultBox: @unchecked Sendable {
+    var value = ""
 }
 
 /// notify.push 拒绝 script 字段（决策 #2）；走 PushValidator 复用全部限制。
