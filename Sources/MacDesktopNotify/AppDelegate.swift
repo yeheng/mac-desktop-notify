@@ -195,10 +195,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func scheduleAPIRestart() {
         apiRestartTask?.cancel()
-        apiRestartTask = Task { [weak self] in
+        apiRestartTask = Task {
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
-            _ = self
             APIListenerService.shared.restart()
         }
     }

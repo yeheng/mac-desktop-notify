@@ -57,6 +57,20 @@ enum PushValidator {
         }
     }
 
+    /// DTO → model，所有 JSON 入口共用（URL query 载荷、HTTP body、WS 帧）。
+    /// 只做一件事：解 script-vs-url 分叉。字段限制、截断、ack 批注意图全部
+    /// 住在 `normalizedActions`——每条路径都已流经的那道闸，规则归一于此。
+    static func actions(from dtos: [ActionDTO]) -> [NotificationAction] {
+        dtos.compactMap { dto in
+            if let script = dto.script, ScriptStore.isValidName(script) {
+                return NotificationAction(label: dto.label, script: script,
+                                          wantsComment: dto.input ?? false, args: dto.args)
+            }
+            guard let urlString = dto.url, let url = URL(string: urlString) else { return nil }
+            return NotificationAction(label: dto.label, url: url)
+        }
+    }
+
     static func makeNotification(
         title: String,
         body: String?,
@@ -106,6 +120,11 @@ enum PushValidator {
     /// must carry exactly one of url/script (both or neither → dropped);
     /// only the first `maxActions` survive. A push never fails because of
     /// its actions.
+    ///
+    /// A url action's comment intent lives in its ack URL
+    /// (`notch-notify://ack?...&input=1`) regardless of which door the push
+    /// came through, so it is derived here — the one gate every ingress
+    /// already flows through — instead of per-door copies drifting apart.
     static func normalizedActions(_ actions: [NotificationAction]) -> [NotificationAction] {
         Array(actions.compactMap { action in
             let label = action.label.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -117,7 +136,9 @@ enum PushValidator {
                 label: String(label.prefix(maxActionLabelLength)),
                 url: action.url,
                 script: action.script,
-                wantsComment: action.wantsComment,
+                wantsComment: hasURL
+                    ? action.url.flatMap(URLNotificationParser.parseAck)?.wantsComment ?? false
+                    : action.wantsComment,
                 args: action.args
             )
         }

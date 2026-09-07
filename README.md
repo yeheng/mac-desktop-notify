@@ -297,7 +297,7 @@ open 'notch-notify://clear?group=ci-build'
 | `POST` | `/v1/push` | 推送通知，同步返回结果（URL Scheme 做不到） |
 | `POST` | `/v1/clear` | 清除通知；body 缺省或为空 = 清空全部，`{"group":"ci-build"}` 只清该分组 |
 | `GET` | `/v1/history?limit=20` | 最近历史，默认 20 条、上限 50 条，含已读标记与未读数 |
-| `GET` | `/v1/status` | 未读数、历史条数、静默状态与各监听器状态（`pendingCount` 为兼容保留字段，恒为 0） |
+| `GET` | `/v1/status` | 未读数、历史条数、静默状态与各监听器状态 |
 
 未知路径返回 404，方法不匹配返回 405，参数不合法返回 400：`{"error":"…","field":"title"}`（`field` 仅在字段校验失败时出现，如 push 缺 `title`）。
 
@@ -353,7 +353,7 @@ curl http://127.0.0.1:4770/v1/status
 ```
 
 ```json
-{"unreadCount":3,"pendingCount":0,"historyCount":12,"silenced":false,
+{"unreadCount":3,"historyCount":12,"silenced":false,
  "listening":{"unixSocket":true,"http":true}}
 ```
 

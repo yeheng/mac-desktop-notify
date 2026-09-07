@@ -109,26 +109,6 @@ enum URLNotificationParser {
             return []
         }
         let dtos = (try? JSONDecoder().decode([PushValidator.ActionDTO].self, from: data)) ?? []
-        return dtos.compactMap { dto -> NotificationAction? in
-            let label = dto.label.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !label.isEmpty else { return nil }
-            if let script = dto.script, ScriptStore.isValidName(script) {
-                return NotificationAction(
-                    label: String(label.prefix(PushValidator.maxActionLabelLength)),
-                    script: script,
-                    wantsComment: dto.input ?? false,
-                    args: dto.args)
-            }
-            guard let urlString = dto.url, let url = URL(string: urlString), url.scheme != nil else {
-                return nil
-            }
-            return NotificationAction(
-                label: String(label.prefix(PushValidator.maxActionLabelLength)),
-                url: url,
-                // Resolved once, here: the button needs to know it has to ask
-                // for a comment before the click can be recorded.
-                wantsComment: parseAck(url)?.wantsComment ?? false
-            )
-        }
+        return PushValidator.actions(from: dtos)
     }
 }

@@ -377,8 +377,10 @@ final class ScriptRunner {
                       let label = dict["label"]?.stringValue else { return nil }
                 let url = dict["url"]?.stringValue.flatMap(URL.init(string:))
                 let script = dict["script"]?.stringValue
+                // input 字段只对 script 按钮有意义；url 按钮的批注意图住在
+                // ack URL 里，由 normalizedActions 统一派生。
                 return NotificationAction(label: label, url: url, script: script,
-                                          wantsComment: dict["input"]?.boolValue ?? false,
+                                          wantsComment: script != nil ? (dict["input"]?.boolValue ?? false) : false,
                                           args: dict["args"])
             }
             message.actions = PushValidator.normalizedActions(actions)
@@ -528,7 +530,8 @@ private func performScriptNotify(_ op: NotifyOp) -> String {
 }
 
 /// JS 侧 actions：[{label, url}]（script 键忽略——notify.push 不递归）。
-/// url 失败的条目被丢弃而不是整组失败。
+/// 只解结构：scheme 合法性等规则全部交给 `PushValidator.normalizedActions`
+/// （notify.push 必经 makeNotification）。url 失败的条目被丢弃而不是整组失败。
 @MainActor
 private func scriptActionsFromScriptValue(_ value: ScriptValue?) -> [NotificationAction] {
     guard case .array(let items)? = value else { return [] }
@@ -536,7 +539,7 @@ private func scriptActionsFromScriptValue(_ value: ScriptValue?) -> [Notificatio
         guard let dict = item.dictionary,
               let label = dict["label"]?.stringValue,
               let urlString = dict["url"]?.stringValue,
-              let url = URL(string: urlString), url.scheme != nil else { return nil }
+              let url = URL(string: urlString) else { return nil }
         return NotificationAction(label: label, url: url)
     }
 }

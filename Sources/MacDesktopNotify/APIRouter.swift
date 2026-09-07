@@ -57,20 +57,6 @@ final class APIRouter: Sendable {
     }
 
     // MARK: - Endpoints
-    /// DTO actions → model actions, shared by the HTTP and WS push paths.
-    /// XOR truncation/caps live in `PushValidator.normalizedActions`, which
-    /// `makeNotification` runs anyway - this only resolves script-vs-url.
-    private static func makeActions(_ dtos: [PushValidator.ActionDTO]) -> [NotificationAction] {
-        dtos.compactMap { dto in
-            if let script = dto.script, ScriptStore.isValidName(script) {
-                return NotificationAction(label: dto.label, script: script,
-                                          wantsComment: dto.input ?? false, args: dto.args)
-            }
-            guard let urlString = dto.url, let url = URL(string: urlString) else { return nil }
-            return NotificationAction(label: dto.label, url: url)
-        }
-    }
-
 
     private struct PushDTO: Decodable {
         let title: String?
@@ -97,7 +83,7 @@ final class APIRouter: Sendable {
               let dto = try? JSONDecoder().decode(PushDTO.self, from: body) else {
             return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
         }
-        let actions = Self.makeActions(dto.actions ?? [])
+        let actions = PushValidator.actions(from: dto.actions ?? [])
         switch PushValidator.makeNotification(
             title: dto.title ?? "", body: dto.body, urgencyRaw: dto.urgency,
             timeout: dto.timeout, group: dto.group, actions: actions,
@@ -190,9 +176,6 @@ final class APIRouter: Sendable {
 
     private struct StatusResponse: Encodable {
         let unreadCount: Int
-        /// v4: the pending queue is gone, so this is always 0. The field stays
-        /// because API clients read it.
-        let pendingCount: Int
         let historyCount: Int
         let silenced: Bool
         let listening: ListeningStatus
@@ -210,7 +193,6 @@ final class APIRouter: Sendable {
         let listen = await listening()
         return .ok(StatusResponse(
             unreadCount: unreadCount,
-            pendingCount: 0,
             historyCount: historyCount,
             silenced: silenced,
             listening: StatusResponse.ListeningStatus(unixSocket: listen.unixSocket, http: listen.http)
@@ -273,7 +255,7 @@ final class APIRouter: Sendable {
             // where the old path decoded (WSCommandDTO), re-parsed
             // (JSONSerialization), re-encoded, and decoded again (PushDTO):
             // four JSON passes per frame for a problem Decodable never had.
-            let actions = Self.makeActions(dto.actions ?? [])
+            let actions = PushValidator.actions(from: dto.actions ?? [])
             switch PushValidator.makeNotification(
                 title: dto.title ?? "", body: dto.body, urgencyRaw: dto.urgency,
                 timeout: dto.timeout, group: dto.group, actions: actions,
