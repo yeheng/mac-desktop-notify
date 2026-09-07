@@ -17,6 +17,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     }
 
     func testSecondPushQueues() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -24,7 +30,35 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.pendingCount, 1)
     }
 
+    /// The pending row is the one panel interaction that is not management:
+    /// clicking it means "show me this one now". The clicked message becomes
+    /// the live card in place (open reason survives, §2.3), and the card it
+    /// replaces rejoins the queue — the same displaced fairness a fresh push
+    /// triggers (§3.1).
+    func testClickingPendingRowPromotesItNow() {
+        let action = NotificationAction(label: "ok", url: URL(string: "notch-notify://ack?token=t")!)
+        let operable = NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [action])
+        let m = NotificationManager()
+        m.push(operable)                    // operable card holds the surface...
+        m.push(make("b"))                   // ...so "b" genuinely queues
+        XCTAssertEqual(m.pendingCount, 1)
+
+        m.openMessageCenter()               // the full list is where the row lives
+        m.promoteQueued(id: m.queue[0].id)
+
+        XCTAssertEqual(m.current?.title, "b")
+        XCTAssertEqual(m.queue.map(\.title), ["a"], "the displaced card rejoins the queue")
+        XCTAssertEqual(m.displayState, .opened(reason: .click), "rotation keeps the open reason")
+        XCTAssertTrue(m.isRead(m.current!), "an explicitly requested message in a click-open panel reads immediately")
+    }
+
     func testAdvancePromotesNextInFIFOOrder() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -41,6 +75,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     }
 
     func testDismissCurrentAdvances() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -49,6 +89,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     }
 
     func testQueueCapDropsOldestPending() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         for i in 0..<12 { m.push(make("n\(i)")) }   // n0 shown; pending capped to 10
         XCTAssertEqual(m.current?.title, "n0")
@@ -67,115 +113,118 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.unreadCount, 0)
     }
 
-    // MARK: - Read state
+    // MARK: - Read state (§4 latch)
 
-    /// Read is attention, not pixels: an automatically expanded panel that
-    /// nobody looked at must not clear the unread count. Presence is latched
-    /// on pointer edges, so there is no timer to race here.
+    /// 自动弹卡无人进入 → 不清未读（v2 管线防的事由门闩防住）。
     func testAutoExpandedPanelWithoutPointerStaysUnread() {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
         settings.autoExpandOnMessage = true
         defer { settings.autoExpandOnMessage = old }
-
         let m = NotificationManager()
         m.push(make("a"))
-        XCTAssertEqual(m.displayState, .transientExpanded)
-        XCTAssertEqual(m.unreadCount, 1, "a panel that nobody looked at must not clear unread state")
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
+        XCTAssertEqual(m.unreadCount, 1)
     }
 
-    /// Dwell unlock marks only what was on screen: the current message and
-    /// rows the view reported visible. A queued message never shown stays
-    /// unread (P3 visibility-based read marking).
-    func testDwellUnlockMarksVisibleRowsOnly() async throws {
+    /// 门闩翻转瞬间：屏上可见行全部立即已读；从未显示的排队消息保持未读。
+    func testPointerEntryMarksVisibleRowsOnly() {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
         settings.autoExpandOnMessage = true
         defer { settings.autoExpandOnMessage = old }
-
         let m = NotificationManager()
-        m.push(make("a"))
+        // v3 §3.1: an operable first card keeps the surface, so b/c queue.
+        m.push(NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [
+            NotificationAction(label: "允许", url: URL(string: "notch-notify://ack?token=t&result=ok")!)
+        ]))
         m.push(make("b"))
         m.push(make("c"))
-        m.dismissCurrent()           // b current; a past; c queued
-        m.noteRowVisible(m.pastHistory[0].id)   // a is on screen
-        m.setPointerNearIsland(true)
-        try await Task.sleep(for: .milliseconds(1200))  // past the settle delay
+        m.dismissCurrent()                            // b current; a past; c queued
+        m.noteRowVisible(m.pastHistory[0].id)         // a on screen
+        m.setHovering(true)                           // latch flip
 
-        XCTAssertTrue(m.isRead(m.pastHistory[0]), "the visible history row is read")
-        XCTAssertTrue(m.current.map { m.isRead($0) } ?? false, "the live message is read")
-        XCTAssertEqual(m.unreadCount, 1, "the queued message was never shown, so it stays unread")
-        m.dismissPanel()
+        XCTAssertTrue(m.isRead(m.pastHistory[0]))
+        XCTAssertTrue(m.current.map { m.isRead($0) } ?? false)
+        XCTAssertEqual(m.unreadCount, 1, "the queued message was never shown")
     }
 
-    /// After the unlock, a row scrolled into view earns its read mark after
-    /// one full second on screen — not on the frame it appears.
-    func testScrolledInRowEarnsReadAfterOneSecond() async throws {
+    /// 门闩已开时滚入的新行：onAppear 上报即读，无每秒预算。
+    func testRowScrolledInWhileEligibleReadsImmediately() {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
         settings.autoExpandOnMessage = true
         defer { settings.autoExpandOnMessage = old }
+        let m = NotificationManager()
+        // v3 §3.1: an operable first card keeps the surface, so b queues.
+        m.push(NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [
+            NotificationAction(label: "允许", url: URL(string: "notch-notify://ack?token=t&result=ok")!)
+        ]))
+        m.push(make("b"))
+        m.dismissCurrent()
+        m.setHovering(true)                           // latch open
+        let a = m.pastHistory[0]
+        XCTAssertFalse(m.isRead(a), "never reported visible yet")
 
+        m.noteRowVisible(a.id)
+        XCTAssertTrue(m.isRead(a), "§4: eligible periods read rows the frame they report")
+    }
+
+    /// 触发区不是面板：只靠近不进入，一个都不读。
+    func testZonePresenceAloneDoesNotMarkRead() {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = true
+        defer { settings.autoExpandOnMessage = old }
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.setPointerNearIsland(true)
+        XCTAssertEqual(m.unreadCount, 1, "near is not looking")
+    }
+
+    /// hover 打开需进入：面板开了但指针没上去，不读。
+    func testHoverOpenRequiresPanelEntryToRead() async throws {
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        let oldHoverToExpand = settings.hoverToExpand
+        let oldDelay = settings.hoverDelayMilliseconds
+        settings.autoExpandOnMessage = false
+        settings.hoverToExpand = true
+        settings.hoverDelayMilliseconds = 10
+        defer {
+            settings.autoExpandOnMessage = oldAutoExpand
+            settings.hoverToExpand = oldHoverToExpand
+            settings.hoverDelayMilliseconds = oldDelay
+        }
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.setPointerNearIsland(true)                  // hover opens…
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(m.displayState, .opened(reason: .hover))
+        XCTAssertEqual(m.unreadCount, 1, "opened by hover, but the pointer never entered")
+    }
+
+    /// click 开即读（含之后滚入的行）。
+    func testClickOpenReadsImmediatelyAndRowsFollow() {
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
-        m.dismissCurrent()           // b current, a past
-        m.setPointerNearIsland(true)
-        try await Task.sleep(for: .milliseconds(1200))  // unlock
+        m.dismissCurrent()                            // b current, a past
+        m.dismissPanel()
+        m.islandClicked()
+        XCTAssertTrue(m.current.map { m.isRead($0) } ?? false, "click reads the live message at once")
         let a = m.pastHistory[0]
-        XCTAssertFalse(m.isRead(a), "a was never on screen during the dwell")
-
         m.noteRowVisible(a.id)
-        try await Task.sleep(for: .milliseconds(300))
-        XCTAssertFalse(m.isRead(a), "200ms on screen is a scroll-past, not a read")
-        try await Task.sleep(for: .milliseconds(1000))
-        XCTAssertTrue(m.isRead(a), "a full second on screen earns the read mark")
-        m.dismissPanel()
-    }
-
-    /// A row scrolled away before its second elapses keeps its unread state.
-    func testRowHiddenBeforeItsSecondStaysUnread() async throws {
-        let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = true
-        defer { settings.autoExpandOnMessage = old }
-
-        let m = NotificationManager()
-        m.push(make("a"))
-        m.push(make("b"))
-        m.dismissCurrent()           // b current, a past
-        m.setPointerNearIsland(true)
-        try await Task.sleep(for: .milliseconds(1200))  // unlock
-        let a = m.pastHistory[0]
-
-        m.noteRowVisible(a.id)
-        try await Task.sleep(for: .milliseconds(300))
-        m.noteRowHidden(a.id)
-        try await Task.sleep(for: .milliseconds(1000))
-        XCTAssertFalse(m.isRead(a), "the row left the viewport before earning the mark")
-        m.dismissPanel()
-    }
-
-    /// A brush past the notch is not attention either: presence shorter than
-    /// the settle delay never unlocks read marking.
-    func testBriefPointerVisitDoesNotMarkRead() async throws {
-        let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = true
-        defer { settings.autoExpandOnMessage = old }
-
-        let m = NotificationManager()
-        m.push(make("a"))
-        m.setPointerNearIsland(true)
-        try await Task.sleep(for: .milliseconds(150))   // well under the settle delay
-        m.setPointerNearIsland(false)
-        try await Task.sleep(for: .milliseconds(100))
-        m.dismissPanel()
-
-        XCTAssertEqual(m.unreadCount, 1, "a brush past the notch is not attention")
+        XCTAssertTrue(m.isRead(a), "rows arriving during a click-open period read on report")
     }
 
     func testQueuedMessageCountsAsUnread() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))          // waiting in queue → unread
@@ -218,7 +267,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     func testDequeuePrefersCriticalFIFO() {
         let settings = AppSettings.shared
         let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = true
+        settings.autoExpandOnMessage = false   // v3 §3.1: pushes must queue here, not displace
         defer { settings.autoExpandOnMessage = old }
 
         let m = NotificationManager()
@@ -254,9 +303,9 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.push(make("a"))
         m.dismissPanel()                                  // start collapsed: the keyboard-only world
-        XCTAssertEqual(m.displayState, .compact)
+        XCTAssertEqual(m.displayState, .closed)
         m.togglePanel()                                   // keyboard path: no pointer anywhere
-        XCTAssertEqual(m.displayState, .manualExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .click))
         XCTAssertTrue(m.canDismissWithEscape, "a deliberately opened panel is Esc-able")
     }
 
@@ -268,7 +317,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(make("a"))                                // auto-expanded, pointer never arrived
-        XCTAssertEqual(m.displayState, .transientExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
         XCTAssertFalse(m.canDismissWithEscape, "Esc must not reach into an untouched screen from other apps")
     }
 
@@ -277,9 +326,9 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         m.push(make("a"))
         m.dismissPanel()                                  // collapsed world: toggle means open
         m.togglePanel()
-        XCTAssertEqual(m.displayState, .manualExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .click))
         m.togglePanel()
-        XCTAssertEqual(m.displayState, .compact, "second toggle collapses to the pill while the message is live")
+        XCTAssertEqual(m.displayState, .closed, "second toggle collapses to the pill while the message is live")
     }
 
     func testIslandClickedExpandsAndMarksCurrentRead() {
@@ -287,11 +336,11 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         m.push(make("a"))
         m.dismissPanel()           // → .compact, before the read-settle delay
         m.push(make("b"))          // queued
-        XCTAssertEqual(m.displayState, .compact)
+        XCTAssertEqual(m.displayState, .closed)
         XCTAssertEqual(m.unreadCount, 2, "a was dismissed unseen, b never surfaced")
 
         m.islandClicked()
-        XCTAssertEqual(m.displayState, .manualExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .click))
         XCTAssertTrue(m.current.map { m.isRead($0) } ?? false,
                       "an explicit click marks the live message read at once")
         XCTAssertEqual(m.unreadCount, 1,
@@ -301,6 +350,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     /// Click unlocks, then visibility does the rest: a history row reported
     /// visible after the click earns its mark after its own second.
     func testClickUnlockThenVisibilityMarksRows() async throws {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))       // current
         m.push(make("b"))       // queued
@@ -318,7 +373,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     func testIslandClickedIgnoredWithoutContent() {
         let m = NotificationManager()
         m.islandClicked()
-        XCTAssertEqual(m.displayState, .hidden)
+        XCTAssertEqual(m.displayState, .closed)
     }
 
     func testDismissedPanelDoesNotReexpandUntilPointerLeaves() async throws {
@@ -330,16 +385,16 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.push(make("a"))
         m.dismissPanel()
-        XCTAssertEqual(m.displayState, .compact)
+        XCTAssertEqual(m.displayState, .closed)
 
         m.setPointerNearIsland(true)
         try await Task.sleep(for: .milliseconds(80))
-        XCTAssertEqual(m.displayState, .compact)   // suppressed after manual dismissal
+        XCTAssertEqual(m.displayState, .closed)   // suppressed after manual dismissal
 
         m.setPointerNearIsland(false)              // leaving the zone re-arms hover
         m.setPointerNearIsland(true)
         try await Task.sleep(for: .milliseconds(80))
-        XCTAssertEqual(m.displayState, .manualExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .hover))
     }
 
     // MARK: - Sneak Peek (display=peek)
@@ -349,7 +404,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     func testPeekPushStaysCompactWhenAutoExpandEnabled() {
         let m = NotificationManager()
         m.push(NotchNotification(title: "p", bodyMarkdown: "", urgency: .normal, timeout: 60, displayPeek: true))
-        XCTAssertEqual(m.displayState, .compact, "a peek message must not open the panel")
+        XCTAssertEqual(m.displayState, .closed, "a peek message must not open the panel")
         XCTAssertEqual(m.current?.displayPeek, true)
     }
 
@@ -358,7 +413,7 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     func testCriticalIgnoresPeekAndBlocks() {
         let m = NotificationManager()
         m.push(NotchNotification(title: "c", bodyMarkdown: "", urgency: .critical, timeout: nil, displayPeek: true))
-        XCTAssertEqual(m.displayState, .blockingExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
         XCTAssertEqual(m.current?.displayPeek, false, "critical strips the peek flag at resolution")
     }
 
@@ -373,17 +428,19 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.push(make("a"))   // no explicit displayPeek → inherits the setting
         XCTAssertEqual(m.current?.displayPeek, true)
-        XCTAssertEqual(m.displayState, .compact)
+        XCTAssertEqual(m.displayState, .closed)
 
         // A fresh run isolates the override from the first message's state.
         let m2 = NotificationManager()
         m2.push(NotchNotification(title: "b", bodyMarkdown: "", urgency: .normal, timeout: 60, displayPeek: false))
-        XCTAssertEqual(m2.displayState, .transientExpanded, "an explicit display=expand overrides the setting")
+        XCTAssertEqual(m2.displayState, .opened(reason: .notification), "an explicit display=expand overrides the setting")
     }
 
     /// Peek dwell: when the sender left the timeout to the app, a peek message
     /// holds the pill for the short peek budget, not the full dwell setting.
-    func testPeekDefaultDwellIsThreeSeconds() {
+    /// §6/§7: peek degrades to "no auto card, Tier 0 only" - the pill dwell is
+    /// the sender timeout ?? the app's dwell setting; no special 3s budget.
+    func testPeekUsesStandardDwellBudget() {
         let settings = AppSettings.shared
         let old = settings.messageDwellSeconds
         settings.messageDwellSeconds = 20
@@ -391,17 +448,19 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(NotchNotification(title: "p", bodyMarkdown: "", urgency: .normal, timeout: nil, displayPeek: true))
-        XCTAssertEqual(m.presentation?.remaining, .seconds(3))
-
-        // A fresh run isolates the non-peek dwell from the peek message's state.
-        let m2 = NotificationManager()
-        m2.push(NotchNotification(title: "n", bodyMarkdown: "", urgency: .normal, timeout: nil, displayPeek: false))
-        XCTAssertEqual(m2.presentation?.remaining, .seconds(20), "a non-peek message keeps the dwell setting")
+        XCTAssertEqual(m.displayState, .closed, "peek never opens the panel")
+        XCTAssertEqual(m.presentation?.remaining, .seconds(20))
     }
 
     // MARK: - List model
 
     func testPastHistoryExcludesCurrentAndQueued() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -415,6 +474,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
 
     /// The hover row action toggles one message without touching its siblings.
     func testSetReadTogglesSingleMessage() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -431,6 +496,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     /// 「全部丢弃」empties the waiting list but keeps every message in
     /// history, still unread: discarding presentation is not reading.
     func testDiscardPendingKeepsHistoryAndUnread() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -445,6 +516,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     /// 「清空本区」on the history section removes only past messages; the
     /// live message and the queue survive untouched.
     func testClearPastHistoryKeepsCurrentAndQueued() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("old"))
         m.push(make("live"))
@@ -460,6 +537,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
 
     /// The one-click header action marks everything read at once.
     func testMarkAllReadClearsUnreadCount() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -481,6 +564,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     /// Deleting a row keeps a snapshot for the undo window; undo restores the
     /// message and its read marker.
     func testUndoDeletionRestoresMessageAndReadState() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
@@ -500,6 +589,12 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
     /// Deletions inside the same window merge into one notice, and one undo
     /// brings all of them back.
     func testConsecutiveDeletesMergeNoticeAndUndoRestoresAll() {
+        // v3 §3.1: pushes must queue here, not displace.
+        let settings = AppSettings.shared
+        let oldAutoExpand = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = oldAutoExpand }
+
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))

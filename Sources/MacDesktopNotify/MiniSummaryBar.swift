@@ -83,10 +83,7 @@ private struct MiniSummaryView: View {
     }
 
     private var summary: String {
-        if manager.compactShowsMessageTitle, let title = manager.current?.title {
-            return title
-        }
-        return manager.compactStatus
+        manager.compactStatus
     }
 }
 

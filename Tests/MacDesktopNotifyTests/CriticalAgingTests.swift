@@ -13,14 +13,14 @@ final class CriticalAgingTests: SettingsIsolatedTestCase {
     func testSnoozeDemotesCriticalToTransient() {
         let m = NotificationManager()
         m.push(make("crit", urgency: .critical))
-        XCTAssertEqual(m.displayState, .blockingExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
         XCTAssertNil(m.presentation?.remaining, "critical starts with no budget")
 
         m.snoozeCurrentCritical()
 
         XCTAssertEqual(m.presentation?.remaining, NotificationManager.criticalSnoozeBudget,
                        "snooze writes a finite budget into the same Presentation")
-        XCTAssertEqual(m.displayState, .compact, "snooze puts the pill back")
+        XCTAssertEqual(m.displayState, .closed, "snooze puts the pill back")
         XCTAssertNotNil(m.dwellDeadline, "the dwell countdown is running again")
     }
 
@@ -34,7 +34,7 @@ final class CriticalAgingTests: SettingsIsolatedTestCase {
         m.snoozeCurrentCritical()
 
         XCTAssertEqual(m.presentation?.remaining, before)
-        XCTAssertEqual(m.displayState, .transientExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
     }
 
     /// The backlog count drives the "处理全部" affordance.

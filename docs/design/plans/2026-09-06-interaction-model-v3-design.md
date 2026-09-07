@@ -180,6 +180,14 @@ PointerState reducer、`DelayedEvents`（新增一个 key）、dwell/`reconcileD
 5. pill 环境态改版 + AppDelegate 监听器清理 + 设置项清理 → 验证：全量 `swift test`
 6. README 同步 + 设计文档勾选完成
 
+> 实施完成（见 `2026-09-06-interaction-model-v3-plan.md`）：
+> - [x] 1. 状态机替换
+> - [x] 2. 收起规则
+> - [x] 3. 已读门闩
+> - [x] 4. 视图删减
+> - [x] 5. pill 环境态 + 监听器/设置清理
+> - [x] 6. README 同步
+
 ## 11. 明确不做（YAGNI）
 
 - popping 脉冲态（Open Island 生产代码中也未启用）

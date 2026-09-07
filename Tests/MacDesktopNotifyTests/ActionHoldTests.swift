@@ -26,7 +26,7 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
     func testMessageWithActionsDoesNotAutoDismiss() async throws {
         let m = NotificationManager()
         m.push(make("approve", timeout: 0.3, actions: [approveAction]))
-        XCTAssertEqual(m.displayState, .transientExpanded)
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
 
         try await Task.sleep(for: .seconds(1))          // far past the 0.3 s budget
         XCTAssertEqual(m.current?.title, "approve",
@@ -63,8 +63,14 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
     }
 
     /// Messages without actions are untouched by all of this: same dwell,
-    /// same auto-dismissal as before.
+    /// same auto-dismissal as before. v3 (§3.1) runs the dwell on the pill
+    /// layer, so the push stays off the panel for the budget to govern.
     func testMessageWithoutActionsStillAutoDismisses() async throws {
+        let settings = AppSettings.shared
+        let old = settings.autoExpandOnMessage
+        settings.autoExpandOnMessage = false
+        defer { settings.autoExpandOnMessage = old }
+
         let m = NotificationManager()
         m.actionHoldIdleLimit = .milliseconds(300)      // must be irrelevant here
         m.push(make("plain", timeout: 0.3))

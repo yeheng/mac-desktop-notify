@@ -322,11 +322,6 @@ private struct GeneralSettingsContent: View {
                 caption: "指针进入触发区、点击刘海与手势关闭时，触控板给出轻戳确认。",
                 isOn: $settings.enableHaptics
             )
-            CaptionedToggle(
-                "打开面板时展开最新一条历史",
-                caption: "开启后面板一打开就渲染最新一条消息的正文；关闭（默认）则先呈现干净的标题列表，手动点开想看的。",
-                isOn: $settings.autoExpandLatestHistoryOnOpen
-            )
         }
 
         Section {
@@ -394,15 +389,6 @@ private struct AppearanceSettingsContent: View {
     @Bindable var settings: AppSettings
 
     var body: some View {
-        Section {
-            Picker("布局模式", selection: $settings.layoutMode) {
-                ForEach(IslandLayoutMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-        }
-
         Section {
             SliderRow(
                 title: "宽度",
@@ -539,18 +525,17 @@ private struct NotificationSettingsContent: View {
             Toggle("⌃⌥N 全局切换面板", isOn: $settings.globalPanelHotkeyEnabled)
             ShortcutRow(title: "全局切换面板", shortcut: "⌃ ⌥ N")
             ShortcutRow(title: "收起面板", shortcut: "Esc")
-            ShortcutRow(title: "执行操作按钮（指针在面板上）", shortcut: "⌘ 1-3")
 
             // The permission and the shortcuts it unlocks live in one
             // section: sending the user to another pane to grant it made
             // the dependency invisible.
             if AXIsProcessTrusted() {
-                Label("已授权辅助功能，Esc 与列表方向键在任何 App 中可用", systemImage: "checkmark.circle.fill")
+                Label("已授权辅助功能，Esc 在任何 App 中可用", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .font(.callout)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Esc 与列表方向键（↑/↓/⏎/⌫/m）依赖全局键盘监听，需要辅助功能授权；未授权时它们不会生效。⌃⌥N 与 ⌘1–⌘3 为系统级热键，不受影响。")
+                    Text("Esc 依赖全局键盘监听，需要辅助功能授权；未授权时它不会生效。⌃⌥N 为系统级热键，不受影响。")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Button("打开系统辅助功能设置") {
@@ -562,7 +547,7 @@ private struct NotificationSettingsContent: View {
         } header: {
             Text("快捷键")
         } footer: {
-            SectionFooter("Esc 在指针停留于面板或手动打开面板时生效；⌘1–⌘3 仅在面板展开、指针在位且当前消息带操作按钮时动态注册，与 ⌃⌥N 一样无需辅助功能授权。")
+            SectionFooter("Esc 在指针停留于面板或手动打开面板时生效；⌃⌥N 为系统级热键，无需辅助功能授权。")
         }
 
         Section {

@@ -110,11 +110,11 @@ final class QuietModeTests: SettingsIsolatedTestCase {
                 let m = NotificationManager()
                 m.setAway(true)
                 for i in 1...5 { m.push(make("job-\(i)")) }
-                XCTAssertEqual(m.displayState, .hidden, "nothing shows while away")
+                XCTAssertEqual(m.displayState, .closed, "nothing shows while away")
 
                 m.setAway(false)
 
-                XCTAssertEqual(m.displayState, .compact, "the return must be announced")
+                XCTAssertEqual(m.displayState, .closed, "the return must be announced")
                 XCTAssertEqual(m.unreadCount, 5, "all five must still be waiting")
                 XCTAssertNil(m.current, "and none of them may be unfolded onto the user")
             }
@@ -126,7 +126,7 @@ final class QuietModeTests: SettingsIsolatedTestCase {
             let m = NotificationManager()
             m.setAway(true)
             m.setAway(false)
-            XCTAssertEqual(m.displayState, .hidden, "an empty return must not conjure a pill")
+            XCTAssertEqual(m.displayState, .closed, "an empty return must not conjure a pill")
         }
     }
 
@@ -138,7 +138,7 @@ final class QuietModeTests: SettingsIsolatedTestCase {
 
             m.setAway(false)
 
-            XCTAssertEqual(m.displayState, .blockingExpanded, "a live critical must not be disturbed")
+            XCTAssertEqual(m.displayState, .opened(reason: .notification), "a live critical must not be disturbed")
             XCTAssertEqual(m.current?.title, "critical")
         }
     }
@@ -150,7 +150,7 @@ final class QuietModeTests: SettingsIsolatedTestCase {
             m.setAway(true)
             m.push(make("a"))
             m.setAway(false)
-            XCTAssertEqual(m.displayState, .compact)
+            XCTAssertEqual(m.displayState, .closed)
         }
     }
 
@@ -162,7 +162,7 @@ final class QuietModeTests: SettingsIsolatedTestCase {
                 let m = NotificationManager()
                 m.push(make("run-1", group: "ci"))
                 XCTAssertEqual(m.current?.title, "run-1")
-                XCTAssertTrue(m.displayState.isExpanded)
+                XCTAssertTrue(m.displayState.isOpened)
 
                 // The replacement collapses run-1 off the panel and is then withheld,
                 // which would otherwise leave an expanded panel with nothing in it.
@@ -170,7 +170,7 @@ final class QuietModeTests: SettingsIsolatedTestCase {
                 XCTAssertEqual(m.push(make("run-2", group: "ci")), .withheld)
 
                 XCTAssertNil(m.current)
-                XCTAssertFalse(m.displayState.isExpanded, "the hole left by the collapse must be repaired")
+                XCTAssertFalse(m.displayState.isOpened, "the hole left by the collapse must be repaired")
                 XCTAssertEqual(m.history.map(\.title), ["run-2"], "and the replacement is what is kept")
             }
         }
@@ -183,7 +183,7 @@ final class QuietModeTests: SettingsIsolatedTestCase {
                 m.setAway(true)
                 m.push(make("a"))
 
-                XCTAssertEqual(m.displayState, .hidden, "quiet must not surface a pill on the lock screen")
+                XCTAssertEqual(m.displayState, .closed, "quiet must not surface a pill on the lock screen")
             }
         }
     }

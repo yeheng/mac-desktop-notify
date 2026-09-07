@@ -65,11 +65,6 @@ final class NotificationManager {
     /// views (the status item icon redraws from this).
     static let unreadCountDidChange = Notification.Name("MacDesktopNotify.unreadCountDidChange")
 
-    /// Posts whenever `actionShortcutsEligible` flips, for the app delegate's
-    /// dynamic Carbon registration of ⌘1–⌘3 — the same non-SwiftUI channel as
-    /// `unreadCountDidChange`.
-    static let actionShortcutEligibilityDidChange = Notification.Name("MacDesktopNotify.actionShortcutEligibilityDidChange")
-
     /// Writes are debounced so a burst of pushes costs one save, not one per message.
     static let persistDebounce: Duration = .milliseconds(500)
 
@@ -87,57 +82,20 @@ final class NotificationManager {
             if let old = oldValue?.item, presentation?.item.id != old.id {
                 noteRowHidden(old.id)
             }
-            syncActionShortcutEligibility()
         }
     }
 
     /// Pure queue/history/read-state data, extracted so the invariants live in
     /// one place; the facades below keep the observed surface stable.
     @ObservationIgnored private var messages = NotificationQueue()
-    private(set) var displayState: IslandDisplayState = .hidden {
-        didSet {
-            // The panel's two modes split on "was this opening deliberate",
-            // but displayState loses that bit when a message rotates into an
-            // already-open panel (advance lands on .transientExpanded), which
-            // would snap a manually opened message center back to the
-            // single-card mode mid-browse. The flag keeps the intent sticky
-            // for the whole open period.
-            if displayState == .manualExpanded {
-                panelOpenedManually = true
-            } else if !displayState.isExpanded {
-                panelOpenedManually = false
-            }
-            // Every collapse path funnels through this property, so the didSet is
-            // the single choke point that settles what the user got to see - no
-            // call site has to remember to do it.
-            if !displayState.isExpanded {
-                // The panel is gone: whatever was looked at during that period is
-                // now the only evidence there will ever be.
-                settleReadState()
-            } else if !oldValue.isExpanded {
-                // A panel is opening on a previously collapsed display. The stay
-                // that mattered belonged to the previous open period, so it is
-                // settled (not silently dropped) before the new one begins.
-                // Expanding from one panel state to another does NOT land here:
-                // hover-opening re-assigns .manualExpanded over .transientExpanded,
-                // and wiping presence at that moment would throw away the exact
-                // attention we are trying to measure.
-                settleReadState()
-            }
-            syncActionShortcutEligibility()
-        }
-    }
+    private(set) var displayState: NotchDisplayState = .closed
     private(set) var unreadCount = 0
 
     /// Where the pointer is relative to the island, as one value. Tracked (not
     /// ignored) because `pointerNearIsland` derives from it and the compact
     /// pill's pre-expansion cue reads that. All transitions flow through
     /// `reduce(_:)`; nothing else writes it.
-    private var pointer = PointerState() {
-        didSet {
-            if pointer != oldValue { syncActionShortcutEligibility() }
-        }
-    }
+    private var pointer = PointerState()
     @ObservationIgnored private(set) var compactLeadingWidth: CGFloat = 0
     @ObservationIgnored private(set) var compactTrailingWidth: CGFloat = 0
     /// Readable by the presenter, which re-applies display state across screen
@@ -146,17 +104,12 @@ final class NotificationManager {
     /// Every delayed effect the manager needs (dwell, hover, collapse, aging,
     /// persist), keyed so re-arming replaces and nothing leaks.
     @ObservationIgnored private let delayed = DelayedEvents()
-    /// When the current uninterrupted stay of the pointer at the panel began.
-    /// Nil while the pointer is away. See `settleReadState`.
-    @ObservationIgnored private var presenceStartedAt: ContinuousClock.Instant?
     /// Set only while the countdown is actually running; nil while it is held.
     @ObservationIgnored private(set) var dwellDeadline: ContinuousClock.Instant?
     /// Nil until the app hands over a store, which keeps tests off the real disk.
     @ObservationIgnored private var historyStore: NotificationHistoryStore?
     /// Tests swap in a fresh store-less handler; production attaches one owning
     @ObservationIgnored private(set) var actionHandler = NotificationActionHandler()
-    /// Attention banked from earlier stays in the current open period.
-    @ObservationIgnored private var presenceBanked: Duration = .zero
     @ObservationIgnored private let clock = ContinuousClock()
     @ObservationIgnored private weak var presenter: NotchPresenting?
     /// Retained so the observers outlive the launch scope that installed them.
@@ -200,13 +153,6 @@ final class NotificationManager {
         return unreadCount > 0 ? "\(unreadCount) 条未读" : ""
     }
 
-    /// Whether the compact pill shows the live message's title instead of the
-    /// generic status text. Detailed layout always does; a peek message must,
-    /// because the title *is* the notification - "新消息" would say nothing.
-    var compactShowsMessageTitle: Bool {
-        AppSettings.shared.layoutMode == .detailed || current?.displayPeek == true
-    }
-
     func isRead(_ notification: NotchNotification) -> Bool {
         messages.readIDs.contains(notification.id)
     }
@@ -218,31 +164,6 @@ final class NotificationManager {
     /// activation zone. Used to scope Esc so it cannot fire from other apps.
     var pointerNearPanel: Bool { pointer.onPanel || pointer.nearIsland }
 
-    /// True while the current open period began as a deliberate open (click,
-    /// hover, hotkey) - see displayState's didSet for why displayState alone
-    /// cannot answer this. Drives the panel's full-list vs single-card split.
-    private(set) var panelOpenedManually = false
-
-    /// Whether ⌘1–⌘3 currently have something to act on: the panel is open,
-    /// the pointer is near it, and the live message carries action buttons.
-    /// The app delegate registers the Carbon hotkeys only while this holds —
-    /// an always-on ⌘1 would eat the front app's own shortcuts.
-    var actionShortcutsEligible: Bool {
-        displayState.isExpanded && pointerNearPanel && !(current?.actions.isEmpty ?? true)
-    }
-
-    /// The eligibility value last announced, so a flip posts exactly once.
-    @ObservationIgnored private var announcedActionShortcutEligibility = false
-
-    /// The single choke point every input to `actionShortcutsEligible`
-    /// (presentation, display state, pointer) reports into.
-    private func syncActionShortcutEligibility() {
-        let eligible = actionShortcutsEligible
-        guard eligible != announcedActionShortcutEligibility else { return }
-        announcedActionShortcutEligibility = eligible
-        NotificationCenter.default.post(name: Self.actionShortcutEligibilityDidChange, object: nil)
-    }
-
     // MARK: - Panel view state
     //
     // The message list's UI state lives here, not in view `@State`: the notch
@@ -253,10 +174,6 @@ final class NotificationManager {
 
     /// Accordion model: one expanded history body at a time.
     var expandedHistoryID: UUID?
-    /// Group rows open independently of the accordion (two separate levels).
-    var expandedGroupKeys: Set<String> = []
-    /// The row the keyboard (↑/↓) has landed on.
-    var selectedRowID: String?
 
     // MARK: - Ingress
 
@@ -276,7 +193,8 @@ final class NotificationManager {
         } else {
             resolved.displayPeek = resolved.displayPeek ?? AppSettings.shared.normalMessagesPeek
         }
-        let incoming = collapseGroup(resolved)
+        let protected = protectedSurface
+        let incoming = collapseGroup(resolved, protected: protected)
 
         messages.record(incoming)
         recomputeUnread()
@@ -292,11 +210,22 @@ final class NotificationManager {
         messages.enqueue(incoming)
 
         if incoming.urgency == .critical {
+            guard !protected else { return .queued }   // §3.1: an engaged card is not preempted
             promoteCritical(incoming)
             return .displayed
         }
 
         guard presentation == nil else {
+            // §3.1: an unattended info card yields the surface to the fresh
+            // arrival; an operable card keeps it (its exits are action/aging/
+            // manual), and so does any panel someone is browsing or engaging.
+            if !protected,
+               case .opened(reason: .notification) = displayState,
+               presentation?.item.actions.isEmpty == true,
+               presentation?.item.urgency != .critical {
+                displaceCard(with: incoming)
+                return .displayed
+            }
             // Something is already live, and its countdown is what will retire it.
             // Re-asserting the invariant here is cheap insurance: a collapsed panel
             // must never be left holding a message that nothing will ever clear.
@@ -345,7 +274,7 @@ final class NotificationManager {
         // on top of someone who just unlocked their screen would be hostile — so
         // the return is announced with a pill they can open if they want to.
         guard presentation == nil, !displaySuppressed, unreadCount > 0 else { return }
-        displayState = .compact
+        displayState = .closed
         presentCompact()
     }
 
@@ -369,13 +298,15 @@ final class NotificationManager {
     /// Everything else is left strictly alone. Retiring to a compact pill here
     /// would light up the pill on a locked screen, which is the opposite of quiet.
     private func settleAfterWithdrawal() {
-        guard presentation == nil, displayState.isExpanded else { return }
+        guard presentation == nil, displayState.isOpened else { return }
         advance()
     }
 
     /// Collapses `notification` onto any earlier message in the same group, so a
     /// repeating job updates one entry instead of stacking a fresh one every run.
-    private func collapseGroup(_ notification: NotchNotification) -> NotchNotification {
+    /// `protected` (§3.1) keeps the on-screen entry alive while the pointer is
+    /// on the panel: the update lands in the queue instead of yanking the card.
+    private func collapseGroup(_ notification: NotchNotification, protected: Bool) -> NotchNotification {
         guard let key = notification.groupingKey else { return notification }
 
         // The group's earlier entries are gone from history/queue/read state in
@@ -384,7 +315,7 @@ final class NotificationManager {
 
         // The on-screen message carried the same group: drop it so `push` promotes
         // the replacement, which updates the panel instead of queueing behind it.
-        if presentation?.item.groupingKey == key {
+        if !protected, presentation?.item.groupingKey == key {
             presentation = nil
             // Cancel the retired countdown outright rather than relying on the
             // id guard in `startDwell` to ignore it later.
@@ -416,7 +347,7 @@ final class NotificationManager {
         deletionNotice = nil
         recomputeUnread()
         presentation = nil
-        displayState = .hidden
+        displayState = .closed
         reduce(.cleared)
         historyStore?.delete()
         Task { await presenter?.hide() }
@@ -524,18 +455,18 @@ final class NotificationManager {
             guard !pointer.nearIsland else { return }
             pointer.zone = .inActivationZone
             delayed.cancel(.manualCollapse)
-            notePointerPresence()
             // The zone is larger than the visible pill, so this tick is the
             // earliest "expansion is armed" signal there is - it lands inside
             // the hover delay, before the panel appears.
-            if displayState == .compact, hasContent {
+            if !displayState.isOpened, hasContent {
                 IslandHaptics.zoneEntered()
             }
             guard AppSettings.shared.hoverToExpand, hasContent, !displaySuppressed, !pointer.hoverDismissed else { return }
             delayed.schedule(.hoverExpand, after: hoverDelay()) { [weak self] in
                 guard let self, self.pointer.nearIsland else { return }
-                self.displayState = .manualExpanded
-                self.presentExpanded(marksRead: false)
+                self.displayState = .opened(reason: .hover)
+                self.presentExpanded()
+                self.applyDismissRules()
                 self.reconcileDwell()
             }
 
@@ -545,25 +476,37 @@ final class NotificationManager {
             pointer.hoverDismissed = false
             pointer.forgetActivationZoneClaim()
             delayed.cancel(.hoverExpand)
-            bankPointerPresence()
-            guard displayState == .manualExpanded, AppSettings.shared.autoCollapseOnLeave else { return }
+            // §3.2: only a hover-opened panel collapses with the pointer -
+            // a click-opened message center is closed by Esc, the close
+            // button, or an outside click, never by drift.
+            guard case .opened(reason: .hover) = displayState, AppSettings.shared.autoCollapseOnLeave else { return }
             scheduleManualCollapse()
 
         case .hoverBegan:
             guard !pointer.onPanel else { return }
             pointer.zone = .onPanel(zoneClaimsPointer: pointer.nearIsland)
             delayed.cancel(.manualCollapse)
-            notePointerPresence()
+            if displayState.isOpened {
+                // §3.1/§4 latch: entering the open panel engages the card.
+                panelEntered = true
+                markVisibleRowsRead()
+            }
+            applyDismissRules()
             reconcileDwell()
 
         case .hoverEnded:
             guard pointer.onPanel else { return }
             let claims = pointer.nearIsland
             pointer.zone = claims ? .inActivationZone : .away
-            bankPointerPresence()
-            if displayState == .manualExpanded, !claims, AppSettings.shared.autoCollapseOnLeave {
+            if case .opened(reason: .notification) = displayState, panelEntered {
+                // §3.1: entered, then left - the card was seen; it steps down now.
+                advance()
+                return
+            }
+            if case .opened(reason: .hover) = displayState, !claims, AppSettings.shared.autoCollapseOnLeave {
                 scheduleManualCollapse()
             }
+            applyDismissRules()
             reconcileDwell()
 
         case .panelDismissed:
@@ -583,6 +526,8 @@ final class NotificationManager {
 
         case .cleared:
             pointer = PointerState()
+            panelEntered = false
+            visibleRowIDs = []
         }
     }
 
@@ -596,18 +541,82 @@ final class NotificationManager {
         reduce(near ? .activationZoneEntered : .activationZoneExited)
     }
 
+    // MARK: - Dismiss rules (§3)
+    //
+    // One adjudication point every state transition ends at. Inputs: the open
+    // reason, the live card's operability, the pointer position. It owns exactly
+    // one timer - the info card's auto-close - and cancels it up front so every
+    // call site re-derives from scratch.
+
+    /// How long an informational card may hold the panel when nobody engages it.
+    /// A var so tests can shrink it instead of sleeping ten seconds - the
+    /// `undoWindow` precedent.
+    var notificationAutoCloseDelay: Duration = .seconds(10)
+
+    /// §3.1/§4 latch: the pointer has been on the open panel during this open
+    /// period. Gates the leave-collapse (§3.1) and read eligibility (§4). Set on
+    /// the `.hoverBegan` edge, reset when the panel collapses.
+    @ObservationIgnored private(set) var panelEntered = false
+
+    /// §3.1 protection period: the pointer is on the open panel - whatever it is
+    /// showing must not be displaced by an arrival.
+    private var protectedSurface: Bool { pointer.onPanel && displayState.isOpened }
+
+    private func applyDismissRules() {
+        delayed.cancel(.notificationAutoClose)
+        guard case .opened(reason: .notification) = displayState,
+              let live = presentation,
+              !displaySuppressed else { return }
+        // Operable cards never auto-close: their exit paths are the action
+        // itself, idle aging (§8, unchanged), or a manual close.
+        let operable = !live.item.actions.isEmpty || live.item.urgency == .critical
+        guard !operable, !pointer.onPanel else { return }
+        delayed.schedule(.notificationAutoClose, after: notificationAutoCloseDelay) { [weak self] in
+            guard let self,
+                  self.displayState.openReason == .notification,
+                  self.presentation != nil else { return }
+            self.advance()
+        }
+    }
+
+    /// The unattended info card steps aside for a fresh arrival (§3.1 计时重
+    /// 启动): the displaced message rejoins the queue with displaced-critical
+    /// fairness, and the newcomer's countdown starts now.
+    private func displaceCard(with incoming: NotchNotification) {
+        if let previous = presentation, previous.item.id != incoming.id {
+            messages.requeueDisplaced(previous.item)
+        }
+        messages.removeQueued(id: incoming.id)
+        beginPresenting(incoming, as: .opened(reason: .notification))
+    }
+
+    /// Clicking a pending row: the user asked for that message now, which is
+    /// reading intent, not management — the one tap the read-only list keeps.
+    /// The clicked message becomes the live card in place (the open reason
+    /// survives the swap, §2.3), and the card it replaces rejoins the queue
+    /// with the same displaced fairness a fresh push triggers.
+    func promoteQueued(id: UUID) {
+        guard displayState.isOpened, let item = messages.removeQueued(id: id) else { return }
+        if let previous = presentation, previous.item.id != item.id {
+            messages.requeueDisplaced(previous.item)
+        }
+        beginPresenting(item, as: displayState)
+    }
+
     private func hoverDelay() -> Duration {
         Duration.milliseconds(Int(AppSettings.shared.hoverDelayMilliseconds))
     }
 
     /// Clicking the compact island opens the panel immediately, skipping the hover delay.
     func islandClicked() {
-        guard !displaySuppressed, hasContent, !displayState.isExpanded else { return }
+        guard !displaySuppressed, hasContent, !displayState.isOpened else { return }
         IslandHaptics.actionConfirmed()
         delayed.cancel(.hoverExpand)
         reduce(.islandClicked)
-        displayState = .manualExpanded
-        presentExpanded(marksRead: true)
+        displayState = .opened(reason: .click)
+        markVisibleRowsRead()
+        presentExpanded()
+        applyDismissRules()
         reconcileDwell()
     }
 
@@ -617,7 +626,7 @@ final class NotificationManager {
     func clickedOutsideIsland() {
         // Panel-hovering keeps clicks on the panel itself - its buttons sit
         // outside the compact activation frame - from counting as "outside".
-        guard displayState.isExpanded, !pointer.onPanel, AppSettings.shared.autoCollapseOnLeave else { return }
+        guard displayState.isOpened, !pointer.onPanel, AppSettings.shared.autoCollapseOnLeave else { return }
         dismissPanel()
     }
 
@@ -632,7 +641,7 @@ final class NotificationManager {
 
     func togglePanel() {
         guard !displaySuppressed else { return }
-        if displayState.isExpanded {
+        if displayState.isOpened {
             dismissPanel()
         } else {
             openMessageCenter()
@@ -645,8 +654,10 @@ final class NotificationManager {
         guard !displaySuppressed, hasContent else { return }
         delayed.cancel(.hoverExpand)
         delayed.cancel(.manualCollapse)
-        displayState = .manualExpanded
-        presentExpanded(marksRead: true)
+        displayState = .opened(reason: .click)
+        markVisibleRowsRead()
+        presentExpanded()
+        applyDismissRules()
         reconcileDwell()
     }
 
@@ -660,12 +671,13 @@ final class NotificationManager {
             Task { await presenter?.hide() }
         } else if let current, current.urgency == .critical {
             // A critical that arrived while suppressed must return to blocking, not a compact pill.
-            displayState = .blockingExpanded
-            presentExpanded(marksRead: false)
+            displayState = .opened(reason: .notification)
+            presentExpanded()
         } else if hasContent {
-            displayState = .compact
+            displayState = .closed
             Task { await presenter?.compact() }
         }
+        applyDismissRules()
         reconcileDwell()
     }
 
@@ -691,8 +703,9 @@ final class NotificationManager {
         var demoted = live
         demoted.remaining = Self.criticalSnoozeBudget
         presentation = demoted
-        displayState = .compact
+        displayState = .closed
         presentCompact()
+        applyDismissRules()
         reconcileDwell()
     }
 
@@ -707,13 +720,16 @@ final class NotificationManager {
         delayed.schedule(.criticalAging, after: Self.criticalIdleDemotion) { [weak self] in
             guard let self else { return }
             guard let live = self.presentation, live.item.urgency == .critical, live.remaining == nil else { return }
-            // Untouched for the whole window (no hover, no manual panel): demote.
-            guard self.pointer.completelyGone, self.displayState != .manualExpanded else { return }
+            // Untouched for the whole window (no hover, no deliberate open):
+            // demote.
+            guard self.pointer.completelyGone,
+                  self.displayState.openReason != .click,
+                  self.displayState.openReason != .hover else { return }
             var demoted = live
             demoted.remaining = Self.criticalSnoozeBudget
             self.presentation = demoted
-            if self.displayState == .blockingExpanded {
-                self.displayState = .compact
+            if case .opened(reason: .notification) = self.displayState {
+                self.displayState = .closed
                 self.presentCompact()
             }
             self.reconcileDwell()
@@ -740,15 +756,24 @@ final class NotificationManager {
         delayed.schedule(.actionHoldAging, after: actionHoldIdleLimit) { [weak self] in
             guard let self else { return }
             guard self.dwellHeldForActions, let live = self.presentation else { return }
-            // Only an untouched panel may be released; hover or a manual
+            // Only an untouched panel may be released; hover or a deliberate
             // opening means the actions are being looked at.
-            guard self.pointer.completelyGone, self.displayState != .manualExpanded else { return }
+            guard self.pointer.completelyGone,
+                  self.displayState.openReason != .click,
+                  self.displayState.openReason != .hover else { return }
             var released = live
             released.actionsHoldReleased = true
             // The message's own budget, recomputed like `beginPresenting`'s
             // non-peek branch (a peek message never expands, so it never held).
             released.remaining = .seconds(max(0.1, live.item.timeout ?? AppSettings.shared.messageDwellSeconds))
             self.presentation = released
+            // v3 (§3.1): the dwell only runs on the pill layer, so the aged-out
+            // card steps down to the pill for its released budget to run -
+            // the same shape as the critical demotion above.
+            if case .opened(reason: .notification) = self.displayState {
+                self.displayState = .closed
+                self.presentCompact()
+            }
             self.reconcileDwell()
         }
     }
@@ -775,13 +800,15 @@ final class NotificationManager {
     private func settleDisplay(liveMessage: Bool) {
         delayed.cancel(.hoverExpand)
         delayed.cancel(.manualCollapse)
-        let shouldHide = settlesHidden(liveMessage: liveMessage)
-        displayState = shouldHide ? .hidden : .compact
+        displayState = .closed
+        panelEntered = false          // §3.1: the latch resets with the panel
+        visibleRowIDs = []            // §4: nothing is on screen anymore
+        applyDismissRules()
         // Once the panel is gone there is nothing left to hover, so the dwell
         // resumes even if the pointer is still sitting where the panel was.
         reconcileDwell()
         Task {
-            if shouldHide {
+            if settlesHidden(liveMessage: liveMessage) {
                 await presenter?.hide()
             } else {
                 await presenter?.compact()
@@ -796,7 +823,10 @@ final class NotificationManager {
     /// panel that pushed itself open on an untouched screen is not something
     /// `Esc` should reach into - firing from the global monitor would otherwise
     /// collapse it on every `Esc` press in vim and friends.
-    var canDismissWithEscape: Bool { pointerNearPanel || displayState == .manualExpanded }
+    var canDismissWithEscape: Bool {
+        if case .opened(let reason) = displayState, reason != .notification { return true }
+        return pointerNearPanel
+    }
 
     /// Where an action's click goes: the handler records ack receipts or opens
     /// the URL; the manager's only stake is that acting on the live message
@@ -828,6 +858,10 @@ final class NotificationManager {
         history.isEmpty || (!liveMessage && AppSettings.shared.hideWhenIdle)
     }
 
+    /// §2.3: `.closed` covers both the pill and a fully hidden window; the
+    /// presenter asks this when re-applying state after screen changes.
+    var closedMeansHidden: Bool { settlesHidden(liveMessage: current != nil) }
+
     /// Promotes the next pending item. The method remains synchronous for deterministic tests.
     func advance() {
         stopDwell()
@@ -839,7 +873,7 @@ final class NotificationManager {
         }
 
         promoteNext(
-            autoExpand: displayState == .hidden || displayState == .compact,
+            autoExpand: !displayState.isOpened,
             // No auto-expand here means the panel is already open and the
             // content swaps in place; the presenter is left alone.
             parkWhenNotExpanding: true
@@ -848,23 +882,12 @@ final class NotificationManager {
 
     /// The only way a message becomes live. It publishes the message and its dwell
     /// budget as one value, then hands the countdown to `reconcileDwell`.
-    /// How long a peek message holds the pill when the sender gave no timeout.
-    /// Long enough to read a title, short enough that a chatty sender cannot
-    /// turn the notch into a ticker.
-    static let peekDwellSeconds: TimeInterval = 3
-
-    private func beginPresenting(_ item: NotchNotification, as state: IslandDisplayState) {
-        let defaultDwell = item.displayPeek == true
-            ? Self.peekDwellSeconds
-            : AppSettings.shared.messageDwellSeconds
+    private func beginPresenting(_ item: NotchNotification, as state: NotchDisplayState) {
+        // §6/§7: peek degrades to "no auto card, Tier 0 only" - the pill dwell
+        // is the sender timeout ?? the app's dwell setting; no special budget.
         let budget: Duration? = item.urgency == .critical
             ? nil
-            : .seconds(max(0.1, item.timeout ?? defaultDwell))
-        // Read state is about what the user could have seen, not what the state
-        // machine surfaced. A message rotating into an already-open panel is
-        // visible immediately; anywhere else it stays unread until the panel is
-        // actually engaged (see `presentExpanded`).
-        let panelWasOpen = displayState.isExpanded
+            : .seconds(max(0.1, item.timeout ?? AppSettings.shared.messageDwellSeconds))
         stopDwell()
         stopAgingTimers()
         presentation = Presentation(item: item, remaining: budget)
@@ -873,9 +896,7 @@ final class NotificationManager {
             armCriticalIdleDemotion()
         }
         armActionHoldAging()
-        if panelWasOpen {
-            markRead(item.id)
-        }
+        applyDismissRules()
         reconcileDwell()
     }
 
@@ -896,29 +917,29 @@ final class NotificationManager {
         // overwrite it to `.compact` a moment later - two `displayState`
         // writes and two didSet settles for a state that never reached the
         // screen.
-        //  - autoExpand: the message's natural state. The peek tier spends its
-        //    (short) dwell in the compact pill - title visible, panel
-        //    untouched, unread still accruing.
-        //  - parked: rotation into an already-open panel (the content swaps in
-        //    place) or a suppressed display (`promoteCritical` parks the same
-        //    way) - the presenter is left alone either way.
-        //  - otherwise: `push` with the setting off - the message still
-        //    surfaces, as a pill.
-        let landing: IslandDisplayState
-        if autoExpand {
-            landing = next.urgency == .critical
-                ? .blockingExpanded
-                : (next.displayPeek == true ? .compact : .transientExpanded)
+        let landing: NotchDisplayState
+        if displayState.isOpened, !displaySuppressed {
+            // Rotation into an already-open panel: content swaps in place and the
+            // reason it opened survives (§2.3 invariant).
+            landing = displayState
+        } else if autoExpand {
+            // The peek tier spends its dwell in the compact pill - title
+            // visible, panel untouched, unread still accruing.
+            landing = next.displayPeek == true ? .closed : .opened(reason: .notification)
         } else if parkWhenNotExpanding {
-            landing = next.urgency == .critical ? .blockingExpanded : .transientExpanded
+            // Suppressed display: park until the screen comes back (v2
+            // semantics), or rotation into an open panel above.
+            landing = .opened(reason: .notification)
         } else {
-            landing = .compact
+            // `push` with the setting off - the message still surfaces, as a
+            // pill.
+            landing = .closed
         }
         beginPresenting(next, as: landing)
-        if landing == .compact {
+        if case .closed = landing {
             presentCompact()
         } else if autoExpand {
-            presentExpanded(marksRead: false)
+            presentExpanded()
         }
         return next
     }
@@ -932,28 +953,19 @@ final class NotificationManager {
             messages.requeueDisplaced(previous)
         }
         messages.removeQueued(id: notification.id)
-        beginPresenting(notification, as: .blockingExpanded)
+        beginPresenting(notification, as: .opened(reason: .notification))
         if !displaySuppressed {
-            presentExpanded(marksRead: false)
+            presentExpanded()
         }
     }
 
     /// Presents the expanded panel.
     ///
-    /// Reading is acknowledged, not assumed. An explicit open (`marksRead:
-    /// true` - a click or the shortcut) unlocks read marking immediately: the
-    /// live message is marked at once, and history rows follow as the list
-    /// reports them visible. Automatic openings stay locked until the pointer
-    /// has dwelled a full settle delay (see `armReadUnlock`).
-    ///
     /// Suppression is re-derived first: the pointer may not have moved since a
     /// fullscreen app took the screen, and without this check a push would
     /// expand straight over it. The probe itself is cached in the presenter,
     /// so the cost is one screen lookup, not a window-list walk.
-    private func presentExpanded(marksRead: Bool) {
-        if marksRead {
-            unlockReadMarking()
-        }
+    private func presentExpanded() {
         Task {
             if await presenter?.probeDisplaySuppressed() == true {
                 setDisplaySuppressed(true)
@@ -984,12 +996,11 @@ final class NotificationManager {
     // five call sites; one of them silently no-opped behind an `isHovering` guard and
     // left the message on screen forever, which also starved every later push.
 
-    /// Whether the countdown should be paused. Hovering only counts while there is
-    /// still a panel to hover — a stale panel-hover after the panel collapses must
-    /// not strand the message.
+    /// Whether the countdown should be paused. An open panel holds the dwell
+    /// for everyone (§3.1: dismissal rules own the exit, not the pill timer) —
+    /// the countdown only runs on the pill layer, after the panel is gone.
     private var dwellHeldOpen: Bool {
-        (pointer.onPanel && displayState.isExpanded) || displaySuppressed || displayState == .manualExpanded
-            || dwellHeldForActions
+        displayState.isOpened || displaySuppressed || dwellHeldForActions
     }
 
     /// A live message with unanswered action buttons never retires itself: the
@@ -1058,7 +1069,7 @@ final class NotificationManager {
         // Unread messages are the reason to surface anything at launch; if
         // everything was already read, stay out of the way.
         if unreadCount > 0, !displaySuppressed {
-            displayState = .compact
+            displayState = .closed
             presentCompact()
         }
     }
@@ -1071,147 +1082,41 @@ final class NotificationManager {
         }
     }
 
-    // MARK: - Read state
+    // MARK: - Read state (§4)
     //
-    // "Read" is a claim about attention, not about pixels. A panel that pushed
-    // itself open on a screen nobody was watching must not clear the unread
-    // count, so the trigger is time spent with the pointer at the panel - not
-    // merely time the panel existed.
-    //
-    // Presence is latched on its edges (pointer arrived / pointer left) and only
-    // evaluated when the panel closes or a new message rotates in. There is no
-    // timer sampling a value that can change between two samples.
+    // One latch answers "has this open period been attended": it opened by
+    // click, or the pointer entered the panel. Everything visible when the
+    // answer turns yes is read at once; rows arriving later read on their
+    // onAppear report. Nothing else marks anything.
 
-    /// How long the pointer must have been at the panel before an automatic
-    /// opening counts as "seen". Long enough that a brush past the notch never
-    /// reaches it, short enough that actually reading the header does.
-    static let readSettleDelay: Duration = .seconds(1)
+    /// §4: this open period may mark rows read.
+    var readEligible: Bool { displayState.openReason == .click || panelEntered }
 
-    /// Latches the start of a stay, ignoring repeats: presence is a level, and
-    /// only the transition into it matters.
-    ///
-    /// Presence counts even before the panel opens: the pointer sitting in the
-    /// notch's activation zone is exactly the "user is looking" signal, whether
-    /// the panel that follows was opened by hover, by a push arriving while the
-    /// pointer was already there, or by anything else.
-    private func notePointerPresence() {
-        guard presenceStartedAt == nil else { return }
-        presenceStartedAt = clock.now
-        armReadUnlock()
-    }
-
-    /// Arms the dwell gate of the read pipeline. Re-armed on every presence
-    /// edge because banking moves the finish line closer on each return
-    /// visit: a pointer that already spent 0.8s here only needs 0.2s more.
-    private func armReadUnlock() {
-        guard !readUnlocked else { return }
-        let remaining = Self.readSettleDelay - lookedAtFor
-        guard remaining > .zero else {
-            unlockReadMarking()
-            return
-        }
-        delayed.schedule(.readUnlock, after: remaining) { [weak self] in
-            self?.unlockReadMarking()
-        }
-    }
-
-    // MARK: - Visibility-based read marking (P3)
-    //
-    // "Read" is a claim about attention on *that message*, not on the panel as
-    // a whole. Once an open period has earned reading (an explicit click, or a
-    // full settle delay of pointer presence), only rows actually on screen are
-    // marked — and rows scrolled in later must each spend their own second in
-    // the viewport. A 50-entry history no longer goes all-read because the
-    // panel was open for a second.
-
-    /// Whether this open period has earned reading yet.
-    @ObservationIgnored private var readUnlocked = false
     /// Row ids currently on screen, reported by the list (and by
     /// `presentation`'s didSet for the live message). Not observed: it feeds
-    /// timers, not UI.
+    /// marking, not UI.
     @ObservationIgnored private var visibleRowIDs: Set<UUID> = []
-    /// Rows with a pending one-second visibility timer, so leaving the
-    /// viewport can cancel precisely and settling can cancel all.
-    @ObservationIgnored private var pendingRowReads: Set<UUID> = []
 
-    /// The open period has earned reading: mark everything on screen right
-    /// now (the live message plus the rows visible through the attended
-    /// dwell), then let `noteRowVisible` give later arrivals their own budget.
-    ///
-    /// The single-card mode (an automatic opening renders no history list) can
-    /// only have shown the live message; the full list - and its row marking -
-    /// belongs to deliberate openings alone.
-    private func unlockReadMarking() {
-        guard !readUnlocked else { return }
-        readUnlocked = true
-        if let current { markRead(current.id) }
-        guard panelOpenedManually else { return }
-        for id in visibleRowIDs where !messages.readIDs.contains(id) {
-            markRead(id)
-        }
+    /// Everything on screen at the moment reading is earned: the live message
+    /// plus the rows the list reported visible.
+    private func markVisibleRowsRead() {
+        if let current, !messages.readIDs.contains(current.id) { markRead(current.id) }
+        for id in visibleRowIDs where !messages.readIDs.contains(id) { markRead(id) }
     }
 
-    /// A row entered the viewport. Before the unlock this is just tracked;
-    /// after it, one full second of continuous visibility earns the read mark.
     func noteRowVisible(_ id: UUID) {
         visibleRowIDs.insert(id)
-        guard readUnlocked,
-              !messages.readIDs.contains(id),
-              !pendingRowReads.contains(id) else { return }
-        pendingRowReads.insert(id)
-        delayed.schedule(.rowRead(id), after: Self.readSettleDelay) { [weak self] in
-            guard let self else { return }
-            self.pendingRowReads.remove(id)
-            guard self.readUnlocked, self.visibleRowIDs.contains(id) else { return }
-            self.markRead(id)
-        }
+        guard readEligible, !messages.readIDs.contains(id) else { return }
+        markRead(id)
     }
 
-    /// A row left the viewport; a pending mark for it dies here.
-    func noteRowHidden(_ id: UUID) {
-        visibleRowIDs.remove(id)
-        if pendingRowReads.remove(id) != nil {
-            delayed.cancel(.rowRead(id))
-        }
-    }
+    func noteRowHidden(_ id: UUID) { visibleRowIDs.remove(id) }
 
     /// Cancels the aging timers whenever the presentation is retired or replaced;
     /// `beginPresenting` re-arms whichever applies to the incoming message.
     private func stopAgingTimers() {
         delayed.cancel(.criticalAging)
         delayed.cancel(.actionHoldAging)
-    }
-
-    /// Moves the current stay into the bank. Called on every edge that can end
-    /// one, so the total survives a pointer that leaves and comes back.
-    private func bankPointerPresence() {
-        guard let start = presenceStartedAt else { return }
-        presenceBanked += start.duration(to: clock.now)
-        presenceStartedAt = nil
-        delayed.cancel(.readUnlock)
-    }
-
-    private var lookedAtFor: Duration {
-        presenceBanked + (presenceStartedAt.map { $0.duration(to: clock.now) } ?? .zero)
-    }
-
-    private var lookedAtLongEnough: Bool { lookedAtFor >= Self.readSettleDelay }
-
-    private func resetPresence() {
-        presenceStartedAt = nil
-        presenceBanked = .zero
-    }
-
-    /// Settles the read state for the open period that just ended: pending
-    /// per-row timers die with the panel, and the next opening must earn its
-    /// own unlock. Marking itself already happened continuously during the
-    /// stay, so there is nothing to flush here.
-    private func settleReadState() {
-        for id in pendingRowReads { delayed.cancel(.rowRead(id)) }
-        pendingRowReads = []
-        readUnlocked = false
-        visibleRowIDs = []
-        resetPresence()
     }
 
     private func markRead(_ id: UUID) {
@@ -1363,7 +1268,7 @@ final class NotificationManager {
         if liveMessageRemoved {
             advance()
         } else if !hasContent {
-            displayState = .hidden
+            displayState = .closed
             Task { await presenter?.hide() }
         }
         schedulePersist()

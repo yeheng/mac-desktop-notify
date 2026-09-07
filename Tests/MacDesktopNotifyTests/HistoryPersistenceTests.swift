@@ -91,7 +91,7 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.restoreHistory(using: store)
 
-        XCTAssertEqual(m.displayState, .compact, "unread history should surface at launch")
+        XCTAssertEqual(m.displayState, .closed, "unread history should surface at launch")
         XCTAssertEqual(m.compactStatus, "2 条未读")
     }
 
@@ -103,7 +103,7 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.restoreHistory(using: store)
 
-        XCTAssertEqual(m.displayState, .hidden, "nothing unread means nothing to show")
+        XCTAssertEqual(m.displayState, .closed, "nothing unread means nothing to show")
     }
 
     func testPushPersistsHistory() async throws {
