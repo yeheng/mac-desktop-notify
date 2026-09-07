@@ -20,6 +20,19 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+
+      # Xcode 16.4 (Swift 6.1.2) 的编译器在 SILGen 阶段崩溃 (signal 11)，
+      # 代码按 Swift 6.3 语义编写，需切换到镜像内最新的 Xcode 26.x。
+      # DEVELOPER_DIR 无需 sudo，且自动跟随镜像更新选最新版本。
+      - name: Select newest Xcode
+        run: |
+          NEWEST=$(ls -d /Applications/Xcode*.app | grep -E 'Xcode_[0-9]' | sort -V | tail -1)
+          if [[ -n "$NEWEST" ]]; then
+            echo "DEVELOPER_DIR=${NEWEST}/Contents/Developer" >> "$GITHUB_ENV"
+            echo "Selected ${NEWEST}"
+          fi
+          swift --version
+
       - name: Run tests
         run: swift test
 
@@ -34,6 +47,15 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          NEWEST=$(ls -d /Applications/Xcode*.app | grep -E 'Xcode_[0-9]' | sort -V | tail -1)
+          if [[ -n "$NEWEST" ]]; then
+            echo "DEVELOPER_DIR=${NEWEST}/Contents/Developer" >> "$GITHUB_ENV"
+            echo "Selected ${NEWEST}"
+          fi
+          swift --version
 
       # tag v1.2.3 → bundle 版本 1.2.3（build_app.sh 读取 VERSION 环境变量）
       - name: Derive version from tag

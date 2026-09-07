@@ -115,6 +115,15 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .toolbar(removing: .sidebarToggle)
+            // Tahoe's System Settings title bar is ~52pt tall (traffic lights
+            // centered at ~28pt), which is what parks the sidebar search field
+            // well below it. A default-height toolbar hugs the search field to
+            // the top; a zero-width tall item stretches the bar to match.
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Color.clear.frame(width: 0, height: 44)
+                }
+            }
             .navigationSplitViewColumnWidth(min: 470, ideal: 620, max: .infinity)
         }
         .frame(minWidth: 800, minHeight: 520)
@@ -127,10 +136,11 @@ struct SettingsView: View {
 /// bold title and gray subtitle centered above the grouped Form - while the
 /// card look itself is the form style's job, not something we draw by hand.
 /// Width is capped so the cards read like System Settings instead of
-/// stretching edge to edge. The section title also lives in the toolbar
-/// (navigationTitle). The header stays *inside* the form's first row rather
-/// than as a fixed block above the scroll view: a custom fixed header mislaid
-/// the whole split view whenever the subtitle wrapped to a second line.
+/// stretching edge to edge. The header stays *inside* the form's first row
+/// rather than as a fixed block above the scroll view: a custom fixed header
+/// mislaid the whole split view whenever the subtitle wrapped to a second
+/// line. Tahoe's toolbar shows no pane title - the header carries it - so
+/// there is deliberately no navigationTitle here.
 private struct SettingsPane<Content: View>: View {
     let section: SettingsSection
     let content: Content
@@ -167,7 +177,6 @@ private struct SettingsPane<Content: View>: View {
             .frame(maxWidth: 640)
             Spacer(minLength: 0)
         }
-        .navigationTitle(section.title)
     }
 }
 
