@@ -17,6 +17,7 @@
 - 🔕 **勿扰感知** — 锁屏/屏保/睡眠三档静默（照常显示 / 静默存入历史 / 仅紧急穿透），消息永不丢失
 - 🖥️ **多显示器** — 刘海跟随指针所在的屏幕，拔插显示器自动同步；可选所有屏幕镜像摘要，无刘海屏降级为顶部迷你摘要条（可关）
 - ✅ **可操作通知** — 最多 3 个操作按钮，点击打开回调 URL，轻松实现审批流
+- 📜 **JSC 脚本** — 推送带 `script=` 由 JS 生成内容、操作按钮绑定脚本、`POST /v1/exec` 手动执行；受限 `fetch` + 通知 API，15s 看门狗
 - 📝 **Markdown 渲染** — 通知正文支持 Markdown（行内格式 + 代码块），解析结果带缓存
 - ⏱️ **智能收起** — 信息卡 10 秒自动收起（指针进入取消计时，看过即收）；可操作卡与 Critical 常驻不自动收起，闲置 5 分钟才恢复倒计时；指针正停在卡上时新消息排队不顶卡
 - ↩️ **删除可撤销** — 历史窗口中单条/整组删除 4 秒内可撤销，连续删除自动合并计数；仅「清空全部」仍需确认
@@ -397,6 +398,45 @@ curl http://127.0.0.1:4770/v1/status
 
 ---
 
+## 脚本
+
+把 `.js` 文件放进 `~/Library/Application Support/MacDesktopNotify/scripts/`，
+文件名（去扩展名）即引用名（`[A-Za-z0-9_-]`，最长 64）。脚本以
+JavaScriptCore 执行（进程内，权限等同你自己写的 shell 脚本——不要放来路不明的脚本）。
+
+**契约**：脚本体是一个收到 `input` 的函数体，返回值（对象）按触发点解释：
+
+| 触发 | 怎么触发 | input | 返回值 |
+|------|---------|-------|--------|
+| 推送时生成 | `push` 带 `script=name`（URL / HTTP / WS 通用；`title` 可省） | 推送字段 | 对象字段覆盖消息（title/body/urgency/timeout/group/actions） |
+| 操作按钮 | action 用 `{"label":"批准","script":"approve","input":1}` 替代 `url` | `{label, comment?, notification}` | 任意（一般用 `notify.push` 报结果） |
+| 手动执行 | `POST /v1/exec`，body `{"script":"name","input":{...},"timeoutMs":1000}` | 指定对象 | 原样返回：`{"ok":true,"result":…,"logs":[…]}` |
+
+**全局 API**：`fetch(url, {method,headers,body})` 同步返回 `{status,ok,body}`（仅
+http/https，超时 10s）；`notify.push({...})`（**拒绝 script 字段**，防递归）、
+`notify.clear([group])`；`console.log` 进执行日志（exec 响应带回）。
+
+**超时**：推送回填/按钮钩子 15s、exec 默认 10s。超时后放弃等待；正在跑的线程会
+泄漏到进程结束（引擎无法安全中断）——死循环脚本请自己修。
+
+**示例**（`scripts/ci-status.js`，配合 `notch-notify://push?script=ci-status`）：
+
+```js
+const r = fetch("https://ci.example.com/api/runs/42", { method: "GET" })
+const run = JSON.parse(r.body)
+console.log("run state:", run.state)
+return {
+  title: "CI #" + run.id,
+  body: run.state === "failed" ? "❌ " + run.failedSteps.join(", ") : "✅ 全绿",
+  urgency: run.state === "failed" ? "critical" : "low"
+}
+```
+
+消息先以占位标题「⏳ 脚本生成中」立即落地，脚本完成后原地更新；失败则正文写入
+`⚠️ 脚本失败：<原因>` 与日志尾 3 行。
+
+---
+
 ## 数据落盘
 
 | 数据 | 位置 | 说明 |
@@ -506,6 +546,8 @@ Sources/MacDesktopNotify/
 ├── NotificationActionHandler.swift      # 操作按钮点击处理（URL 回调 / ack 回执与批注输入 / 稍后处理降级）
 ├── NotificationHistoryStore.swift       # 历史持久化（原子写 + schemaVersion）
 ├── NotificationAckStore.swift          # 动作回执（token 校验 + 落盘 + 过期清理）
+├── ScriptStore.swift                   # 脚本目录解析与名字校验（防路径穿越）、按名读源码
+├── ScriptRunner.swift                  # ScriptValue/ScriptEngine（JSC 线程+VM+看门狗）与编排 facade（并发闸、回填、钩子）
 ├── PresenceMonitor.swift                # 锁屏/屏保/睡眠感知（AwaySource 集合）
 ├── NotchPresenter.swift                 # DynamicNotchKit 桥接、全屏探测缓存、指针监控
 ├── PerScreenInstances.swift            # 每显示器一个 notch 实例的簿记
