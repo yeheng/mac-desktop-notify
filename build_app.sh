@@ -3,7 +3,8 @@ set -euo pipefail
 
 APP_NAME="MacDesktopNotify"
 BUNDLE_ID="com.yeheng.macdesktopnotify"
-VERSION="1.1.0"
+# CI 从 tag 注入版本（v1.2.3 → 1.2.3）；本地构建沿用默认值。
+VERSION="${VERSION:-1.1.0}"
 MIN_MACOS_VERSION="14.0"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

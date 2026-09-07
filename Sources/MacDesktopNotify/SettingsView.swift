@@ -57,15 +57,27 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @Bindable private var settings: AppSettings
     @State private var selection: SettingsSection? = .general
+    @State private var searchText = ""
 
     init(settings: AppSettings = .shared) {
         self.settings = settings
     }
 
+    /// Tahoe's System Settings filters its sidebar by name; ours matches on
+    /// the subtitle too, since that is where the searchable vocabulary lives.
+    private var visibleSections: [SettingsSection] {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return SettingsSection.allCases }
+        return SettingsSection.allCases.filter {
+            $0.title.localizedCaseInsensitiveContains(query)
+                || $0.subtitle.localizedCaseInsensitiveContains(query)
+        }
+    }
+
     var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                ForEach(SettingsSection.allCases) { section in
+                ForEach(visibleSections) { section in
                     Label {
                         Text(section.title)
                     } icon: {
@@ -75,7 +87,17 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 205, max: 240)
+            .searchable(text: $searchText, placement: .sidebar, prompt: "搜索")
+            // System Settings has no sidebar toggle; the sidebar always shows.
+            .toolbar(removing: .sidebarToggle)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 215, max: 260)
+            .onChange(of: searchText) { _, _ in
+                // Keep the detail pane attached to a visible row: when the
+                // filter hides the current selection, jump to the first match.
+                let visible = visibleSections
+                if let selection, visible.contains(selection) { return }
+                self.selection = visible.first
+            }
         } detail: {
             Group {
                 switch selection ?? .general {
@@ -92,6 +114,7 @@ struct SettingsView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .toolbar(removing: .sidebarToggle)
             .navigationSplitViewColumnWidth(min: 470, ideal: 620, max: .infinity)
         }
         .frame(minWidth: 800, minHeight: 520)
@@ -100,12 +123,14 @@ struct SettingsView: View {
 
 // MARK: - 页面骨架
 
-/// A pane is the section subtitle above a grouped Form - the card look is the
-/// form style's job, not something we draw by hand. Width is capped so the
-/// cards read like System Settings instead of stretching edge to edge. The
-/// section title lives in the toolbar (navigationTitle), again like System
-/// Settings; keeping a custom fixed header above the scroll view mislaid the
-/// whole split view whenever the subtitle wrapped to a second line.
+/// A pane opens with the Tahoe System Settings header - a large icon tile,
+/// bold title and gray subtitle centered above the grouped Form - while the
+/// card look itself is the form style's job, not something we draw by hand.
+/// Width is capped so the cards read like System Settings instead of
+/// stretching edge to edge. The section title also lives in the toolbar
+/// (navigationTitle). The header stays *inside* the form's first row rather
+/// than as a fixed block above the scroll view: a custom fixed header mislaid
+/// the whole split view whenever the subtitle wrapped to a second line.
 private struct SettingsPane<Content: View>: View {
     let section: SettingsSection
     let content: Content
@@ -119,11 +144,21 @@ private struct SettingsPane<Content: View>: View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
             Form {
-                Text(section.subtitle)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .listRowBackground(Color.clear)
+                Section {
+                } header: {
+                    VStack(spacing: 8) {
+                        SettingsIconTile(symbol: section.symbol, color: section.color, size: 56)
+                        Text(section.title)
+                            .font(.title2)
+                            .bold()
+                        Text(section.subtitle)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 4)
+                }
                 content
             }
             .formStyle(.grouped)
