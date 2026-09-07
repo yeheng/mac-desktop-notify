@@ -183,4 +183,58 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertEqual(decoded(bad)["ok"] as? Bool, false)
         XCTAssertEqual(decoded(bad)["error"] as? String, "未知操作")
     }
+
+    // MARK: - exec（§2.3）
+
+    private func makeExecRunner(dir: URL, source: String,
+                                fetchSleep: Double = 0) -> ScriptRunner {
+        try? source.write(to: dir.appendingPathComponent("double.js"), atomically: true, encoding: .utf8)
+        try? "fetch('https://x.test')".write(
+            to: dir.appendingPathComponent("slow.js"), atomically: true, encoding: .utf8)
+        let engine = ScriptEngine(
+            fetch: { _, _ in
+                if fetchSleep > 0 { Thread.sleep(forTimeInterval: fetchSleep) }
+                return FetchResponse(status: 200, ok: true, body: "{}")
+            },
+            notify: { _ in "displayed" })
+        return ScriptRunner(store: ScriptStore(directory: dir), engine: engine,
+                            target: NotificationManager())
+    }
+
+    private func makeExecDir(_ tag: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("exec-\(tag)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    func testExecRunsScriptAndReturnsResult() async throws {
+        let dir = try makeExecDir("a")
+        let runner = makeExecRunner(dir: dir, source: "console.log('ran'); return { doubled: input.n * 2 }")
+        let router = APIRouter(manager: manager, exec: { name, input, budget in
+            await runner.run(named: name, input: input, budget: budget)
+        })
+        let body = #"{"script":"double","input":{"n":21}}"#
+        let response = await router.handle(APIRequest(
+            method: "POST", path: "/v1/exec", query: [:], body: Data(body.utf8)))
+        XCTAssertEqual(response.status, 200)
+        let text = String(data: response.body, encoding: .utf8) ?? ""
+        XCTAssertTrue(text.contains("\"ok\":true"))
+        XCTAssertTrue(text.contains("42"))
+        XCTAssertTrue(text.contains("ran"))
+    }
+
+    func testExecTimeoutReturnsOkFalse() async throws {
+        let dir = try makeExecDir("b")
+        let runner = makeExecRunner(dir: dir, source: "", fetchSleep: 1.0)
+        let router = APIRouter(manager: manager, exec: { name, input, budget in
+            await runner.run(named: name, input: input, budget: budget)
+        })
+        let body = #"{"script":"slow","timeoutMs":100}"#
+        let response = await router.handle(APIRequest(
+            method: "POST", path: "/v1/exec", query: [:], body: Data(body.utf8)))
+        let text = String(data: response.body, encoding: .utf8) ?? ""
+        XCTAssertTrue(text.contains("\"ok\":false"))
+        XCTAssertTrue(text.contains("timeout"))
+    }
 }

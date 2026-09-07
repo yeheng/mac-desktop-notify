@@ -18,15 +18,23 @@ struct APIResponse: Sendable {
 /// Routes API requests to the NotificationManager. Pure: no sockets, no
 /// AppKit — directly unit-testable, and shared by both transports.
 final class APIRouter: Sendable {
+    typealias Exec = @Sendable (String, ScriptValue, Duration) async -> ScriptOutcome
+
     private let manager: NotificationManager
     private let listening: @MainActor @Sendable () -> (unixSocket: Bool, http: Bool)
+    /// exec 端点的执行器；默认绑 shared runner，测试注入本地脚本目录。
+    private let exec: Exec
 
     init(
         manager: NotificationManager,
-        listening: @escaping @MainActor @Sendable () -> (unixSocket: Bool, http: Bool) = { (unixSocket: true, http: false) }
+        listening: @escaping @MainActor @Sendable () -> (unixSocket: Bool, http: Bool) = { (unixSocket: true, http: false) },
+        exec: @escaping Exec = { name, input, budget in
+            await ScriptRunner.shared.run(named: name, input: input, budget: budget)
+        }
     ) {
         self.manager = manager
         self.listening = listening
+        self.exec = exec
     }
 
     func handle(_ request: APIRequest) async -> APIResponse {
@@ -35,11 +43,13 @@ final class APIRouter: Sendable {
             return await push(request)
         case ("POST", "/v1/clear"):
             return await clear(request)
+        case ("POST", "/v1/exec"):
+            return await execScript(request)
         case ("GET", "/v1/history"):
             return await history(request)
         case ("GET", "/v1/status"):
             return await status()
-        case (_, "/v1/push"), (_, "/v1/clear"), (_, "/v1/history"), (_, "/v1/status"):
+        case (_, "/v1/push"), (_, "/v1/clear"), (_, "/v1/exec"), (_, "/v1/history"), (_, "/v1/status"):
             return .error(status: 405, reason: "方法不允许", field: nil)
         default:
             return .error(status: 404, reason: "未知路径", field: nil)
@@ -117,6 +127,34 @@ final class APIRouter: Sendable {
         case .failure(let rejection):
             return .error(status: 400, reason: rejection.description, field: "title")
         }
+    }
+
+    private struct ExecDTO: Decodable {
+        let script: String
+        let input: ScriptValue?
+        let timeoutMs: Int?
+    }
+
+    private struct ExecResponse: Encodable {
+        let ok: Bool
+        var result: ScriptValue?
+        var error: String?
+        let logs: [String]
+    }
+
+    /// 手动执行：同步等结果（默认 10s，clamp 100...10000），三态响应
+    /// ok/result/logs（设计 §2.3）。
+    private func execScript(_ request: APIRequest) async -> APIResponse {
+        guard let body = request.body,
+              let dto = try? JSONDecoder().decode(ExecDTO.self, from: body) else {
+            return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
+        }
+        let ms = min(max(dto.timeoutMs ?? 10_000, 100), 10_000)
+        let outcome = await exec(dto.script, dto.input ?? .object([:]), .milliseconds(ms))
+        if let error = outcome.error {
+            return .ok(ExecResponse(ok: false, result: nil, error: error, logs: outcome.logs))
+        }
+        return .ok(ExecResponse(ok: true, result: outcome.result, error: nil, logs: outcome.logs))
     }
     private struct ClearDTO: Decodable {
         let group: String?
@@ -206,6 +244,8 @@ final class APIRouter: Sendable {
         let group: String?
         let actions: [ActionDTO]?
         let script: String?
+        let input: ScriptValue?
+        let timeoutMs: Int?
     }
 
     private struct WSResultFrame: Encodable {
@@ -215,14 +255,19 @@ final class APIRouter: Sendable {
         let outcome: String?
         let id: String?
         let error: String?
+        var result: ScriptValue?
+        var logs: [String]?
 
-        init(ref: String?, ok: Bool, outcome: String? = nil, id: String? = nil, error: String? = nil) {
+        init(ref: String?, ok: Bool, outcome: String? = nil, id: String? = nil,
+             error: String? = nil, result: ScriptValue? = nil, logs: [String]? = nil) {
             self.type = "result"
             self.ref = ref
             self.ok = ok
             self.outcome = outcome
             self.id = id
             self.error = error
+            self.result = result
+            self.logs = logs
         }
     }
 
@@ -276,6 +321,16 @@ final class APIRouter: Sendable {
                 await MainActor.run { manager.clear() }
             }
             return encodeFrame(WSResultFrame(ref: dto.ref, ok: true))
+        case "exec":
+            guard let name = dto.script else {
+                return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: "缺少 script"))
+            }
+            let ms = min(max(dto.timeoutMs ?? 10_000, 100), 10_000)
+            let outcome = await exec(name, dto.input ?? .object([:]), .milliseconds(ms))
+            if let error = outcome.error {
+                return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: error, logs: outcome.logs))
+            }
+            return encodeFrame(WSResultFrame(ref: dto.ref, ok: true, result: outcome.result, logs: outcome.logs))
         default:
             return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: "未知操作"))
         }
