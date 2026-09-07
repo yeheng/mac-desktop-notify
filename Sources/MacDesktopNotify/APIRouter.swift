@@ -58,7 +58,7 @@ final class APIRouter: Sendable {
     }
     private struct ActionDTO: Decodable {
         let label: String
-        let url: String
+        let url: String?
     }
 
     private struct PushResponse: Codable {
@@ -77,7 +77,7 @@ final class APIRouter: Sendable {
             return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
         }
         let actions = (dto.actions ?? []).compactMap { dto -> NotificationAction? in
-            guard let url = URL(string: dto.url) else { return nil }
+            guard let urlString = dto.url, let url = URL(string: urlString) else { return nil }
             return NotificationAction(label: dto.label, url: url)
         }
         switch PushValidator.makeNotification(
@@ -215,7 +215,7 @@ final class APIRouter: Sendable {
             // (JSONSerialization), re-encoded, and decoded again (PushDTO):
             // four JSON passes per frame for a problem Decodable never had.
             let actions = (dto.actions ?? []).compactMap { dto -> NotificationAction? in
-                guard let url = URL(string: dto.url) else { return nil }
+                guard let urlString = dto.url, let url = URL(string: urlString) else { return nil }
                 return NotificationAction(label: dto.label, url: url)
             }
             switch PushValidator.makeNotification(

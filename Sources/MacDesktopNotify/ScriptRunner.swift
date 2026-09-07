@@ -287,8 +287,7 @@ final class ScriptRunner {
     }
 
     /// 脚本的 input：消息的已解析字段（设计 §1 契约）。
-    /// 本任务用现有 NotificationAction 形态（label+url）；Task 5 把 url 改可选
-    /// 并加 script 字段后，同步把这里改成 if-let 写法（Task 5 有明确步骤）。
+    /// action 的 url/script 按存在与否携带，缺省键不出现。
     static func notificationInput(_ n: NotchNotification) -> ScriptValue {
         var fields: [String: ScriptValue] = [
             "id": .string(n.id.uuidString),
@@ -300,7 +299,10 @@ final class ScriptRunner {
         if let group = n.group { fields["group"] = .string(group) }
         if !n.actions.isEmpty {
             fields["actions"] = .array(n.actions.map { action in
-                .object(["label": .string(action.label), "url": .string(action.url.absoluteString)])
+                var a: [String: ScriptValue] = ["label": .string(action.label)]
+                if let url = action.url { a["url"] = .string(url.absoluteString) }
+                if let script = action.script { a["script"] = .string(script) }
+                return .object(a)
             })
         }
         return .object(fields)

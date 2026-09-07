@@ -42,7 +42,8 @@ final class NotificationActionHandler {
         for notification: NotchNotification,
         comment: String? = nil
     ) {
-        if let ack = URLNotificationParser.parseAck(action.url) {
+        guard let actionURL = action.url else { return }
+        if let ack = URLNotificationParser.parseAck(actionURL) {
             let trimmed = comment?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let receipt = NotificationAck(
                 token: ack.token,
@@ -64,9 +65,9 @@ final class NotificationActionHandler {
                 name: Self.ackDidRecord, object: nil, userInfo: ["ack": receipt]
             )
         } else if let urlOpener {
-            urlOpener(action.url)
+            urlOpener(actionURL)
         } else {
-            NSWorkspace.shared.open(action.url)
+            NSWorkspace.shared.open(actionURL)
         }
     }
 }

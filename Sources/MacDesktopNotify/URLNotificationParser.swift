@@ -7,7 +7,7 @@ enum URLNotificationParser {
 
     private struct ActionDTO: Decodable {
         let label: String
-        let url: String
+        let url: String?
     }
 
     /// Parses a `notch-notify://push?...` URL, reporting why it failed.
@@ -118,7 +118,8 @@ enum URLNotificationParser {
         let dtos = (try? JSONDecoder().decode([ActionDTO].self, from: data)) ?? []
         let actions = dtos.compactMap { dto -> NotificationAction? in
             let label = dto.label.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !label.isEmpty, let url = URL(string: dto.url), url.scheme != nil else {
+            guard !label.isEmpty, let urlString = dto.url,
+                  let url = URL(string: urlString), url.scheme != nil else {
                 return nil
             }
             return NotificationAction(

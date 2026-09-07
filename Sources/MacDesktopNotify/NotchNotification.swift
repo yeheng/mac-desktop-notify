@@ -16,28 +16,35 @@ enum UrgencyLevel: String, Sendable, Codable {
 }
 
 /// A tappable action shown at the bottom of a notification card.
-/// `url` is opened via NSWorkspace when the user clicks the action,
-/// which is how senders implement approve/deny style callbacks.
+/// Exactly one of `url` / `script` fires on click: `url` opens via
+/// NSWorkspace (approve/deny callbacks); `script` runs a user script
+/// from the scripts directory (设计 §2.2). XOR is enforced at ingress
+/// (`PushValidator.normalizedActions`), never here.
 struct NotificationAction: Sendable, Equatable, Codable {
     let label: String
-    let url: URL
+    let url: URL?
+    let script: String?
     /// The sender asked for a line of text to go with the receipt
-    /// (`notch-notify://ack?...&input=1`): the button then opens an inline
-    /// input before anything is written, so a refusal can carry a reason.
+    /// (`notch-notify://ack?...&input=1`, or `"input":1` on a script
+    /// action): the button then opens an inline input before anything
+    /// runs, so a refusal can carry a reason.
     var wantsComment: Bool
 
-    init(label: String, url: URL, wantsComment: Bool = false) {
+    init(label: String, url: URL? = nil, script: String? = nil, wantsComment: Bool = false) {
         self.label = label
         self.url = url
+        self.script = script
         self.wantsComment = wantsComment
     }
 
-    /// History written before `wantsComment` existed has no such key. Those
-    /// buttons behaved as "no comment asked for", which is what they decode to.
+    /// History written before `script` existed has only `url`; a script
+    /// action persisted before any url-optional migration carries only
+    /// `script`. Both decode; neither key is fatal.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         label = try container.decode(String.self, forKey: .label)
-        url = try container.decode(URL.self, forKey: .url)
+        url = try container.decodeIfPresent(URL.self, forKey: .url)
+        script = try container.decodeIfPresent(String.self, forKey: .script)
         wantsComment = try container.decodeIfPresent(Bool.self, forKey: .wantsComment) ?? false
     }
 }
@@ -68,6 +75,11 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
     /// Sender-defined grouping key. A push replaces any earlier message carrying
     /// the same non-empty group, which keeps repeat jobs from piling up.
     let group: String?
+    /// Name of a user script (scripts directory, no extension) that runs at
+    /// push time and backfills the fields (设计 §2.1). Ingress-validated
+    /// ([A-Za-z0-9_-]{1,64}) by PushValidator; optional so history written
+    /// before this field existed still decodes.
+    var script: String?
     /// Display-style override from the sender (`display=peek` / `display=expand`).
     /// `nil` defers to the app setting; `true` keeps the message in the compact
     /// pill (title only, short dwell) instead of opening the panel. Critical
@@ -84,6 +96,7 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         timestamp: Date = Date(),
         actions: [NotificationAction] = [],
         group: String? = nil,
+        script: String? = nil,
         displayPeek: Bool? = nil
     ) {
         self.id = id
@@ -94,6 +107,7 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         self.timestamp = timestamp
         self.actions = actions
         self.group = group
+        self.script = script
         self.displayPeek = displayPeek
     }
 

@@ -46,7 +46,7 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
         XCTAssertEqual(loaded.items[0].timeout, 9)
         XCTAssertEqual(loaded.items[0].groupingKey, "ci-build")
         XCTAssertEqual(loaded.items[0].actions.first?.label, "允许")
-        XCTAssertEqual(loaded.items[0].actions.first?.url.absoluteString, "http://localhost:8080/ok")
+        XCTAssertEqual(loaded.items[0].actions.first?.url?.absoluteString, "http://localhost:8080/ok")
         XCTAssertEqual(loaded.readIDs, [item.id])
     }
 

@@ -92,7 +92,7 @@ final class URLNotificationParserTests: XCTestCase {
         let n = parse("notch-notify://push?title=Hi&actions=\(encodedActions(json))")
         XCTAssertEqual(n?.actions.count, 2)
         XCTAssertEqual(n?.actions.first?.label, "允许")
-        XCTAssertEqual(n?.actions.first?.url.absoluteString, "http://localhost:8080/approve")
+        XCTAssertEqual(n?.actions.first?.url?.absoluteString, "http://localhost:8080/approve")
     }
 
     func testActionsDefaultToEmpty() {

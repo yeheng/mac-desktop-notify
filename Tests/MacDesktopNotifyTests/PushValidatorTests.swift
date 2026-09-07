@@ -79,4 +79,41 @@ final class PushValidatorTests: XCTestCase {
         ).get()
         XCTAssertEqual(mixed.actions.map(\.label), ["ok"], "scheme-less action dropped")
     }
+
+    // MARK: - Script push (§2.1)
+
+    func testScriptAllowsEmptyTitleAndGetsPlaceholder() {
+        let result = PushValidator.makeNotification(
+            title: "", body: nil, urgencyRaw: nil, timeout: nil, group: nil,
+            actions: [], script: "ci-status")
+        guard case .success(let n) = result else { return XCTFail("应放行") }
+        XCTAssertEqual(n.title, "⏳ 脚本生成中：ci-status")
+        XCTAssertEqual(n.script, "ci-status")
+    }
+
+    func testEmptyTitleWithoutScriptStillRejected() {
+        let result = PushValidator.makeNotification(
+            title: "", body: nil, urgencyRaw: nil, timeout: nil, group: nil, actions: [])
+        guard case .failure(let rejection) = result else { return XCTFail("应拒绝") }
+        XCTAssertEqual(rejection, .missingTitle)
+    }
+
+    func testInvalidScriptNameRejected() {
+        let result = PushValidator.makeNotification(
+            title: "t", body: nil, urgencyRaw: nil, timeout: nil, group: nil,
+            actions: [], script: "../etc/passwd")
+        guard case .failure(let rejection) = result else { return XCTFail("应拒绝") }
+        XCTAssertEqual(rejection, .invalidScriptName)
+    }
+
+    func testActionURLScriptMutualExclusion() {
+        let both = NotificationAction(label: "x", url: URL(string: "https://a.test")!, script: "s")
+        let neither = NotificationAction(label: "x", url: nil, script: nil)
+        let urlOnly = NotificationAction(label: "ok", url: URL(string: "https://a.test")!, script: nil)
+        let scriptOnly = NotificationAction(label: "ok", url: nil, script: "approve")
+        let out = PushValidator.normalizedActions([both, neither, urlOnly, scriptOnly])
+        XCTAssertEqual(out.map(\.label), ["ok", "ok"])   // both/neither 被丢弃
+        XCTAssertEqual(out[0].url?.host, "a.test")
+        XCTAssertEqual(out[1].script, "approve")
+    }
 }
