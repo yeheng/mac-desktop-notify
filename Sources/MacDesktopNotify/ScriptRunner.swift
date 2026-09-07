@@ -364,6 +364,33 @@ final class ScriptRunner {
         }
     }
 
+    // MARK: - Action hook (§2.2)
+
+    /// 点击 script 按钮后执行（卡已由 performAction 退役——与 URL 按钮同构）。
+    /// input = {label, comment?, notification:{字段}}（设计 §2.2）。
+    /// 失败推一条 normal 级诊断通知（决策 #4，沿「推送格式错误」先例）。
+    func runActionHook(action: NotificationAction, notification: NotchNotification,
+                       comment: String?) async {
+        guard let name = action.script else { return }
+        let input = ScriptValue.object([
+            "label": .string(action.label),
+            "comment": comment.map { ScriptValue.string($0) } ?? .null,
+            "notification": Self.notificationInput(notification),
+        ])
+        let outcome = await run(named: name, input: input, budget: Self.backfillBudget)
+        guard let error = outcome.error else { return }
+        var body = "⚠️ 脚本失败：\(error)\n\n触发：\(notification.title)"
+        if !outcome.logs.isEmpty {
+            body += "\n\n```\n" + outcome.logs.suffix(3).joined(separator: "\n") + "\n```"
+        }
+        targetManager.push(NotchNotification(
+            title: "脚本失败：\(name)",
+            bodyMarkdown: String(body.prefix(PushValidator.maxBodyLength)),
+            urgency: .normal,
+            timeout: 60
+        ))
+    }
+
     // MARK: 生产引擎装配
 
     /// fetch：脚本线程内同步 URLSession（semaphore），仅 http/https，

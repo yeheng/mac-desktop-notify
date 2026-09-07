@@ -42,6 +42,13 @@ final class NotificationActionHandler {
         for notification: NotchNotification,
         comment: String? = nil
     ) {
+        // §2.2：script 按钮与 URL 按钮同构——点击即退役（manager.performAction
+        // 负责），脚本后台执行；失败由 runActionHook 自己推诊断通知。
+        if action.script != nil {
+            let runner = ScriptRunner.shared
+            Task { await runner.runActionHook(action: action, notification: notification, comment: comment) }
+            return
+        }
         guard let actionURL = action.url else { return }
         if let ack = URLNotificationParser.parseAck(actionURL) {
             let trimmed = comment?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
