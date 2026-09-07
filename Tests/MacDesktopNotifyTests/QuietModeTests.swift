@@ -51,7 +51,6 @@ final class QuietModeTests: SettingsIsolatedTestCase {
             XCTAssertEqual(m.history.map(\.title), ["deploy"], "withheld must not mean dropped")
             XCTAssertEqual(m.unreadCount, 1, "the user must be told something arrived")
             XCTAssertNil(m.current, "nothing may be presented to a locked screen")
-            XCTAssertEqual(m.pendingCount, 0, "withheld messages must not pile into a backlog")
         }
     }
 

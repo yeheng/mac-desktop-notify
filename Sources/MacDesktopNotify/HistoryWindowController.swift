@@ -40,9 +40,11 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
     }
 }
 
-/// Where a history entry currently sits in the pipeline.
+/// Where a history entry currently sits, v4 style: on screen, not yet opened,
+/// or opened （历史）. Read state - not pipeline position - decides the badge,
+/// so a message only ever becomes 历史 when the user opened it.
 private enum HistoryRowStatus {
-    case current, queued, past
+    case current, unread, past
 }
 
 /// Flat newest-first list of everything in history. Unlike the panel there is
@@ -178,8 +180,7 @@ private struct HistoryView: View {
 
     private func status(of notification: NotchNotification) -> HistoryRowStatus {
         if manager.current?.id == notification.id { return .current }
-        if manager.queue.contains(where: { $0.id == notification.id }) { return .queued }
-        return .past
+        return manager.isRead(notification) ? .past : .unread
     }
 }
 
@@ -207,13 +208,6 @@ private struct HistoryWindowRow: View {
                 Text(notification.title)
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
-
-                if isUnread {
-                    Circle()
-                        .fill(Color.blue)
-                        .frame(width: 6, height: 6)
-                        .accessibilityLabel("未读")
-                }
 
                 statusBadge
 
@@ -246,7 +240,7 @@ private struct HistoryWindowRow: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.borderless)
-                    .help("删除这条消息（包括当前或待显示状态）")
+                    .help("删除这条消息（包括正在显示的消息）")
                     .accessibilityLabel("删除这条消息")
                 }
                 .foregroundStyle(.secondary)
@@ -298,8 +292,8 @@ private struct HistoryWindowRow: View {
         switch status {
         case .current:
             badge("正在显示", tint: .green)
-        case .queued:
-            badge("待显示", tint: .orange)
+        case .unread:
+            badge("未读", tint: .blue)
         case .past:
             badge("历史", tint: .secondary)
         }

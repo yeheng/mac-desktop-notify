@@ -10,7 +10,8 @@ enum URLNotificationParser {
         let url: String?
         let script: String?
         let input: Bool?
-        private enum CodingKeys: String, CodingKey { case label, url, script, input }
+        let args: ScriptValue?
+        private enum CodingKeys: String, CodingKey { case label, url, script, input, args }
 
         /// true——两种都收，否则整组 actions 解码作废。
         init(from decoder: Decoder) throws {
@@ -25,6 +26,7 @@ enum URLNotificationParser {
             } else {
                 input = nil
             }
+            args = try container.decodeIfPresent(ScriptValue.self, forKey: .args)
         }
     }
 
@@ -127,10 +129,6 @@ enum URLNotificationParser {
         return parseGroup(items.first { $0.name == "group" }?.value)
     }
 
-    /// Decodes the `actions` parameter: a JSON array of
-    /// `{"label": "...", "url": "..."}` or `{"label": "...", "script": "...", "input": 1}`.
-    /// Malformed payloads degrade to no actions instead of failing the push.
-    /// XOR（都有/都没有）由 PushValidator.normalizedActions 在下游裁决。
     static func parseActions(_ raw: String?) -> [NotificationAction] {
         guard let raw, raw.count <= maxActionsPayloadLength, let data = raw.data(using: .utf8) else {
             return []
@@ -143,7 +141,8 @@ enum URLNotificationParser {
                 return NotificationAction(
                     label: String(label.prefix(PushValidator.maxActionLabelLength)),
                     script: script,
-                    wantsComment: dto.input ?? false)
+                    wantsComment: dto.input ?? false,
+                    args: dto.args)
             }
             guard let urlString = dto.url, let url = URL(string: urlString), url.scheme != nil else {
                 return nil

@@ -140,9 +140,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch URLNotificationParser.parsePushDetailed(url) {
             case .success(let notification):
                 // A withheld message is stored but never shown, and "静默" has to
-                // mean silent too. A queued one stays silent as well: it surfaces
-                // only when the live message retires, and that transition — not a
-                // sound arriving seconds early — is what tells the user.
+                // mean silent too. One parked behind a critical stays silent as
+                // well: it surfaces in the list on the next open, and that
+                // transition — not a sound arriving seconds early — is what
+                // tells the user.
                 if NotificationManager.shared.push(notification) == .displayed {
                     playSound(for: notification)
                 }
@@ -317,7 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard NotificationManager.shared.hasContent else { return }
         let alert = NSAlert()
         alert.messageText = "清空全部消息？"
-        alert.informativeText = "当前、待显示和历史消息都会被清除（\(reason)），此操作不可撤销。"
+        alert.informativeText = "当前与历史消息都会被清除（\(reason)），此操作不可撤销。"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "清空全部")
         alert.addButton(withTitle: "取消")
@@ -334,15 +335,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func confirmClearAll() { requestClearAll(reason: "菜单栏清除") }
 
-    /// History-only clearing is the gentler sibling of clear-all: current and
-    /// queued messages survive, but the removed entries vanish from disk too,
+    /// History-only clearing is the gentler sibling of clear-all: the current
+    /// message survives, but the removed entries vanish from disk too,
     /// so it funnels through the same kind of modal NSAlert (see above).
     private func requestClearHistory() {
         let manager = NotificationManager.shared
         guard !manager.pastHistory.isEmpty else { return }
         let alert = NSAlert()
         alert.messageText = "清空历史消息？"
-        alert.informativeText = "历史中的 \(manager.pastHistory.count) 条消息将被清除，当前与待显示消息保留。此操作不可撤销。"
+        alert.informativeText = "历史中的 \(manager.pastHistory.count) 条消息将被清除，当前正在显示的消息保留。此操作不可撤销。"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "清空历史")
         alert.addButton(withTitle: "取消")

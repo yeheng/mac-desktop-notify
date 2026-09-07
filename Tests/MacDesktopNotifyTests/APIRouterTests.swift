@@ -55,9 +55,22 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertEqual(response.status, 400)
     }
 
-    func testSecondPushWhileOneIsLiveQueues() async {
-        // v3 (§3.1): an operable card holds the surface, so the second push
-        // queues behind it - an unattended info card would be displaced instead.
+    func testPushBehindACriticalReportsQueued() async {
+        // v4: a normal push displaces any normal card immediately - "queued"
+        // now means exactly one thing: a critical holds the screen, so the
+        // message waits as an unread history entry.
+        _ = await router.handle(APIRequest(
+            method: "POST", path: "/v1/push", query: [:], body: json(["title": "c", "urgency": "critical"])
+        ))
+        let response = await router.handle(APIRequest(
+            method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])
+        ))
+        XCTAssertEqual(decoded(response.body)["outcome"] as? String, "queued")
+    }
+
+    func testSecondPushWhileOneIsLiveDisplaces() async {
+        // v4: the newest push takes the screen at once, even over an operable
+        // card; the displaced message waits in history, unread.
         _ = await router.handle(APIRequest(method: "POST", path: "/v1/push", query: [:], body: json([
             "title": "a",
             "actions": [["label": "允许", "url": "notch-notify://ack?token=t&result=ok"]]
@@ -65,7 +78,7 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])
         ))
-        XCTAssertEqual(decoded(response.body)["outcome"] as? String, "queued")
+        XCTAssertEqual(decoded(response.body)["outcome"] as? String, "displayed")
     }
 
     func testClearGroupClearsOnlyThatGroup() async {

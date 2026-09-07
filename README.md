@@ -19,19 +19,19 @@
 - ✅ **可操作通知** — 最多 3 个操作按钮，点击打开回调 URL，轻松实现审批流
 - 📜 **JSC 脚本** — 推送带 `script=` 由 JS 生成内容、操作按钮绑定脚本、`POST /v1/exec` 手动执行；受限 `fetch` + 通知 API，15s 看门狗
 - 📝 **Markdown 渲染** — 通知正文支持 Markdown（行内格式 + 代码块），解析结果带缓存
-- ⏱️ **智能收起** — 信息卡 10 秒自动收起（指针进入取消计时，看过即收）；可操作卡与 Critical 常驻不自动收起，闲置 5 分钟才恢复倒计时；指针正停在卡上时新消息排队不顶卡
+- ⏱️ **智能收起** — 信息卡 10 秒自动收起（指针进入取消计时，看过即收）；可操作卡与 Critical 常驻不自动收起，闲置 5 分钟才恢复倒计时；新推送总是立即顶替当前卡片，被顶替的消息留在历史里保持未读
 - ↩️ **删除可撤销** — 历史窗口中单条/整组删除 4 秒内可撤销，连续删除自动合并计数；仅「清空全部」仍需确认
 - 🫳 **触觉反馈** — 进入触发区、点击刘海时触控板轻戳确认，可在设置关闭
 - 🎥 **屏录隐藏** — 屏幕共享、录屏与截图时刘海不入画面，会议演示不泄露消息
 - 🪶 **轻提醒档位** — `display=peek` 让普通消息只在摘要栏停留（时长跟随消息 `timeout` 或全局停留设置），不展开面板，适合低价值高频消息
 - 📂 **历史分组聚合** — 同 `group` 的重复推送顶掉旧条目，未读数自动累计；整组清理走 `clear?group=`
 - 🗂️ **历史信息窗口** — 右键菜单打开独立历史窗口，以列表形式逐条浏览全部消息（同组分别列出）：搜索标题/正文、全部/未读/紧急筛选、逐条已读/删除、点击手风琴展开正文、全部已读/清除历史、删除可撤销且提示不遮挡列表
-- 🖱️ **右键菜单** — 面板右键即可打开/收起、历史信息、静默 1 小时或进入设置；「管理消息」统一提供停止待显示提醒（保留消息）、清除历史与清除全部，面板头部「更多操作」使用相同管理入口
+- 🖱️ **右键菜单** — 面板右键即可打开/收起、历史信息、静默 1 小时或进入设置；「管理消息」统一提供清除历史与清除全部，面板头部「更多操作」使用相同管理入口
 - ⌨️ **键盘操作** — `⌃⌥N` 全局切换面板（系统级热键，无需辅助功能授权）；`Esc` 收起面板（指针在面板/刘海区域，或面板由点击/悬停打开时生效）
-- 📜 **消息列表** — 正在显示、待显示队列和历史（最多 50 条）同屏连续展示，无分区标题；正文手风琴展开（点哪条开哪条，同时只展开一条）；面板只读，删除/标读/搜索在历史窗口完成
-- ♿ **阅读与辅助功能** — 自动展开卡片可直接进入队列与历史；标题支持完整阅读，历史行支持 VoiceOver 展开及命名操作，面板遵循系统「减少动态效果」设置
-- ✅ **已读管理** — 已读 = 点击打开，或指针进入过面板；面板头部一键全部已读，历史窗口可单条切换
-- 🔵 **未读指示** — 摘要 pill 显示紧急度 glyph 与 `×N` 未读徽章；已读资格生效期间滚入视口的行即报即读，指针误扫不标读；历史窗口可手动切换
+- 📜 **消息列表** — 正在显示与历史（最多 50 条）同屏连续展示，无分区标题；正文手风琴展开（点哪条开哪条，同时只展开一条）；面板只读，删除/标读/搜索在历史窗口完成
+- ♿ **阅读与辅助功能** — 自动展开卡片可直接进入全部消息；标题支持完整阅读，历史行支持 VoiceOver 展开及命名操作，面板遵循系统「减少动态效果」设置
+- ✅ **已读管理** — 已读 = 用户点开：点击打开面板即读当前消息，展开某行即读该行；超时、悬停、自动弹出都不标读；面板头部一键全部已读，历史窗口可单条切换
+- 🔵 **未读指示** — 摘要 pill 显示紧急度 glyph 与 `×N` 未读徽章；没点开过的消息（含被新推送顶掉的、超时退下的）一律保持未读，历史窗口可手动切换
 - 🎨 **紧急度颜色** — 低/中/高三级紧急度对应不同颜色和图标指示
 - 🔇 **全屏隐藏** — 检测到全屏应用时自动隐藏，避免干扰
 - 🔔 **分级声音** — Low 静默，Normal/Critical 使用不同系统提示音，可在设置中关闭
@@ -145,7 +145,7 @@ open 'notch-notify://push?title=Lint 通过&display=peek'
 
 #### 可操作通知（审批流）
 
-通过 `actions` 参数给通知添加按钮，点击后用默认浏览器/对应 App 打开回调 URL（支持 http(s) 和自定义 scheme）。对当前消息执行操作后会自动关闭它并展示下一条：
+通过 `actions` 参数给通知添加按钮，点击后用默认浏览器/对应 App 打开回调 URL（支持 http(s) 和自定义 scheme）。对当前消息执行操作后会自动关闭它：
 
 ```bash
 open 'notch-notify://push?title=部署审批&body=版本 v1.2.3 等待发布&urgency=critical&actions=[{"label":"允许","url":"http://localhost:8080/approve"},{"label":"拒绝","url":"http://localhost:8080/deny"}]'
@@ -175,7 +175,7 @@ subprocess.run(["osascript", "-e", f'open location "notch-notify://push?{params}
 
 #### 分组去重
 
-给推送带同一个 `group`，后到的会**顶掉**先到的——历史、队列、屏上三者一并替换，已读状态不泄漏。适合 CI、文件监视器这类同一任务的重复报告：
+给推送带同一个 `group`，后到的会**顶掉**先到的——历史与屏上一并替换，已读状态不泄漏。适合 CI、文件监视器这类同一任务的重复报告：
 
 ```bash
 open 'notch-notify://push?title=构建中&group=ci-build'
@@ -269,7 +269,7 @@ NSWorkspace.shared.open(components.url!)
 ### `notch-notify://clear` — 清除通知
 
 ```bash
-# 清除全部：当前展示、待展示队列和摘要历史
+# 清除全部：当前展示与摘要历史
 open 'notch-notify://clear'
 
 # 只清除某个分组（group 语义与 push 一致），其余历史不动
@@ -297,7 +297,7 @@ open 'notch-notify://clear?group=ci-build'
 | `POST` | `/v1/push` | 推送通知，同步返回结果（URL Scheme 做不到） |
 | `POST` | `/v1/clear` | 清除通知；body 缺省或为空 = 清空全部，`{"group":"ci-build"}` 只清该分组 |
 | `GET` | `/v1/history?limit=20` | 最近历史，默认 20 条、上限 50 条，含已读标记与未读数 |
-| `GET` | `/v1/status` | 未读数、待展示队列、历史条数、静默状态与各监听器状态 |
+| `GET` | `/v1/status` | 未读数、历史条数、静默状态与各监听器状态（`pendingCount` 为兼容保留字段，恒为 0） |
 
 未知路径返回 404，方法不匹配返回 405，参数不合法返回 400：`{"error":"…","field":"title"}`（`field` 仅在字段校验失败时出现，如 push 缺 `title`）。
 
@@ -321,7 +321,7 @@ curl --unix-socket /tmp/mdn-api.sock http://localhost/v1/push -d '{"title":"构�
 {"outcome": "displayed", "id": "…"}
 ```
 
-`outcome` ∈ `displayed`（成为当前展示）/ `queued`（排队中）/ `withheld`（静默期，仅入历史）。
+`outcome` ∈ `displayed`（成为当前展示，顶掉上一条）/ `queued`（critical 占屏，消息存为未读历史）/ `withheld`（静默期，仅入历史）。
 
 `actions` 同样支持，规则与 URL Scheme 一致（最多 3 个按钮，`notch-notify://ack` 记录回执）：
 
@@ -353,7 +353,7 @@ curl http://127.0.0.1:4770/v1/status
 ```
 
 ```json
-{"unreadCount":3,"pendingCount":1,"historyCount":12,"silenced":false,
+{"unreadCount":3,"pendingCount":0,"historyCount":12,"silenced":false,
  "listening":{"unixSocket":true,"http":true}}
 ```
 
@@ -409,7 +409,7 @@ JavaScriptCore 执行（进程内，权限等同你自己写的 shell 脚本—�
 | 触发 | 怎么触发 | input | 返回值 |
 |------|---------|-------|--------|
 | 推送时生成 | `push` 带 `script=name`（URL / HTTP / WS 通用；`title` 可省） | 推送字段 | 对象字段覆盖消息（title/body/urgency/timeout/group/actions） |
-| 操作按钮 | action 用 `{"label":"批准","script":"approve","input":1}` 替代 `url` | `{label, comment?, notification}` | 任意（一般用 `notify.push` 报结果） |
+| 操作按钮 | action 用 `{"label":"批准","script":"approve","input":1,"args":{...}}` 替代 `url` | `{label, comment?, args?, notification}` | 任意（一般用 `notify.push` 报结果） |
 | 手动执行 | `POST /v1/exec`，body `{"script":"name","input":{...},"timeoutMs":1000}` | 指定对象 | 原样返回：`{"ok":true,"result":…,"logs":[…]}` |
 
 **全局 API**：`fetch(url, {method,headers,body})` 同步返回 `{status,ok,body}`（仅
@@ -419,21 +419,55 @@ http/https，超时 10s）；`notify.push({...})`（**拒绝 script 字段**，�
 **超时**：推送回填/按钮钩子 15s、exec 默认 10s。超时后放弃等待；正在跑的线程会
 泄漏到进程结束（引擎无法安全中断）——死循环脚本请自己修。
 
-**示例**（`scripts/ci-status.js`，配合 `notch-notify://push?script=ci-status`）：
+**完整示例**——CI 状态推送 + 带参数的重跑按钮（两个文件，覆盖回填/按钮/批注全链路）：
+
+`~/Library/Application Support/MacDesktopNotify/scripts/ci-status.js`（推送时执行）：
 
 ```js
 const r = fetch("https://ci.example.com/api/runs/42", { method: "GET" })
 const run = JSON.parse(r.body)
-console.log("run state:", run.state)
+console.log("run state:", run.state)          // 进执行日志（exec 响应带回）
+const failed = run.state === "failed"
 return {
   title: "CI #" + run.id,
-  body: run.state === "failed" ? "❌ " + run.failedSteps.join(", ") : "✅ 全绿",
-  urgency: run.state === "failed" ? "critical" : "low"
+  body: failed ? "❌ " + run.failedSteps.join("、") : "✅ 全绿",
+  urgency: failed ? "critical" : "normal",
+  group: "ci",                                 // 同组重复推送只留一条
+  actions: [
+    { label: "重跑 staging", script: "ci-retry", args: { env: "staging" } },
+    { label: "重跑 prod",    script: "ci-retry", args: { env: "prod" }, input: 1 }
+  ]                                            // input:1 = 点击先弹批注框
 }
 ```
 
-消息先以占位标题「⏳ 脚本生成中」立即落地，脚本完成后原地更新；失败则正文写入
-`⚠️ 脚本失败：<原因>` 与日志尾 3 行。
+`~/Library/Application Support/MacDesktopNotify/scripts/ci-retry.js`（点按钮后执行）：
+
+```js
+const env = input.args.env                     // 按钮各自的参数原样到达
+const r = fetch("https://ci.example.com/api/runs/42/retry", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ env: env })
+})
+if (!r.ok) throw new Error("重跑失败：HTTP " + r.status)
+notify.push({
+  title: "✅ 已重跑 " + env,
+  body: "来自「" + input.label + "」" + (input.comment ? "\n批注：" + input.comment : ""),
+  group: "ci"
+})
+return "done"
+```
+
+触发与流转：
+
+```bash
+open "notch-notify://push?script=ci-status"                       # 或
+curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
+```
+
+消息先以「⏳ 脚本生成中：ci-status」落地 → 脚本完成后原地变成 CI #42（失败则正文写入
+`⚠️ 脚本失败：<原因>` 与日志尾 3 行）→ 点「重跑 staging」直接执行 ci-retry；
+点「重跑 prod」先弹批注框（内容进 `input.comment`）→ 重跑结果由 `notify.push` 报回。
 
 ---
 
@@ -455,7 +489,7 @@ return {
 | 选项 | 说明 |
 |------|------|
 | **打开面板** | 展开消息面板（同 `⌃⌥N`） |
-| **清除消息…** | 清除当前、待展示和历史消息（弹出确认） |
+| **清除消息…** | 清除当前与历史消息（弹出确认） |
 | **静默 1 小时 / 取消静默** | 临时静默：所有消息（含 critical）只进历史，一小时后自动恢复 |
 | **设置…** | 打开设置窗口（通用、外观、通知、接口、关于） |
 | **退出 NotchNotify** | 退出应用 |
@@ -466,22 +500,21 @@ return {
 
 | 操作 | 说明 |
 |------|------|
-| 鼠标靠近刘海 | 延迟 150ms（可调）后展开消息中心（hover 打开） |
-| 点击刘海 / `⌃⌥N` / 菜单「打开面板」 | 立即展开完整消息中心（click 打开），当前消息与可见行立即标为已读 |
+| 鼠标靠近刘海 | 延迟 150ms（可调）后展开消息中心（hover 打开，不标读任何消息） |
+| 点击刘海 / `⌃⌥N` / 菜单「打开面板」 | 立即展开完整消息中心（click 打开），当前消息标为已读；历史行需逐条点开 |
 | 推送自动弹开 | 单卡模式：只显示当前一张通知卡 |
+| 新推送到达 | 立即顶替当前卡片上屏（critical 占屏时除外：普通推送存为未读历史）；被顶替的消息留在列表中保持未读，点击即可再看 |
 | 信息卡（无操作按钮、非紧急） | 10s 自动收起；指针进入卡片取消计时，进入后离开立即收起 |
 | 可操作卡（带按钮或紧急） | 不自动收起：操作完成收起；无人理睬 5 分钟后恢复倒计时；也可关闭按钮/Esc/点击外部 |
-| 指针正停在卡上时新推送到达 | 不顶卡：新消息排队，未读数 +1；无人值守的信息卡则被新消息顶替（旧消息回队列） |
 | 悬停打开的面板 | 指针完全离开后 260ms 收起（可在设置关闭） |
 | `Esc` | 收起面板——指针在面板/刘海区域，或面板由点击/悬停打开时生效；需辅助功能授权 |
 | 点击面板外 | 收起面板，并把这次点击重放给底层 App（被面板窗口吞掉的点击不再丢失） |
-| 点击待显示行 | 立即把这条排队消息提为当前卡，原当前消息回到队列；不点则按紧急度依次轮换 |
-| 点击历史行 | 就地展开/收起正文与操作按钮（手风琴，开合间保留） |
+| 点击历史行 | 就地展开/收起正文与操作按钮（手风琴，开合间保留）；展开即标为已读 |
 | 面板内管理 | 面板只读：删除/标读/撤销/搜索请用右键「历史信息…」独立历史窗口 |
 | 面板头部 | 「全部已读」「更多操作」菜单、关闭按钮、触感反馈保留 |
 | 刘海 pill | 环境态：紧急度色 glyph + `×N` 未读徽章（N>1）；标题只出现在通知卡与消息中心 |
 
-**未读语义：** 已读 = 点击打开，或指针进入过面板；进入瞬间屏上可见行全部标读，之后滚入的行即报即读；从未进入的自动弹卡保持未读。
+**未读语义：** 消息只有两种归宿——未读 或 历史（已读）。没点开就是没点开：超时退下、被新推送顶替、悬停看过、自动弹出，都不会把消息变成历史；只有用户点开（点击打开面板读当前消息、展开某一行、点击消息上的操作按钮）才算历史。历史窗口徽章与之一致：正在显示 / 未读 / 历史。
 
 **首次运行引导：** 首次启动会出现三步引导（发一条测试通知 / 复制接入片段 / 选择安静·平衡·即时档位），可跳过，并可在「设置 → 关于」重新打开。
 
@@ -539,8 +572,8 @@ Sources/MacDesktopNotify/
 ├── IslandDisplayState.swift             # 两态展示状态（NotchDisplayState + OpenReason，打开意图随状态流转）
 ├── IslandGeometry.swift                 # 刘海区域计算、触发区、屏幕标识
 ├── IslandHaptics.swift                  # 触控板触觉反馈（触发区进入、点击、手势确认）
-├── NotificationManager.swift            # 消息队列、历史、未读、dwell 状态机、静默闸门（@MainActor）
-├── NotificationQueue.swift              # 待展示队列（critical 抢占、容量上限驱逐、分组整组移除）
+├── NotificationManager.swift            # 当前消息、历史、未读、dwell 状态机、静默闸门（@MainActor）
+├── NotificationLog.swift                # 消息历史与已读集合（50 条上限、分组整组移除、撤销恢复）
 ├── DelayedEvents.swift                  # 延迟事件簿记（hover 展开、手动收起等定时器，可单独/整体取消）
 ├── NotchNotification.swift              # 通知数据模型（标题/正文/紧急度/超时/分组/操作按钮）
 ├── NotificationActionHandler.swift      # 操作按钮点击处理（URL 回调 / ack 回执与批注输入 / 稍后处理降级）

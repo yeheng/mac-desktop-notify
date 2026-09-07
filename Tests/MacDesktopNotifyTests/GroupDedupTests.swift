@@ -52,20 +52,21 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
 
         XCTAssertEqual(m.current?.title, "run-2", "the replacement must take over the panel")
         XCTAssertEqual(m.history.map(\.title), ["run-2"], "the superseded message must not linger in history")
-        XCTAssertEqual(m.pendingCount, 0)
     }
 
-    func testSameGroupReplacesAQueuedMessage() {
+    /// The group's earlier entry is gone even when it already lost the screen:
+    /// displacement moves a message into history, and the next same-group push
+    /// still collapses it there instead of stacking.
+    func testSameGroupReplacesADisplacedMessage() {
         let (m, old) = manager()
         defer { AppSettings.shared.autoExpandOnMessage = old }
 
-        m.push(make("unrelated"))
         m.push(make("run-1", group: "ci"))
+        m.push(make("unrelated"))               // displaces run-1 into history
         m.push(make("run-2", group: "ci"))
 
-        XCTAssertEqual(m.current?.title, "unrelated")
-        XCTAssertEqual(m.history.map(\.title), ["unrelated", "run-2"])
-        XCTAssertEqual(m.pendingCount, 1, "the queued duplicate must not stack")
+        XCTAssertEqual(m.current?.title, "run-2", "the replacement takes the screen")
+        XCTAssertEqual(m.history.map(\.title), ["unrelated", "run-2"], "the superseded duplicate must not stack")
     }
 
     func testDifferentGroupsCoexist() {
@@ -94,17 +95,17 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
         defer { AppSettings.shared.autoExpandOnMessage = old }
 
         m.push(make("run-1", group: "ci"))
-        m.islandClicked()                       // marks everything read
+        m.islandClicked()                       // deliberate open: reads the live card
         XCTAssertEqual(m.unreadCount, 0)
 
         m.push(make("run-2", group: "ci"))
         XCTAssertEqual(m.historyCount, 1, "the superseded entry must not linger")
-        XCTAssertTrue(m.isRead(m.current!), "the replacement is on screen, so it counts as read")
+        XCTAssertEqual(m.unreadCount, 1, "v4: on screen is not opened - the replacement waits unread")
 
         // The real risk is a stale id left behind in the read set: it would silently
         // mark an unrelated future message as already seen.
         m.push(make("run-3", group: "other"))
-        XCTAssertEqual(m.unreadCount, 1, "a message that never reached the screen stays unread")
+        XCTAssertEqual(m.unreadCount, 2, "messages that were never opened stay unread")
         XCTAssertEqual(m.historyCount, 2)
     }
 
@@ -121,19 +122,19 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
         m.clear(group: "ci")
 
         XCTAssertEqual(m.history.map(\.title), ["b", "c"])
-        XCTAssertEqual(m.current?.title, "b", "clearing the live message must promote the next one")
+        XCTAssertEqual(m.current?.title, "c", "clearing a non-live message must not disturb the panel")
     }
 
-    func testClearGroupOnQueuedItemLeavesPanelAlone() {
+    func testClearGroupOnLiveItemRetiresThePanel() {
         let (m, old) = manager()
         defer { AppSettings.shared.autoExpandOnMessage = old }
 
         m.push(make("a"))
-        m.push(make("b", group: "ci"))
+        m.push(make("b", group: "ci"))          // b displaced a and owns the screen
 
         m.clear(group: "ci")
 
-        XCTAssertEqual(m.current?.title, "a", "an unrelated live message stays put")
+        XCTAssertNil(m.current, "clearing the live message retires it - there is no queue to promote")
         XCTAssertEqual(m.history.map(\.title), ["a"])
     }
 
@@ -157,23 +158,23 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.history.map(\.title), ["a"])
     }
 
-    /// Regression: the advance() branch of `clear(group:)` used to skip
-    /// `recomputeUnread`. Clearing the live message must leave the unread count
-    /// consistent with what history actually holds. (Surfacing without an
-    /// engaged panel no longer marks anything read, so both messages start
+    /// Regression: the removal path of `clear(group:)` used to skip
+    /// `recomputeUnread`. Clearing a message must leave the unread count
+    /// consistent with what history actually holds. (Surfacing without a
+    /// deliberate open no longer marks anything read, so both messages start
     /// unread here.)
-    func testClearGroupOnLiveMessageKeepsUnreadConsistent() {
+    func testClearGroupKeepsUnreadConsistent() {
         let (m, old) = manager()
         defer { AppSettings.shared.autoExpandOnMessage = old }
 
-        m.push(make("live", group: "ci"))       // compact pill only: surfaced, not seen
-        m.push(make("queued", group: "deploy")) // waits behind -> unread
+        m.push(make("old", group: "ci"))         // compact pill only: surfaced, not opened
+        m.push(make("live", group: "deploy"))    // displaces "old" into history
         XCTAssertEqual(m.unreadCount, 2)
 
-        m.clear(group: "ci")                  // takes the advance() branch
+        m.clear(group: "ci")
 
-        XCTAssertEqual(m.current?.title, "queued", "the queued message is promoted")
-        XCTAssertEqual(m.unreadCount, 1, "the promoted message is still unseen; nothing else may linger")
-        XCTAssertEqual(m.history.map(\.title), ["queued"])
+        XCTAssertEqual(m.current?.title, "live", "clearing a displaced message leaves the panel alone")
+        XCTAssertEqual(m.unreadCount, 1, "the live message is still unopened; nothing else may linger")
+        XCTAssertEqual(m.history.map(\.title), ["live"])
     }
 }

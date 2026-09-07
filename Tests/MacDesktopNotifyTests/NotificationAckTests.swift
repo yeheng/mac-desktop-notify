@@ -97,11 +97,10 @@ final class NotificationAckTests: XCTestCase {
         let action = NotificationAction(label: "允许", url: URL(string: "notch-notify://ack?token=t1")!)
         m.push(NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal,
                                  timeout: 60, actions: [action]))
-        m.push(make("b"))
 
         m.performAction(action, for: m.current!)
 
-        XCTAssertEqual(m.current?.title, "b", "acting must advance the queue like any other action")
+        XCTAssertNil(m.current, "acting retires the live message; v4 has no queue to advance")
     }
 
     func testAckFallsBackToTheActionLabel() {

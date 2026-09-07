@@ -75,7 +75,6 @@ private struct ActionCapsuleStyle: ButtonStyle {
 /// 3:1 for large text). The old 0.35/0.42 values measured ~3.0:1/4.0:1.
 private enum PanelTextOpacity {
     static let timestamp: Double = 0.62
-    static let pending: Double = 0.62
     static let subtle: Double = 0.66
 }
 
@@ -84,8 +83,6 @@ private struct MessageManagementActions: View {
     private var manager: NotificationManager { .shared }
 
     var body: some View {
-        Button("停止待显示提醒（保留消息）") { manager.discardPending() }
-            .disabled(manager.queue.isEmpty)
         Button("清除历史消息…") {
             NotificationCenter.default.post(name: .requestClearHistory, object: nil)
         }
@@ -230,7 +227,7 @@ struct IslandExpandedView: View {
                 Button {
                     manager.openMessageCenter()
                 } label: {
-                    Label("查看队列与历史（\(manager.unreadCount) 条未读）", systemImage: "list.bullet")
+                    Label("查看全部消息（\(manager.unreadCount) 条未读）", systemImage: "list.bullet")
                         .font(.system(size: 12, weight: .medium))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
@@ -285,7 +282,7 @@ struct IslandExpandedView: View {
                 Text(showsFullList ? "通知中心" : "当前通知")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .lineLimit(1)
-                Text(showsFullList ? "\(manager.unreadCount) 条未读 · \(manager.pendingCount) 条待显示" : manager.compactStatus)
+                Text(showsFullList ? "\(manager.unreadCount) 条未读" : manager.compactStatus)
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.66))
             }
@@ -341,9 +338,9 @@ struct IslandExpandedView: View {
 }
 
 /// Single scrolling list with no section headers: the live message on top,
-/// queued (not yet shown) messages dimmed below it, and tappable past
-/// messages at the bottom. §5.2: read-only - management lives in the history
-/// window.
+/// tappable past messages below it - newest first, unread ones dotted.
+/// Expanding a row is the explicit open that marks it read (v4 §4).
+/// §5.2: read-only - management lives in the history window.
 private struct MessageListView: View {
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
@@ -369,18 +366,6 @@ private struct MessageListView: View {
                         ))
                 }
 
-                if manager.pendingCount > 0 {
-                    if manager.pendingCount > NotificationManager.shownPendingCap {
-                        Text("还有 \(manager.pendingCount - NotificationManager.shownPendingCap) 条未展示")
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.55))
-                            .padding(.horizontal, 4)
-                    }
-                    ForEach(manager.queue.prefix(NotificationManager.shownPendingCap)) { notification in
-                        PendingRow(notification: notification)
-                    }
-                }
-
                 // §5.2: flat read-only history - push-time collapseGroup already
                 // keeps one entry per group, so view-level grouping bought nothing
                 // but the O(n²) historyEntries computation.
@@ -396,8 +381,7 @@ private struct MessageListView: View {
                 }
             }
             .padding(16)
-            // Animate queue/history churn so pushes slide in instead of popping.
-            .animation(.easeInOut(duration: 0.2), value: manager.queue)
+            // Animate history churn so pushes slide in instead of popping.
             .animation(.easeInOut(duration: 0.2), value: manager.pastHistory)
         }
         .scrollIndicators(.hidden)
@@ -408,10 +392,14 @@ private struct MessageListView: View {
     }
 
     /// Accordion toggle: tapping the open row folds it; tapping any other row
-    /// opens it and folds the previous one in the same animation.
+    /// opens it and folds the previous one in the same animation. Expanding a
+    /// body is an explicit act of reading - the row becomes 历史.
     private func toggleExpanded(_ id: UUID) {
         withAnimation(.easeInOut(duration: 0.15)) {
             expandedHistoryID = expandedHistoryID == id ? nil : id
+        }
+        if expandedHistoryID == id {
+            manager.setRead(id, read: true)
         }
     }
 }
@@ -497,55 +485,9 @@ private struct CurrentCard: View {
     }
 }
 
-/// A message still waiting in the queue: dimmed, title only. The one tap the
-/// read-only list keeps: clicking promotes it to the live card now instead of
-/// waiting out the current message's countdown.
-private struct PendingRow: View {
-    let notification: NotchNotification
-    private var manager: NotificationManager { .shared }
-    @State private var hovering = false
-
-    var body: some View {
-        content
-            .onHover { hovering = $0 }
-            .animation(.easeInOut(duration: 0.12), value: hovering)
-            .contentShape(Rectangle())
-            .onTapGesture { manager.promoteQueued(id: notification.id) }
-    }
-
-    private var content: some View {
-        HStack(spacing: 9) {
-            // The urgency glyph carries more information than a generic clock;
-            // the trailing "待显示" label already says it is waiting.
-            Image(systemName: notification.urgency.symbolName)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(notification.urgency.color.opacity(0.85))
-                .frame(width: 16, height: 16)
-                .accessibilityLabel(notification.urgency.accessibilityLabel)
-            Text(notification.title)
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.75))
-                .lineLimit(1)
-            Spacer(minLength: 0)
-            // The affordance swap says what hover is for; the resting label
-            // keeps the row's meaning ("waiting") when the pointer is away.
-            Text(hovering ? "立即显示" : "待显示 · \(notification.urgency.accessibilityLabel)")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(PanelTextOpacity.pending))
-        }
-        .padding(10)
-        .background(.white.opacity(hovering ? 0.12 : 0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("等待显示的消息：\(notification.title)，\(notification.urgency.accessibilityLabel)")
-        .accessibilityHint("点按立即显示这条消息；否则按紧急度依次等待轮换")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { manager.promoteQueued(id: notification.id) }
-        .help("点按立即显示这条消息；否则按紧急度依次等待轮换")
-    }
-}
-
-/// A past message. Tap to expand the rendered Markdown body inline. §5.2:
-/// read-only - delete/read toggles live in the history window.
+/// A past message. Tap to expand the rendered Markdown body inline - the
+/// explicit open that marks it read (v4 §4). §5.2: read-only - delete/read
+/// toggles live in the history window.
 private struct HistoryRow: View {
     let notification: NotchNotification
     let isExpanded: Bool
@@ -558,10 +500,6 @@ private struct HistoryRow: View {
         content
             .onHover { hovering = $0 }
             .animation(.easeInOut(duration: 0.12), value: hovering)
-            // §4: entering the viewport reports the row; an eligible open
-            // period marks it read the frame it appears.
-            .onAppear { manager.noteRowVisible(notification.id) }
-            .onDisappear { manager.noteRowHidden(notification.id) }
     }
 
     private var content: some View {

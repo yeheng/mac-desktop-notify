@@ -72,8 +72,10 @@ final class APIRouter: Sendable {
         let url: String?
         let script: String?
         let input: Bool?
+        let args: ScriptValue?
 
-        private enum CodingKeys: String, CodingKey { case label, url, script, input }
+        private enum CodingKeys: String, CodingKey { case label, url, script, input, args }
+
         /// `input` 可能是 1（URL query 习惯）或 true，两种都收。
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -87,6 +89,7 @@ final class APIRouter: Sendable {
             } else {
                 input = nil
             }
+            args = try container.decodeIfPresent(ScriptValue.self, forKey: .args)
         }
     }
 
@@ -107,7 +110,8 @@ final class APIRouter: Sendable {
         }
         let actions = (dto.actions ?? []).compactMap { dto -> NotificationAction? in
             if let script = dto.script, ScriptStore.isValidName(script) {
-                return NotificationAction(label: dto.label, script: script, wantsComment: dto.input ?? false)
+                return NotificationAction(label: dto.label, script: script,
+                                          wantsComment: dto.input ?? false, args: dto.args)
             }
             guard let urlString = dto.url, let url = URL(string: urlString) else { return nil }
             return NotificationAction(label: dto.label, url: url)
@@ -204,6 +208,8 @@ final class APIRouter: Sendable {
 
     private struct StatusResponse: Encodable {
         let unreadCount: Int
+        /// v4: the pending queue is gone, so this is always 0. The field stays
+        /// because API clients read it.
         let pendingCount: Int
         let historyCount: Int
         let silenced: Bool
@@ -216,13 +222,13 @@ final class APIRouter: Sendable {
     }
 
     private func status() async -> APIResponse {
-        let (unreadCount, pendingCount, historyCount, silenced) = await MainActor.run {
-            (manager.unreadCount, manager.pendingCount, manager.historyCount, manager.isSilenced)
+        let (unreadCount, historyCount, silenced) = await MainActor.run {
+            (manager.unreadCount, manager.historyCount, manager.isSilenced)
         }
         let listen = await listening()
         return .ok(StatusResponse(
             unreadCount: unreadCount,
-            pendingCount: pendingCount,
+            pendingCount: 0,
             historyCount: historyCount,
             silenced: silenced,
             listening: StatusResponse.ListeningStatus(unixSocket: listen.unixSocket, http: listen.http)
@@ -287,7 +293,8 @@ final class APIRouter: Sendable {
             // four JSON passes per frame for a problem Decodable never had.
             let actions = (dto.actions ?? []).compactMap { dto -> NotificationAction? in
                 if let script = dto.script, ScriptStore.isValidName(script) {
-                    return NotificationAction(label: dto.label, script: script, wantsComment: dto.input ?? false)
+                    return NotificationAction(label: dto.label, script: script,
+                                              wantsComment: dto.input ?? false, args: dto.args)
                 }
                 guard let urlString = dto.url, let url = URL(string: urlString) else { return nil }
                 return NotificationAction(label: dto.label, url: url)
@@ -362,6 +369,9 @@ extension APIResponse {
 
 extension PushOutcome {
     /// Wire name for the API surface. Matches the enum case by design.
+    /// v4: `queued` no longer means "waiting for screen time" - there is no
+    /// queue; it means a critical holds the screen and the message waits as
+    /// an unread history entry.
     var label: String {
         switch self {
         case .displayed: "displayed"

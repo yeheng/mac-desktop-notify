@@ -2,8 +2,8 @@ import XCTest
 @testable import MacDesktopNotify
 
 /// §3.1: 收起规则的单一裁决点。信息卡 10s；指针进入取消计时；进入后
-/// 离开立即收起；可操作卡不计时；指针在卡上不顶卡；无人值守的信息卡
-/// 让位给新到达；轮换保持 reason 并重武装计时。
+/// 离开立即收起；可操作卡不计时。v4：新推送总是立即顶卡（无保护期、
+/// 无队列），被顶掉的消息在历史里保持未读；收起与超时绝不标读。
 @MainActor
 final class DismissRulesTests: SettingsIsolatedTestCase {
 
@@ -32,7 +32,7 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
         try await Task.sleep(for: .milliseconds(400))
         XCTAssertEqual(m.displayState, .closed, "an unattended info card must retire via the auto-close rule")
         XCTAssertNil(m.current)
-        XCTAssertEqual(m.unreadCount, 1, "never entered, so never read")
+        XCTAssertEqual(m.unreadCount, 1, "never opened, so never read")
     }
 
     /// 指针进入面板 → 取消计时：卡片停在屏上。
@@ -48,18 +48,19 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.current?.title, "info")
     }
 
-    /// 进入后离开 → 立即收起（不等 10s），消息在读后退役进历史。
+    /// 进入后离开 → 立即收起（不等 10s）。v4：看过不等于点开，未读保留。
     func testLeaveAfterEnteringCollapsesCard() async throws {
         AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
         m.notificationAutoCloseDelay = .seconds(10)
         m.push(make("info"))
         m.setHovering(true)
-        XCTAssertTrue(m.current.map { m.isRead($0) } ?? false, "entering reads the card")
+        XCTAssertEqual(m.unreadCount, 1, "v4: entering the panel is looking, not opening")
 
         m.setHovering(false)
         XCTAssertEqual(m.displayState, .closed, "leave-after-enter collapses now, not at 10s")
-        XCTAssertEqual(m.unreadCount, 0, "the card was read when the pointer entered")
+        XCTAssertNil(m.current)
+        XCTAssertEqual(m.unreadCount, 1, "retiring is not reading either - the message waits to be opened")
     }
 
     /// 可操作卡：不计时，永不自动收起（aging 是唯一无人路径）。
@@ -84,44 +85,44 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.current?.title, "crit")
     }
 
-    /// 保护期：指针在卡上 → 新推送（含 critical）只排队，不顶卡。
-    func testEngagedCardIsNotDisplacedByPush() async throws {
+    /// v4：指针在卡上不再保护——最新状态永远立即上屏；被顶掉的消息就在
+    /// 下方第一行，未读不丢。
+    func testEngagedCardIsDisplacedByPush() {
         AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
         m.push(make("a"))
         m.setHovering(true)
 
-        XCTAssertEqual(m.push(make("b")), .queued)
-        XCTAssertEqual(m.current?.title, "a")
-        XCTAssertEqual(m.pendingCount, 1)
+        XCTAssertEqual(m.push(make("b")), .displayed)
+        XCTAssertEqual(m.current?.title, "b")
+        XCTAssertEqual(m.pastHistory.map(\.title), ["a"], "the displaced card is one row below, unread")
 
-        XCTAssertEqual(m.push(make("c", urgency: .critical)), .queued)
-        XCTAssertEqual(m.current?.title, "a", "even a critical waits behind an engaged card")
+        XCTAssertEqual(m.push(make("c", urgency: .critical)), .displayed)
+        XCTAssertEqual(m.current?.title, "c", "a critical takes the screen too")
     }
 
-    /// 顶卡：无人值守的信息卡让位给新到达，旧卡回队列，计时重武装。
+    /// 顶卡：无人值守的信息卡让位给新到达，旧卡进历史（未读），计时重武装。
     func testUnattendedInfoCardYieldsToFreshPush() {
         AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
         m.push(make("a"))
         XCTAssertEqual(m.push(make("b")), .displayed)
         XCTAssertEqual(m.current?.title, "b", "latest wins the unattended surface")
-        XCTAssertEqual(m.queue.map(\.title), ["a"], "the displaced card rejoins the queue")
+        XCTAssertEqual(m.pastHistory.map(\.title), ["a"], "the displaced card stays in history, unread")
         XCTAssertEqual(m.displayState, .opened(reason: .notification))
     }
 
-    /// 轮换：10s 触发 advance，下一条原位顶上，面板不关、reason 不变、计时重武装。
-    /// v3 里信息卡后面的队列来自顶卡：b 顶掉 a，a 回队列，b 计时到期后 a 原位顶上。
-    func testRotationKeepsPanelOpenAndReArms() async throws {
+    /// v4 无轮换：信息卡 10s 收工后没有"下一条"可顶上，面板关、消息留未读。
+    func testAutoCloseRetiresWithoutRotation() async throws {
         AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
         m.notificationAutoCloseDelay = .milliseconds(200)
         m.push(make("a"))
-        XCTAssertEqual(m.push(make("b")), .displayed)   // b displaced a; a waits in the queue
-        XCTAssertEqual(m.queue.map(\.title), ["a"])
+        m.push(make("b"))                          // b displaced a; a waits in history
 
-        try await Task.sleep(for: .milliseconds(300))   // b's timer fires; a rotates in place
-        XCTAssertEqual(m.current?.title, "a", "the retired card's successor rotated in place")
-        XCTAssertEqual(m.displayState, .opened(reason: .notification), "the panel never closed between cards")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(m.current, "no queue means nothing rotates in when the card retires")
+        XCTAssertEqual(m.displayState, .closed)
+        XCTAssertEqual(m.unreadCount, 2, "both messages wait unread until the user opens them")
     }
 }

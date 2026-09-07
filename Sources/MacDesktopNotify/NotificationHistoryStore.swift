@@ -1,7 +1,7 @@
 import Foundation
 
 /// What gets written to disk. Deliberately narrower than the live session: the
-/// queue and the on-screen message are transient, so only history and read state
+/// on-screen message is transient, so only history and read state
 /// are worth carrying across a restart.
 struct HistorySnapshot: Codable, Equatable {
     static let currentSchemaVersion = 1

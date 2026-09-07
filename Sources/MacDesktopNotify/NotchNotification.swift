@@ -2,17 +2,6 @@ import Foundation
 
 enum UrgencyLevel: String, Sendable, Codable {
     case low, normal, critical
-
-    /// Ordering used when the pending queue picks its next message. Higher
-    /// wins; equal priorities stay FIFO because the scan keeps the first
-    /// maximum it finds.
-    var queuePriority: Int {
-        switch self {
-        case .low: 0
-        case .normal: 1
-        case .critical: 2
-        }
-    }
 }
 
 /// A tappable action shown at the bottom of a notification card.
@@ -29,12 +18,18 @@ struct NotificationAction: Sendable, Equatable, Codable {
     /// action): the button then opens an inline input before anything
     /// runs, so a refusal can carry a reason.
     var wantsComment: Bool
+    /// Per-button arguments for a script action (any JSON object), delivered
+    /// to the hook as `input.args`（设计 §2.2 扩展：同名脚本按参数分叉，
+    /// e.g. `{"env":"prod"}`）. url actions ignore it.
+    var args: ScriptValue?
 
-    init(label: String, url: URL? = nil, script: String? = nil, wantsComment: Bool = false) {
+    init(label: String, url: URL? = nil, script: String? = nil,
+         wantsComment: Bool = false, args: ScriptValue? = nil) {
         self.label = label
         self.url = url
         self.script = script
         self.wantsComment = wantsComment
+        self.args = args
     }
 
     /// History written before `script` existed has only `url`; a script
@@ -46,6 +41,7 @@ struct NotificationAction: Sendable, Equatable, Codable {
         url = try container.decodeIfPresent(URL.self, forKey: .url)
         script = try container.decodeIfPresent(String.self, forKey: .script)
         wantsComment = try container.decodeIfPresent(Bool.self, forKey: .wantsComment) ?? false
+        args = try container.decodeIfPresent(ScriptValue.self, forKey: .args)
     }
 }
 
@@ -56,7 +52,7 @@ extension Notification.Name {
     /// delegate's NSAlert lives in its own window and cannot.
     static let requestClearAll = Notification.Name("MacDesktopNotify.requestClearAll")
 /// Same modal-confirmation escape hatch as `requestClearAll`, scoped to the
-/// history section only: current and queued messages survive it.
+/// history section only: the current message survives it.
 static let requestClearHistory = Notification.Name("MacDesktopNotify.requestClearHistory")
 }
 

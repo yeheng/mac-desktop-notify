@@ -85,7 +85,8 @@ enum PushValidator {
                 label: String(label.prefix(maxActionLabelLength)),
                 url: action.url,
                 script: action.script,
-                wantsComment: action.wantsComment
+                wantsComment: action.wantsComment,
+                args: action.args
             )
         }
         .prefix(maxActions))

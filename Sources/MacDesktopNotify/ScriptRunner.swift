@@ -338,6 +338,7 @@ final class ScriptRunner {
                 var a: [String: ScriptValue] = ["label": .string(action.label)]
                 if let url = action.url { a["url"] = .string(url.absoluteString) }
                 if let script = action.script { a["script"] = .string(script) }
+                if let args = action.args { a["args"] = args }
                 return .object(a)
             })
         }
@@ -376,7 +377,9 @@ final class ScriptRunner {
                       let label = dict["label"]?.stringValue else { return nil }
                 let url = dict["url"]?.stringValue.flatMap(URL.init(string:))
                 let script = dict["script"]?.stringValue
-                return NotificationAction(label: label, url: url, script: script)
+                return NotificationAction(label: label, url: url, script: script,
+                                          wantsComment: dict["input"]?.boolValue ?? false,
+                                          args: dict["args"])
             }
             message.actions = PushValidator.normalizedActions(actions)
         }
@@ -398,7 +401,8 @@ final class ScriptRunner {
     // MARK: - Action hook (§2.2)
 
     /// 点击 script 按钮后执行（卡已由 performAction 退役——与 URL 按钮同构）。
-    /// input = {label, comment?, notification:{字段}}（设计 §2.2）。
+    /// input = {label, comment?, args?, notification:{字段}}（设计 §2.2；
+    /// args = 按钮自定义参数，设计扩展）。
     /// 失败推一条 normal 级诊断通知（决策 #4，沿「推送格式错误」先例）。
     func runActionHook(action: NotificationAction, notification: NotchNotification,
                        comment: String?) async {
@@ -406,6 +410,7 @@ final class ScriptRunner {
         let input = ScriptValue.object([
             "label": .string(action.label),
             "comment": comment.map { ScriptValue.string($0) } ?? .null,
+            "args": action.args ?? .null,
             "notification": Self.notificationInput(notification),
         ])
         let outcome = await run(named: name, input: input, budget: Self.backfillBudget)

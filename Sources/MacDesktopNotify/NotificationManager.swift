@@ -46,7 +46,8 @@ enum PushOutcome: Sendable, Equatable {
     /// fullscreen suppression a critical still becomes live (and still sounds)
     /// but holds its panel until suppression lifts.
     case displayed
-    /// Waiting behind a live message; surfaces when that one retires.
+    /// A critical holds the screen, so the message waits as an unread history
+    /// entry; it surfaces in the list the moment the user opens the panel.
     case queued
     /// Stored but not surfaced, because the user is away and quiet mode holds.
     case withheld
@@ -57,11 +58,11 @@ enum PushOutcome: Sendable, Equatable {
 final class NotificationManager {
     static let shared = NotificationManager()
     /// How much history is kept. This is also what gets persisted, so it is the
-    /// Caps live on `NotificationQueue`; these forwards keep the existing
+    /// number of messages you can still read after a restart. The cap lives on
+    /// `NotificationLog`; this forward keeps the existing
     /// `NotificationManager.maxHistoryCount` references (HTTP API, tests)
     /// working without a second source of truth.
-    static let maxHistoryCount = NotificationQueue.maxHistoryCount
-    static let maxPendingCount = NotificationQueue.maxPendingCount
+    static let maxHistoryCount = NotificationLog.maxHistoryCount
 
     /// Posts whenever `unreadCount` changes, for observers that are not SwiftUI
     /// views (the status item icon redraws from this).
@@ -72,27 +73,14 @@ final class NotificationManager {
 
     /// The live message together with the dwell budget that retires it.
     /// Observed storage: `current` reads it, so the UI invalidates when it changes.
-    private(set) var presentation: Presentation? {
-        didSet {
-            // The live message is by definition on screen while presented, so
-            // rotations report into the visibility pipeline (P3) the same way
-            // the list's rows do. Same-id reassignments (dwell budgeting) are
-            // not visibility events.
-            if let item = presentation?.item, item.id != oldValue?.item.id {
-                noteRowVisible(item.id)
-            }
-            if let old = oldValue?.item, presentation?.item.id != old.id {
-                noteRowHidden(old.id)
-            }
-        }
-    }
+    private(set) var presentation: Presentation?
 
-    /// Pure queue/history/read-state data, extracted so the invariants live in
+    /// Pure history/read-state data, extracted so the invariants live in
     /// one place; the facades below keep the observed surface stable.
-    /// Observed (v3 修隐患): `queue`/`pastHistory` 是计算属性，读取它们时只有
+    /// Observed (v3 修隐患): `history`/`pastHistory` 是计算属性，读取它们时只有
     /// messages 本身被注册才触发重绘。push 至今能刷新是因为 presentation/
     /// unreadCount 总是同变；脚本回填只改字段时会踩空——update(id:) 依赖它。
-    private var messages = NotificationQueue()
+    private var messages = NotificationLog()
     private(set) var displayState: NotchDisplayState = .closed
     private(set) var unreadCount = 0
 
@@ -136,17 +124,15 @@ final class NotificationManager {
     /// The message on screen, derived from `presentation` so the two cannot disagree.
     var current: NotchNotification? { presentation?.item }
     var history: [NotchNotification] { messages.history }
-    var queue: [NotchNotification] { messages.queue }
-    var pendingCount: Int { messages.queue.count }
     var historyCount: Int { messages.history.count }
-    var hasContent: Bool { current != nil || !messages.queue.isEmpty || !messages.history.isEmpty }
+    var hasContent: Bool { !messages.history.isEmpty }
     var latestNotification: NotchNotification? { messages.history.last }
 
     /// The urgency the pill and panel header should be tinted with: the live
     /// message if there is one, otherwise the most recent history entry.
     var displayUrgency: UrgencyLevel? { current?.urgency ?? latestNotification?.urgency }
 
-    /// History items that are neither currently shown nor waiting in the queue.
+    /// History items that are not currently shown.
     var pastHistory: [NotchNotification] {
         messages.pastHistory(current: current)
     }
@@ -182,7 +168,12 @@ final class NotificationManager {
 
     // MARK: - Ingress
 
-    /// Records a message and, unless the user is away, surfaces it.
+    /// Records a message and, unless the user is away or a critical holds the
+    /// screen, makes it the live message immediately.
+    ///
+    /// v4: there is no pending queue. The push always takes the screen at once,
+    /// displacing whatever was live; the displaced message stays in history,
+    /// unread, one row below - coverage never means "never shown".
     ///
     /// The outcome is what the user saw, not whether the message survived:
     /// every outcome leaves the message in history, so `.withheld` means
@@ -198,8 +189,7 @@ final class NotificationManager {
         } else {
             resolved.displayPeek = resolved.displayPeek ?? AppSettings.shared.normalMessagesPeek
         }
-        let protected = protectedSurface
-        let incoming = collapseGroup(resolved, protected: protected)
+        let incoming = collapseGroup(resolved)
 
         messages.record(incoming)
         recomputeUnread()
@@ -212,40 +202,17 @@ final class NotificationManager {
             return .withheld
         }
 
-        messages.enqueue(incoming)
-
         if incoming.urgency == .critical {
-            guard !protected else { return .queued }   // §3.1: an engaged card is not preempted
-            promoteCritical(incoming)
+            present(incoming)
             return .displayed
         }
 
-        guard presentation == nil else {
-            // §3.1: an unattended info card yields the surface to the fresh
-            // arrival; an operable card keeps it (its exits are action/aging/
-            // manual), and so does any panel someone is browsing or engaging.
-            if !protected,
-               case .opened(reason: .notification) = displayState,
-               presentation?.item.actions.isEmpty == true,
-               presentation?.item.urgency != .critical {
-                displaceCard(with: incoming)
-                return .displayed
-            }
-            // Something is already live, and its countdown is what will retire it.
-            // Re-asserting the invariant here is cheap insurance: a collapsed panel
-            // must never be left holding a message that nothing will ever clear.
-            reconcileDwell()
-            return .queued
-        }
+        // A critical on screen keeps it - its exits are the action, idle aging,
+        // or a manual close. The normal message waits as an unread history
+        // entry and is the first thing the user sees on the next open.
+        guard presentation?.item.urgency != .critical else { return .queued }
 
-        let shouldExpand = AppSettings.shared.autoExpandOnMessage && !displaySuppressed
-        promoteNext(
-            autoExpand: shouldExpand,
-            // Setting off: the message still surfaces, as a pill. Suppressed:
-            // park like `promoteCritical` until the screen comes back.
-            parkWhenNotExpanding: displaySuppressed
-        )
-        reconcileDwell()
+        present(incoming)
         return .displayed
     }
 
@@ -309,18 +276,18 @@ final class NotificationManager {
 
     /// Collapses `notification` onto any earlier message in the same group, so a
     /// repeating job updates one entry instead of stacking a fresh one every run.
-    /// `protected` (§3.1) keeps the on-screen entry alive while the pointer is
-    /// on the panel: the update lands in the queue instead of yanking the card.
-    private func collapseGroup(_ notification: NotchNotification, protected: Bool) -> NotchNotification {
+    /// The on-screen entry is not spared: the sender explicitly replaced it, so
+    /// the update takes the screen right away.
+    private func collapseGroup(_ notification: NotchNotification) -> NotchNotification {
         guard let key = notification.groupingKey else { return notification }
 
-        // The group's earlier entries are gone from history/queue/read state in
+        // The group's earlier entries are gone from history/read state in
         // one sweep, so the replacement re-enters as the group's only entry.
         _ = messages.removeGroup(key)
 
-        // The on-screen message carried the same group: drop it so `push` promotes
-        // the replacement, which updates the panel instead of queueing behind it.
-        if !protected, presentation?.item.groupingKey == key {
+        // The on-screen message carried the same group: drop it so `push` presents
+        // the replacement, which updates the panel instead of yanking the card later.
+        if presentation?.item.groupingKey == key {
             presentation = nil
             // Cancel the retired countdown outright rather than relying on the
             // id guard in `startDwell` to ignore it later.
@@ -492,9 +459,10 @@ final class NotificationManager {
             pointer.zone = .onPanel(zoneClaimsPointer: pointer.nearIsland)
             delayed.cancel(.manualCollapse)
             if displayState.isOpened {
-                // §3.1/§4 latch: entering the open panel engages the card.
+                // §3.1 latch: entering the open panel engages the card. It gates
+                // only the leave-collapse rule - read state is explicit (v4 §4),
+                // so nothing is marked read here.
                 panelEntered = true
-                markVisibleRowsRead()
             }
             applyDismissRules()
             reconcileDwell()
@@ -517,8 +485,8 @@ final class NotificationManager {
         case .panelDismissed:
             // Nothing is hover-expandable until the pointer genuinely leaves
             // the zone. The panel's own hover report survives the collapse:
-            // a queued message may rotate in and reopen the panel right
-            // under the pointer, and its dwell must stay held.
+            // the pointer may still be where the panel was, and a fresh push
+            // can reopen the panel right under it - its dwell must stay held.
             pointer.hoverDismissed = true
             pointer.forgetActivationZoneClaim()
 
@@ -532,7 +500,6 @@ final class NotificationManager {
         case .cleared:
             pointer = PointerState()
             panelEntered = false
-            visibleRowIDs = []
         }
     }
 
@@ -558,14 +525,11 @@ final class NotificationManager {
     /// `undoWindow` precedent.
     var notificationAutoCloseDelay: Duration = .seconds(10)
 
-    /// §3.1/§4 latch: the pointer has been on the open panel during this open
-    /// period. Gates the leave-collapse (§3.1) and read eligibility (§4). Set on
-    /// the `.hoverBegan` edge, reset when the panel collapses.
+    /// §3.1 latch: the pointer has been on the open panel during this open
+    /// period. Gates only the leave-collapse rule (§3.1); v4 read state is
+    /// explicit and never consults it. Set on the `.hoverBegan` edge, reset
+    /// when the panel collapses.
     @ObservationIgnored private(set) var panelEntered = false
-
-    /// §3.1 protection period: the pointer is on the open panel - whatever it is
-    /// showing must not be displaced by an arrival.
-    private var protectedSurface: Bool { pointer.onPanel && displayState.isOpened }
 
     private func applyDismissRules() {
         delayed.cancel(.notificationAutoClose)
@@ -584,33 +548,9 @@ final class NotificationManager {
         }
     }
 
-    /// The unattended info card steps aside for a fresh arrival (§3.1 计时重
-    /// 启动): the displaced message rejoins the queue with displaced-critical
-    /// fairness, and the newcomer's countdown starts now.
-    private func displaceCard(with incoming: NotchNotification) {
-        if let previous = presentation, previous.item.id != incoming.id {
-            messages.requeueDisplaced(previous.item)
-        }
-        messages.removeQueued(id: incoming.id)
-        beginPresenting(incoming, as: .opened(reason: .notification))
-    }
-
-    /// Clicking a pending row: the user asked for that message now, which is
-    /// reading intent, not management — the one tap the read-only list keeps.
-    /// The clicked message becomes the live card in place (the open reason
-    /// survives the swap, §2.3), and the card it replaces rejoins the queue
-    /// with the same displaced fairness a fresh push triggers.
-    func promoteQueued(id: UUID) {
-        guard displayState.isOpened, let item = messages.removeQueued(id: id) else { return }
-        if let previous = presentation, previous.item.id != item.id {
-            messages.requeueDisplaced(previous.item)
-        }
-        beginPresenting(item, as: displayState)
-    }
-
     // MARK: - Script backfill (§2.4)
 
-    /// Field-level rewrite wherever the message lives — live card, queue, or
+    /// Field-level rewrite wherever the message lives — live card or
     /// history — the script-backfill path's only write into the model. A
     /// retired/deleted message is a no-op: the backfill targeted a moment
     /// that has passed.
@@ -636,7 +576,7 @@ final class NotificationManager {
         delayed.cancel(.hoverExpand)
         reduce(.islandClicked)
         displayState = .opened(reason: .click)
-        markVisibleRowsRead()
+        markCurrentRead()
         presentExpanded()
         applyDismissRules()
         reconcileDwell()
@@ -677,7 +617,7 @@ final class NotificationManager {
         delayed.cancel(.hoverExpand)
         delayed.cancel(.manualCollapse)
         displayState = .opened(reason: .click)
-        markVisibleRowsRead()
+        markCurrentRead()
         presentExpanded()
         applyDismissRules()
         reconcileDwell()
@@ -800,11 +740,12 @@ final class NotificationManager {
         }
     }
 
-    /// How many criticals are waiting (queued or live) - drives the "处理全部"
-    /// affordance when the queue is piling up.
+    /// How many critical messages still wait for attention (unread, the live
+    /// one included) - drives the "处理全部" affordance when criticals pile up.
     var criticalBacklogCount: Int {
-        (current.map { $0.urgency == .critical ? 1 : 0 } ?? 0)
-            + queue.filter { $0.urgency == .critical }.count
+        messages.history.reduce(0) {
+            $0 + ($1.urgency == .critical && !messages.readIDs.contains($1.id) ? 1 : 0)
+        }
     }
 
     func dismissPanel() {
@@ -815,16 +756,14 @@ final class NotificationManager {
     }
 
     /// The one settle path for every collapse: `dismissPanel` (the message may
-    /// still be live), `advance` and `promoteNext` (the queue drained, so it
-    /// is not). One place decides where the display lands, whether the dwell
-    /// is armed, and which pending timer survives, so the paths cannot
-    /// disagree.
+    /// still be live) and `advance` (the live message retired, so it is not).
+    /// One place decides where the display lands, whether the dwell is armed,
+    /// and which pending timer survives, so the paths cannot disagree.
     private func settleDisplay(liveMessage: Bool) {
         delayed.cancel(.hoverExpand)
         delayed.cancel(.manualCollapse)
         displayState = .closed
         panelEntered = false          // §3.1: the latch resets with the panel
-        visibleRowIDs = []            // §4: nothing is on screen anymore
         applyDismissRules()
         // Once the panel is gone there is nothing left to hover, so the dwell
         // resumes even if the pointer is still sitting where the panel was.
@@ -851,7 +790,8 @@ final class NotificationManager {
     }
 
     /// Where an action's click goes: the handler records ack receipts or opens
-    /// the URL; the manager's only stake is that acting on the live message
+    /// the URL; the manager's only stake is that acting on a message marks it
+    /// read (the user engaged with it) and, when it is the live message,
     /// retires it, exactly like any other action.
     func performAction(
         _ action: NotificationAction,
@@ -859,6 +799,9 @@ final class NotificationManager {
         comment: String? = nil
     ) {
         actionHandler.execute(action, for: notification, comment: comment)
+        if !messages.readIDs.contains(notification.id) {
+            markRead(notification.id)
+        }
         if notification.id == current?.id {
             dismissCurrent()
         }
@@ -872,7 +815,7 @@ final class NotificationManager {
 
     /// Where the display settles once nothing is expanded.
     ///
-    /// One answer for every settle path (`advance`, `promoteNext`, `dismissPanel`,
+    /// One answer for every settle path (`advance`, `dismissPanel`,
     /// manual collapse): empty history always hides, and idle-hiding only takes
     /// the display down when no live message still needs the pill — a live
     /// message's own dwell will settle the display when it retires.
@@ -884,22 +827,14 @@ final class NotificationManager {
     /// presenter asks this when re-applying state after screen changes.
     var closedMeansHidden: Bool { settlesHidden(liveMessage: current != nil) }
 
-    /// Promotes the next pending item. The method remains synchronous for deterministic tests.
+    /// Retires the live message. v4 has no queue to rotate in: the message
+    /// stays in history (unread unless the user opened it) and the display
+    /// settles. The method remains synchronous for deterministic tests.
     func advance() {
         stopDwell()
-
-        guard !queue.isEmpty else {
-            presentation = nil
-            settleDisplay(liveMessage: false)
-            return
-        }
-
-        promoteNext(
-            autoExpand: !displayState.isOpened,
-            // No auto-expand here means the panel is already open and the
-            // content swaps in place; the presenter is left alone.
-            parkWhenNotExpanding: true
-        )
+        stopAgingTimers()
+        presentation = nil
+        settleDisplay(liveMessage: false)
     }
 
     /// The only way a message becomes live. It publishes the message and its dwell
@@ -922,61 +857,40 @@ final class NotificationManager {
         reconcileDwell()
     }
 
-    /// Promotes the next waiting message and reports which one reached the screen.
+    /// Where a push takes the screen - the only presentation entry point.
     ///
-    /// Not necessarily the message that triggered this call: a critical already
-    /// waiting outranks a newly pushed normal one, and the caller needs to know
-    /// that to report the push outcome honestly.
-    @discardableResult
-    private func promoteNext(autoExpand: Bool, parkWhenNotExpanding: Bool) -> NotchNotification? {
-        guard let next = messages.dequeue() else {
-            presentation = nil
-            settleDisplay(liveMessage: false)
-            return nil
-        }
-        // The landing state is knowable up front, so it is written exactly
-        // once. The old flow parked in `.transientExpanded` and let the caller
-        // overwrite it to `.compact` a moment later - two `displayState`
-        // writes and two didSet settles for a state that never reached the
-        // screen.
+    /// The previous live message simply steps back into history, still unread:
+    /// there is no queue and nothing to wait for. The landing state is knowable
+    /// up front, so it is written exactly once:
+    ///
+    /// - critical: always the expanded card, displacing anything;
+    /// - panel already open: the content swaps in place and the reason it
+    ///   opened survives (§2.3 invariant) - no presenter call at all;
+    /// - suppressed display: parked until the screen comes back;
+    /// - peek / expand setting off: the compact pill, dwell and all;
+    /// - otherwise: the expanded notification card.
+    private func present(_ item: NotchNotification) {
         let landing: NotchDisplayState
-        if displayState.isOpened, !displaySuppressed {
-            // Rotation into an already-open panel: content swaps in place and the
-            // reason it opened survives (§2.3 invariant).
-            landing = displayState
-        } else if autoExpand {
-            // The peek tier spends its dwell in the compact pill - title
-            // visible, panel untouched, unread still accruing.
-            landing = next.displayPeek == true ? .closed : .opened(reason: .notification)
-        } else if parkWhenNotExpanding {
-            // Suppressed display: park until the screen comes back (v2
-            // semantics), or rotation into an open panel above.
+        if item.urgency == .critical {
             landing = .opened(reason: .notification)
-        } else {
-            // `push` with the setting off - the message still surfaces, as a
-            // pill.
+        } else if displayState.isOpened, !displaySuppressed {
+            landing = displayState
+        } else if displaySuppressed {
+            landing = .opened(reason: .notification)
+        } else if item.displayPeek == true || !AppSettings.shared.autoExpandOnMessage {
             landing = .closed
+        } else {
+            landing = .opened(reason: .notification)
         }
-        beginPresenting(next, as: landing)
+        let rotatedInPlace = landing == displayState && displayState.isOpened
+        beginPresenting(item, as: landing)
+        // Rotating into an already-open panel needs no presenter call - the
+        // content swaps in place. A suppressed display parks the message
+        // exactly as it landed; `setDisplaySuppressed` settles it on return.
+        guard !rotatedInPlace, !displaySuppressed else { return }
         if case .closed = landing {
             presentCompact()
-        } else if autoExpand {
-            presentExpanded()
-        }
-        return next
-    }
-
-    private func promoteCritical(_ notification: NotchNotification) {
-        if let previous = presentation?.item, previous.id != notification.id {
-            // Back of the queue, never the front. The queue drains on urgency
-            // (see `dequeue`), so inserting at 0 would make the displaced
-            // critical the oldest pending item - and therefore the first thing
-            // an overflowing queue throws away.
-            messages.requeueDisplaced(previous)
-        }
-        messages.removeQueued(id: notification.id)
-        beginPresenting(notification, as: .opened(reason: .notification))
-        if !displaySuppressed {
+        } else {
             presentExpanded()
         }
     }
@@ -1104,35 +1018,20 @@ final class NotificationManager {
         }
     }
 
-    // MARK: - Read state (§4)
+    // MARK: - Read state (v4 §4)
     //
-    // One latch answers "has this open period been attended": it opened by
-    // click, or the pointer entered the panel. Everything visible when the
-    // answer turns yes is read at once; rows arriving later read on their
-    // onAppear report. Nothing else marks anything.
+    // Read state is explicit: a message becomes 历史 (read) only when the user
+    // opened it. A deliberate panel open reads the live card; expanding a row
+    // reads that row (the views call `setRead`); clicking an action reads its
+    // message. Hover opens, automatic cards, timeouts and dismissals mark
+    // nothing - 没点开就是没点开.
 
-    /// §4: this open period may mark rows read.
-    var readEligible: Bool { displayState.openReason == .click || panelEntered }
-
-    /// Row ids currently on screen, reported by the list (and by
-    /// `presentation`'s didSet for the live message). Not observed: it feeds
-    /// marking, not UI.
-    @ObservationIgnored private var visibleRowIDs: Set<UUID> = []
-
-    /// Everything on screen at the moment reading is earned: the live message
-    /// plus the rows the list reported visible.
-    private func markVisibleRowsRead() {
-        if let current, !messages.readIDs.contains(current.id) { markRead(current.id) }
-        for id in visibleRowIDs where !messages.readIDs.contains(id) { markRead(id) }
+    /// A deliberate open is the user asking for the live message - the "点开"
+    /// that turns it into history.
+    private func markCurrentRead() {
+        guard let current, !messages.readIDs.contains(current.id) else { return }
+        markRead(current.id)
     }
-
-    func noteRowVisible(_ id: UUID) {
-        visibleRowIDs.insert(id)
-        guard readEligible, !messages.readIDs.contains(id) else { return }
-        markRead(id)
-    }
-
-    func noteRowHidden(_ id: UUID) { visibleRowIDs.remove(id) }
 
     /// Cancels the aging timers whenever the presentation is retired or replaced;
     /// `beginPresenting` re-arms whichever applies to the incoming message.
@@ -1216,8 +1115,9 @@ final class NotificationManager {
     }
 
     /// The hover row action's read/unread toggle. Public (unlike `markRead`,
-    /// which serves the presence pipeline) because the panel drives it
-    /// directly; the unread badge and the persisted read set both follow.
+    /// which serves the deliberate-open path) because the panel and the
+    /// history window drive it directly; the unread badge and the persisted
+    /// read set both follow.
     func setRead(_ id: UUID, read: Bool) {
         if read {
             messages.markRead(id)
@@ -1243,12 +1143,7 @@ final class NotificationManager {
         }
     }
 
-    /// How many pending rows the panel renders before the "还有 N 条" line.
-    /// The full queue stays real; only the list is bounded so a burst of pushes
-    /// does not turn the panel into a wall of "待显示".
-    static let shownPendingCap = 5
-
-    /// Removes one entry from history (and the queue if it has not shown yet).
+    /// Removes one entry from history (the live message included).
     /// The single-message delete the trash-all button always needed beside it:
     /// "clear everything" and "clear this" are different questions.
     func removeHistory(id: UUID) {
@@ -1260,18 +1155,9 @@ final class NotificationManager {
         settleAfterRemoval(liveMessageRemoved: presentation?.item.id == id)
     }
 
-    /// The context menu's 「丢弃待显示消息」: the waiting messages stop competing
-    /// for the screen but stay in history, still unread. No persistence work —
-    /// the queue is runtime-only and never written to disk.
-    func discardPending() {
-        guard !messages.queue.isEmpty else { return }
-        messages.clearQueue()
-    }
-
     /// 「清空历史」 (history window, menu bar, ⌘⇧⌫): everything already shown
-    /// and no longer
-    /// live or queued goes away; the current message and the waiting list are
-    /// untouched. Routed through the same removal settlement as a single
+    /// and no longer live goes away; the current message is untouched.
+    /// Routed through the same removal settlement as a single
     /// delete, so a panel emptied this way still hides itself.
     func clearPastHistory() {
         let ids = Set(pastHistory.map(\.id))
@@ -1282,8 +1168,8 @@ final class NotificationManager {
     }
 
     /// Shared tail for the surgical deletes (`removeHistory`, `clear(group:)`):
-    /// when the live message is among the removed, the queue decides what
-    /// comes next; an app left with nothing hides the notch; either way the
+    /// when the live message is among the removed, the display retires it and
+    /// settles; an app left with nothing hides the notch; either way the
     /// change is persisted. `clear()` does not belong here - it wipes
     /// everything, timers and on-disk store included.
     private func settleAfterRemoval(liveMessageRemoved: Bool) {

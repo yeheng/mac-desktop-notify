@@ -89,7 +89,7 @@ struct OnboardingView: View {
                 case .displayed:
                     testFeedback = "测试通知已发送，请查看屏幕顶部；全屏时请先退出全屏。"
                 case .queued:
-                    testFeedback = "测试通知已加入队列，可打开历史信息查看。"
+                    testFeedback = "有紧急消息正在占屏；测试通知已存入历史（未读），可打开历史信息查看。"
                 case .withheld:
                     testFeedback = "测试通知已保存；静默或离开状态下不会弹出，可在历史信息中查看。"
                 }

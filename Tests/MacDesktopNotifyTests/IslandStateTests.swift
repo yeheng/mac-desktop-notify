@@ -32,30 +32,34 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         url: URL(string: "notch-notify://ack?token=t&result=ok")!
     )
 
-    func testOpenMessageCenterFromAutomaticCardPreservesMessagesAndSurvivesRotation() {
+    func testOpenMessageCenterFromAutomaticCardPreservesMessagesAndKeepsReasonOnRotation() {
         AppSettings.shared.autoExpandOnMessage = true
         AppSettings.shared.normalMessagesPeek = false
         let manager = NotificationManager()
-        // The automatic card is operable so the second push queues behind it
-        // (§3.1: an unattended info card would be displaced instead).
-        let current = make("current", actions: [approveAction])
-        let queued = make("queued")
-        manager.push(current)
-        manager.push(queued)
+        // v4: the second push displaces the first at once, operable or not.
+        let displaced = make("displaced", actions: [approveAction])
+        let newer = make("newer")
+        manager.push(displaced)
+        manager.push(newer)
+        XCTAssertEqual(manager.current?.id, newer.id)
         XCTAssertNotEqual(manager.displayState.openReason, .click, "an automatic card is not a deliberate open")
 
         manager.openMessageCenter()
         XCTAssertEqual(manager.displayState, .opened(reason: .click))
-        XCTAssertEqual(manager.current?.id, current.id)
-        XCTAssertEqual(manager.queue.map(\.id), [queued.id])
-        XCTAssertFalse(manager.isRead(queued), "opening must not mark unseen queued messages read")
+        XCTAssertEqual(manager.current?.id, newer.id)
+        XCTAssertTrue(manager.isRead(newer), "a deliberate open reads the live card")
+        XCTAssertFalse(manager.isRead(manager.pastHistory[0]), "opening must not mark the rows below read")
 
         manager.openMessageCenter()
         XCTAssertEqual(manager.displayState, .opened(reason: .click), "reopening must not toggle closed")
-        manager.advance()
-        XCTAssertEqual(manager.current?.id, queued.id)
+
+        // A push rotating into the open message center swaps content in
+        // place; the deliberate-open reason survives (§2.3).
+        let latest = make("latest")
+        manager.push(latest)
+        XCTAssertEqual(manager.current?.id, latest.id)
         XCTAssertEqual(manager.displayState.openReason, .click, "rotation must keep the complete list visible")
-        XCTAssertEqual(manager.historyCount, 2)
+        XCTAssertEqual(manager.historyCount, 3)
         manager.clear()
     }
 
@@ -91,7 +95,8 @@ final class IslandStateTests: SettingsIsolatedTestCase {
 
         XCTAssertEqual(manager.current?.title, "critical")
         XCTAssertEqual(manager.displayState, .opened(reason: .notification))
-        XCTAssertEqual(manager.pendingCount, 1)
+        XCTAssertEqual(manager.pastHistory.map(\.title), ["normal"],
+                       "the displaced message waits in history, unread")
     }
 
     func testSettingsRoundTripUsesTypedDefaults() {
@@ -201,7 +206,8 @@ final class IslandStateTests: SettingsIsolatedTestCase {
     }
 
     /// Regression: the stranded message made every later non-critical push invisible,
-    /// because `push` does nothing while another message is live.
+    /// because `push` used to do nothing while another message was live.
+    /// v4: the latest push takes over immediately, by design.
     func testLaterPushIsNotStarvedAfterPanelDismissal() async throws {
         let settings = AppSettings.shared
         let oldAutoExpand = settings.autoExpandOnMessage
@@ -209,22 +215,14 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         defer { settings.autoExpandOnMessage = oldAutoExpand }
 
         let m = NotificationManager()
-        m.notificationAutoCloseDelay = .milliseconds(900)
         m.push(make("first", timeout: 0.2))
         m.islandClicked()
         m.setHovering(true)
         m.dismissPanel()
 
-        m.push(make("second", timeout: 0.2))
-        try await Task.sleep(for: .milliseconds(500))
+        m.push(make("second", timeout: 60))
         XCTAssertEqual(m.current?.title, "second",
-                       "'second' must take over, not sit buried behind a stranded message")
-
-        // The pointer leaves with the panel; v3 (§3.1) holds the dwell while
-        // the rotation-opened panel is up, so the auto-close rule retires it.
-        m.setHovering(false)
-        try await Task.sleep(for: .milliseconds(1500))
-        XCTAssertNil(m.current)
+                       "'second' must take over at once, not sit buried behind a stranded message")
     }
 
     /// A live message always carries the countdown that retires it. Critical messages

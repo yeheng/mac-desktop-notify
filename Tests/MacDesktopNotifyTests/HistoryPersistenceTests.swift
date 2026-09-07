@@ -81,7 +81,6 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
         XCTAssertTrue(m.isRead(a))
         XCTAssertFalse(m.isRead(b))
         XCTAssertNil(m.current, "restoring history must not resurrect a live message")
-        XCTAssertEqual(m.pendingCount, 0)
     }
 
     func testRestoreSurfacesUnreadAsCompactPill() throws {
