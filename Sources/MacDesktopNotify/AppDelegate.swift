@@ -134,10 +134,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onboardingController = controller
             controller.show()
         }
-        // TEMP visual-check hook, reverted after screenshot
-        if ProcessInfo.processInfo.environment["MDN_SHOW_SETTINGS"] == "1" {
-            settingsController?.show()
-        }
     }
 
     // MARK: - URL ingress

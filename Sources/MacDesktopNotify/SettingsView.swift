@@ -121,7 +121,7 @@ struct SettingsView: View {
             // the top; a zero-width tall item stretches the bar to match.
             .toolbar {
                 ToolbarItem(placement: .navigation) {
-                    Color.clear.frame(width: 0, height: 44)
+                    Color.clear.frame(width: 1, height: 44)
                 }
             }
             .navigationSplitViewColumnWidth(min: 470, ideal: 620, max: .infinity)
