@@ -4,6 +4,7 @@ import SwiftUI
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    private var keyMonitor: Any?
 
     func show() {
         if let window {
@@ -30,11 +31,26 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         window.isReleasedWhenClosed = false
         self.window = window
+        // LSUIElement 应用没有主菜单，⌘Q 无路由来这里；本地监视器只认这个
+        // 窗口为 key 时的裸 ⌘Q——⌘⇧Q（系统注销）必须放行。
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self,
+                  event.window === self.window,
+                  event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command],
+                  event.charactersIgnoringModifiers?.lowercased() == "q"
+            else { return event }
+            self.window?.performClose(nil)
+            return nil
+        }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
+        }
         window = nil
     }
 }
