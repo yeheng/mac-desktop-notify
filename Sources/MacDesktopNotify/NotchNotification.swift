@@ -43,18 +43,6 @@ struct NotificationAction: Sendable, Equatable, Codable {
 }
 
 extension Notification.Name {
-    /// ⌘1–⌘3 reached the app while the panel is open. Only the live message's
-    /// action row listens: a plain button fires at once, a button asking for a
-    /// comment opens (and focuses) its input instead.
-    static let islandActionShortcut = Notification.Name("MacDesktopNotify.actionShortcut")
-/// A list-navigation key reached the app while the panel owns the pointer
-/// (P2 keyboard nav). userInfo["key"] is one of: up / down / return /
-/// delete / m. Posted rather than called directly because the list owns the
-/// selection state and the panel view hierarchy is recreated per opening.
-static let islandListKey = Notification.Name("MacDesktopNotify.listKey")
-}
-
-extension Notification.Name {
     /// Ask the app delegate to run its modal clear-all confirmation. The
     /// panel's own inline confirmationDialog dies with the panel window when
     /// a hover-out or outside-click collapse races the confirmation; the

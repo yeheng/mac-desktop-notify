@@ -79,20 +79,6 @@ private enum PanelTextOpacity {
     static let subtle: Double = 0.66
 }
 
-/// A stable summary width keeps the activation area predictable. The full
-/// title remains available without waiting for a scrolling animation.
-private struct SummaryTitleText: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .frame(maxWidth: 220, alignment: .leading)
-            .help(text)
-    }
-}
-
 /// Shared by the panel toolbar and context menu so cleanup scopes agree.
 private struct MessageManagementActions: View {
     private var manager: NotificationManager { .shared }
@@ -163,35 +149,20 @@ struct CompactIslandView: View {
         Group {
             switch side {
             case .leading:
-                HStack(spacing: 5) {
-                    // Clean mode is text-only (see README's layout table); the
-                    // urgency icon belongs to normal and detailed.
-                    if settings.showUrgency, settings.layoutMode != .clean {
-                        Image(systemName: manager.displayUrgency?.symbolName ?? "sparkles")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(manager.displayUrgency?.color ?? .blue)
-                            .accessibilityHidden(true)
-                    }
-                    if manager.compactShowsMessageTitle, let title = manager.current?.title {
-                        SummaryTitleText(text: title)
-                            .contentTransition(.opacity)
-                    } else {
-                        Text(manager.compactStatus)
-                            .lineLimit(1)
-                            .contentTransition(.opacity)
-                    }
-                }
+                // Tier 0 ambient: urgency glyph only - titles live on the card
+                // and in the message center, never in the pill (§6).
+                Image(systemName: manager.displayUrgency?.symbolName ?? "sparkles")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(settings.showUrgency ? (manager.displayUrgency?.color ?? .blue) : Color.secondary)
+                    .accessibilityHidden(true)
             case .trailing:
-                // The leading side already announces "N 条未读" when nothing is
-                // live, so the count only belongs here while a live message owns
-                // the leading text - and it excludes that message itself.
-                if settings.showHistoryCount, let current = manager.current {
-                    let backlog = manager.unreadCount - (manager.isRead(current) ? 0 : 1)
-                    if backlog > 0 {
-                        Text("\(backlog) 条未读")
-                            .lineLimit(1)
-                            .contentTransition(.numericText())
-                    }
+                // ×N unread badge, N > 1 (Open Island style); the glyph alone
+                // already says "something" when there is exactly one.
+                if settings.showHistoryCount, manager.unreadCount > 1 {
+                    Text("×\(manager.unreadCount)")
+                        .lineLimit(1)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
                 }
             }
         }
@@ -486,7 +457,7 @@ private struct CurrentCard: View {
             NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
 
             if !notification.actions.isEmpty {
-                ActionRow(actions: notification.actions, shortcutHints: true) { action, comment in
+                ActionRow(actions: notification.actions) { action, comment in
                     manager.performAction(action, for: notification, comment: comment)
                 }
             }
@@ -707,9 +678,6 @@ private struct NotificationBodyView: View {
 /// Callback buttons for a notification. The first action renders as primary.
 private struct ActionRow: View {
     let actions: [NotificationAction]
-    /// Only the live message's buttons are reachable via ⌘1–⌘3 (see
-    /// `AppDelegate.handleActionShortcut`), so only it advertises the shortcut.
-    var shortcutHints: Bool = false
     /// The comment the user typed, when the button asked for one.
     let perform: (NotificationAction, String?) -> Void
 
@@ -732,7 +700,7 @@ private struct ActionRow: View {
                             .padding(.vertical, 6)
                     }
                     .buttonStyle(ActionCapsuleStyle(primary: index == 0))
-                    .help(helpText(for: action, at: index))
+                    .help(action.wantsComment ? "操作：\(action.label)，需要填写原因" : "操作：\(action.label)")
                     .accessibilityLabel("操作：\(action.label)")
                 }
                 Spacer(minLength: 0)
@@ -742,17 +710,6 @@ private struct ActionRow: View {
             }
         }
         .onChange(of: actions) { _, _ in pending = nil; comment = "" }
-        .onReceive(NotificationCenter.default.publisher(for: .islandActionShortcut)) { note in
-            guard shortcutHints,
-                  let index = note.userInfo?["index"] as? Int,
-                  actions.indices.contains(index) else { return }
-            request(actions[index])
-        }
-    }
-
-    private func helpText(for action: NotificationAction, at index: Int) -> String {
-        let base = action.wantsComment ? "操作：\(action.label)，需要填写原因" : "操作：\(action.label)"
-        return shortcutHints ? "\(base)（快捷键 ⌘\(index + 1)，指针在面板上时生效）" : base
     }
 
     /// One line, because a reason is a sentence - and a two-line field inside

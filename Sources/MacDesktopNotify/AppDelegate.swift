@@ -23,14 +23,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var localKeyMonitor: Any?
     /// System ⌃⌥N - registered via Carbon, needs no Accessibility trust.
     private var panelHotkey: SystemHotkey?
-    /// ⌘1–⌘3 via Carbon, registered only while they have something to act on
-    /// (panel open, pointer near, live message has actions - see
-    /// `NotificationManager.actionShortcutsEligible`). Unlike the NSEvent
-    /// monitors, Carbon consumes the keystroke before the front app sees it
-    /// and needs no Accessibility trust; the same dynamic-registration trick
-    /// cannot cover Esc/arrow keys, which would steal typing from terminal
-    /// and vim whenever the pointer rests on the panel.
-    private var actionHotkeys: [SystemHotkey] = []
     /// Throttled per urgency: a chatty normal sender must not silence a critical
     /// that lands inside the same window.
     private var lastSoundAt: [UrgencyLevel: Date] = [:]
@@ -78,14 +70,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.syncPanelHotkey() }
         }
-        NotificationCenter.default.addObserver(
-            forName: NotificationManager.actionShortcutEligibilityDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.syncActionHotkeys() }
-        }
-        syncActionHotkeys()
 
         // "重新运行首次引导" from Settings → 关于 lands here.
         NotificationCenter.default.addObserver(
@@ -241,28 +225,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Registers ⌘1–⌘3 with Carbon exactly while they are eligible, so the
-    /// keys belong to the front app at every other moment. A key already taken
-    /// by another app fails registration and simply stays on the NSEvent
-    /// monitor path (`handleActionShortcut`).
-    private func syncActionHotkeys() {
-        for hotkey in actionHotkeys { hotkey.unregister() }
-        actionHotkeys = []
-        let manager = NotificationManager.shared
-        guard manager.actionShortcutsEligible,
-              let actions = manager.current?.actions else { return }
-        for (index, _) in actions.prefix(SystemHotkey.actionKeyCodes.count).enumerated() {
-            guard let hotkey = SystemHotkey.register(
-                keyCode: SystemHotkey.actionKeyCodes[index],
-                carbonModifiers: SystemHotkey.commandModifiers,
-                signature: 0x4E4F4143,  // 'NOAC'
-                id: UInt32(index + 1),
-                action: { [weak self] in self?.fireActionShortcut(index: index) }
-            ) else { continue }
-            actionHotkeys.append(hotkey)
-        }
-    }
-
     // MARK: - Menu bar
 
     private func setupStatusItem() {
@@ -390,108 +352,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installShortcutMonitors() {
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                // Action shortcuts are gated by pointer engagement rather than
-                // app activation (the panel never activates the app).
-                // Esc is gated by `canDismissWithEscape` for the same reason:
-                // a global Esc that collapses the panel on every vim press is
-                // worse than no Esc at all. Esc and the list keys need
-                // Accessibility trust to fire from other apps; ⌃⌥N and ⌘1–⌘3
-                // are Carbon hotkeys and do not (⌘1–⌘3 only while eligible -
-                // this monitor path is the fallback for keys Carbon could not
-                // register).
-                if self.handleActionShortcut(event) { return }
-                // List navigation (P2) must run here too: the panel never
-                // activates the app, so ↑/↓/⏎/⌫ aimed at it arrive in the
-                // global monitor, not the local one. The handler's
-                // pointer-on-panel gate keeps other apps' keystrokes safe.
-                _ = self.handleListNavigation(event)
-                _ = self.handleShortcut(event)
+                _ = self?.handleShortcut(event)
             }
         }
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            return (self.handleActionShortcut(event) || self.handleListNavigation(event) || self.handleShortcut(event)) ? nil : event
+            return self.handleShortcut(event) ? nil : event
         }
     }
 
-    /// ⌘1–⌘3 fire the live message's action buttons.
-    ///
-    /// The notch panel is a non-activating panel: clicking it never makes this
-    /// app active, so a keystroke aimed at the panel lands in the *global*
-    /// monitor. Gating on `pointerNearPanel` (pointer on the panel or in the
-    /// island's activation zone) is what makes that safe - a ⌘1 meant for a
-    /// browser's tab bar cannot be stolen while the pointer is nowhere near.
-    ///
-    /// This monitor path is the fallback: while Carbon owns a key (see
-    /// `syncActionHotkeys`) the keystroke never reaches any monitor, and a
-    /// monitor event that still arrives for such a key must not fire again.
-    private func handleActionShortcut(_ event: NSEvent) -> Bool {
-        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command],
-              let index = [18: 0, 19: 1, 20: 2][event.keyCode] else { return false }
-        guard !actionHotkeys.contains(where: { $0.keyCode == UInt32(event.keyCode) }) else { return false }
-        return fireActionShortcut(index: index)
-    }
-
-    /// The single implementation behind ⌘1–⌘3, reached from the Carbon hotkeys
-    /// and from the NSEvent monitors. The eligibility gate is re-checked at
-    /// fire time: registration lags the real state by a notification hop, so a
-    /// hotkey pressed just as the pointer left the panel must do nothing.
-    @discardableResult
-    private func fireActionShortcut(index: Int) -> Bool {
-        let manager = NotificationManager.shared
-        guard manager.displayState.isOpened, manager.pointerNearPanel,
-              let current = manager.current, current.actions.indices.contains(index) else { return false }
-        let action = current.actions[index]
-        IslandHaptics.actionConfirmed()
-        // A button that asks for a comment cannot be fired from the keyboard:
-        // the keystroke has no reason attached. The shortcut opens the field and
-        // focuses it, so the round trip stays "hotkey in, typed reason out".
-        if action.wantsComment {
-            NotificationCenter.default.post(
-                name: .islandActionShortcut,
-                object: nil,
-                userInfo: ["index": index]
-            )
-            return true
-        }
-        manager.performAction(action, for: current)
-        return true
-    }
-
-    /// Panel list navigation (P2): ↑/↓ move the row selection, ⏎/Space toggle
-    /// the row, ⌫ deletes it (undoable via the toast), m toggles read, ⌘⇧⌫
-    /// clears the history section (with confirmation).
-    ///
-    /// Same gating philosophy as ⌘1–⌘3: the keys belong to the panel only
-    /// while the pointer is on it, because the panel never activates the app.
-    /// Two escape hatches keep it from hijacking real typing: a focused
-    /// comment field (first responder is a text editor) keeps its keys, and
-    /// the global monitor cannot consume keystrokes anyway - a key meant for
-    /// the front app still reaches it.
-    private func handleListNavigation(_ event: NSEvent) -> Bool {
-        let manager = NotificationManager.shared
-        guard manager.displayState.isOpened, manager.pointerNearPanel else { return false }
-        // The ActionRow comment field is first responder while open; stealing
-        // ⌫ or letters from a text edit would be unforgivable.
-        if NSApp.keyWindow?.firstResponder is NSTextView { return false }
-        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let key: String
-        switch (event.keyCode, mods) {
-        case (126, []): key = "up"
-        case (125, []): key = "down"
-        // Return, keypad Enter, and Space all toggle the selected row.
-        case (36, []), (76, []), (49, []): key = "return"
-        case (51, []): key = "delete"
-        case (46, []): key = "m"
-        case (51, [.command, .shift]):
-            requestClearHistory()
-            return true
-        default: return false
-        }
-        NotificationCenter.default.post(name: .islandListKey, object: nil, userInfo: ["key": key])
-        return true
-    }
 
     /// Esc collapses the panel. That is the only key this handler claims:
     /// the ⌘-family shortcuts (⌘, / ⌘⇧N / ⌘Delete) were removed - a shortcut

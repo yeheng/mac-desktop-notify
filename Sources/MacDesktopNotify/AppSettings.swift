@@ -1,22 +1,6 @@
 import Foundation
 import Observation
 
-enum IslandLayoutMode: String, CaseIterable, Identifiable {
-    case normal
-    case clean
-    case detailed
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .normal: "标准"
-        case .clean: "简洁"
-        case .detailed: "详细"
-        }
-    }
-}
-
 @MainActor
 @Observable
 final class AppSettings {
@@ -82,8 +66,8 @@ final class AppSettings {
             NotificationCenter.default.post(name: Self.summaryRoutingDidChange, object: nil)
         }
     }
-    var layoutMode: IslandLayoutMode { didSet { save(layoutMode.rawValue, key: Keys.layoutMode) } }
     var contentFontSize: Double { didSet { save(contentFontSize, key: Keys.contentFontSize) } }
+
     var panelWidth: Double { didSet { save(panelWidth, key: Keys.panelWidth) } }
     var panelHeight: Double { didSet { save(panelHeight, key: Keys.panelHeight) } }
     var notchWidthOffset: Double { didSet { save(notchWidthOffset, key: Keys.notchWidthOffset) } }
@@ -93,10 +77,6 @@ final class AppSettings {
     var soundEnabled: Bool { didSet { save(soundEnabled, key: Keys.soundEnabled) } }
     var launchAtLogin: Bool { didSet { save(launchAtLogin, key: Keys.launchAtLogin) } }
     var persistHistory: Bool { didSet { save(persistHistory, key: Keys.persistHistory) } }
-    /// Off by default: the panel opens as a clean list of titles, and the user
-    /// expands what they want. On restores the pre-redesign behavior where the
-    /// newest history entry arrived with its body already open.
-    var autoExpandLatestHistoryOnOpen: Bool { didSet { save(autoExpandLatestHistoryOnOpen, key: Keys.autoExpandLatestHistoryOnOpen) } }
     var quietMode: QuietMode { didSet { save(quietMode.rawValue, key: Keys.quietMode) } }
     /// Critical messages block until dismissed; with this on, an untouched one
     /// demotes itself to the pill after five minutes so the screen is not held
@@ -176,7 +156,6 @@ final class AppSettings {
         excludeFromScreenRecording = defaults.object(forKey: Keys.excludeFromScreenRecording.rawValue) as? Bool ?? true
         miniSummaryOnNotchlessScreens = defaults.object(forKey: Keys.miniSummaryOnNotchlessScreens.rawValue) as? Bool ?? true
         mirrorSummaryOnAllDisplays = defaults.object(forKey: Keys.mirrorSummaryOnAllDisplays.rawValue) as? Bool ?? false
-        layoutMode = IslandLayoutMode(rawValue: defaults.string(forKey: Keys.layoutMode.rawValue) ?? "normal") ?? .normal
         contentFontSize = defaults.object(forKey: Keys.contentFontSize.rawValue) as? Double ?? 12
         panelWidth = defaults.object(forKey: Keys.panelWidth.rawValue) as? Double ?? 460
         panelHeight = defaults.object(forKey: Keys.panelHeight.rawValue) as? Double ?? 360
@@ -187,7 +166,6 @@ final class AppSettings {
         soundEnabled = defaults.object(forKey: Keys.soundEnabled.rawValue) as? Bool ?? true
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin.rawValue) as? Bool ?? false
         persistHistory = defaults.object(forKey: Keys.persistHistory.rawValue) as? Bool ?? true
-        autoExpandLatestHistoryOnOpen = defaults.object(forKey: Keys.autoExpandLatestHistoryOnOpen.rawValue) as? Bool ?? false
         quietMode = QuietMode(rawValue: defaults.string(forKey: Keys.quietMode.rawValue) ?? "") ?? .off
         ageOutCriticals = defaults.object(forKey: Keys.ageOutCriticals.rawValue) as? Bool ?? true
         onboardingCompleted = defaults.object(forKey: Keys.onboardingCompleted.rawValue) as? Bool ?? false
@@ -215,7 +193,6 @@ final class AppSettings {
     }
 
     func resetDisplayDefaults() {
-        layoutMode = .normal
         contentFontSize = 12
         panelWidth = 460
         panelHeight = 360
@@ -248,7 +225,6 @@ final class AppSettings {
         case excludeFromScreenRecording = "island.excludeFromScreenRecording"
         case miniSummaryOnNotchlessScreens = "island.miniSummaryOnNotchlessScreens"
         case mirrorSummaryOnAllDisplays = "island.mirrorSummaryOnAllDisplays"
-        case layoutMode = "island.layoutMode"
         case contentFontSize = "island.contentFontSize"
         case panelWidth = "island.panelWidth"
         case panelHeight = "island.panelHeight"
@@ -264,6 +240,11 @@ final class AppSettings {
         // `resetAllForTesting` still wipes the stale on-disk key.
         case globalShortcutsEnabled = "island.globalShortcutsEnabled"
         case persistHistory = "island.persistHistory"
+        // Retired with the v3 interaction model (one pill form; flat read-only
+        // panel). The cases stay so `resetAllForTesting` keeps wiping the stale
+        // on-disk keys - user defaults are deliberately NOT cleaned, so a
+        // downgrade/rollback does not step on them.
+        case layoutMode = "island.layoutMode"
         case autoExpandLatestHistoryOnOpen = "island.autoExpandLatestHistoryOnOpen"
         case quietMode = "island.quietMode"
         case ageOutCriticals = "island.ageOutCriticals"

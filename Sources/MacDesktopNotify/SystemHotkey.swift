@@ -171,10 +171,6 @@ final class SystemHotkey {
 extension SystemHotkey {
     /// N in Carbon virtual key codes.
     static let nKeyCode: UInt32 = 45
-    /// 1 / 2 / 3 in Carbon virtual key codes — the ⌘-number action shortcuts.
-    static let actionKeyCodes: [UInt32] = [18, 19, 20]
     /// Control + Option in Carbon's modifier vocabulary.
     static let controlOptionModifiers: UInt32 = UInt32(controlKey | optionKey)
-    /// Command alone in Carbon's modifier vocabulary.
-    static let commandModifiers: UInt32 = UInt32(cmdKey)
 }

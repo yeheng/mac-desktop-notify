@@ -1,7 +1,7 @@
 /// §2.1: the window has exactly two states. Why the panel is open travels
 /// with the state as `OpenReason`, so a message rotating into an already-open
-/// panel can never lose the intent that opened it — the v2
-/// `panelOpenedManually` patch bool existed to paper over exactly that.
+/// panel can never lose the intent that opened it — the v2 patch bool that
+/// tracked "opened manually" existed to paper over exactly that gap.
 enum NotchDisplayState: Equatable {
     /// Pill, or fully hidden — which of the two is a presenter decision
     /// driven by `hasContent` and `hideWhenIdle` (§2.3), not a state.

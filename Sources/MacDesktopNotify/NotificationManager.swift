@@ -65,11 +65,6 @@ final class NotificationManager {
     /// views (the status item icon redraws from this).
     static let unreadCountDidChange = Notification.Name("MacDesktopNotify.unreadCountDidChange")
 
-    /// Posts whenever `actionShortcutsEligible` flips, for the app delegate's
-    /// dynamic Carbon registration of ⌘1–⌘3 — the same non-SwiftUI channel as
-    /// `unreadCountDidChange`.
-    static let actionShortcutEligibilityDidChange = Notification.Name("MacDesktopNotify.actionShortcutEligibilityDidChange")
-
     /// Writes are debounced so a burst of pushes costs one save, not one per message.
     static let persistDebounce: Duration = .milliseconds(500)
 
@@ -87,30 +82,20 @@ final class NotificationManager {
             if let old = oldValue?.item, presentation?.item.id != old.id {
                 noteRowHidden(old.id)
             }
-            syncActionShortcutEligibility()
         }
     }
 
     /// Pure queue/history/read-state data, extracted so the invariants live in
     /// one place; the facades below keep the observed surface stable.
     @ObservationIgnored private var messages = NotificationQueue()
-    private(set) var displayState: NotchDisplayState = .closed {
-        didSet {
-            // Task 5 删掉 shortcut 同步后整个 didSet 消失。
-            syncActionShortcutEligibility()
-        }
-    }
+    private(set) var displayState: NotchDisplayState = .closed
     private(set) var unreadCount = 0
 
     /// Where the pointer is relative to the island, as one value. Tracked (not
     /// ignored) because `pointerNearIsland` derives from it and the compact
     /// pill's pre-expansion cue reads that. All transitions flow through
     /// `reduce(_:)`; nothing else writes it.
-    private var pointer = PointerState() {
-        didSet {
-            if pointer != oldValue { syncActionShortcutEligibility() }
-        }
-    }
+    private var pointer = PointerState()
     @ObservationIgnored private(set) var compactLeadingWidth: CGFloat = 0
     @ObservationIgnored private(set) var compactTrailingWidth: CGFloat = 0
     /// Readable by the presenter, which re-applies display state across screen
@@ -168,13 +153,6 @@ final class NotificationManager {
         return unreadCount > 0 ? "\(unreadCount) 条未读" : ""
     }
 
-    /// Whether the compact pill shows the live message's title instead of the
-    /// generic status text. Detailed layout always does; a peek message must,
-    /// because the title *is* the notification - "新消息" would say nothing.
-    var compactShowsMessageTitle: Bool {
-        AppSettings.shared.layoutMode == .detailed || current?.displayPeek == true
-    }
-
     func isRead(_ notification: NotchNotification) -> Bool {
         messages.readIDs.contains(notification.id)
     }
@@ -185,26 +163,6 @@ final class NotificationManager {
     /// True while the pointer is over the expanded panel or inside the compact
     /// activation zone. Used to scope Esc so it cannot fire from other apps.
     var pointerNearPanel: Bool { pointer.onPanel || pointer.nearIsland }
-
-    /// Whether ⌘1–⌘3 currently have something to act on: the panel is open,
-    /// the pointer is near it, and the live message carries action buttons.
-    /// The app delegate registers the Carbon hotkeys only while this holds —
-    /// an always-on ⌘1 would eat the front app's own shortcuts.
-    var actionShortcutsEligible: Bool {
-        displayState.isOpened && pointerNearPanel && !(current?.actions.isEmpty ?? true)
-    }
-
-    /// The eligibility value last announced, so a flip posts exactly once.
-    @ObservationIgnored private var announcedActionShortcutEligibility = false
-
-    /// The single choke point every input to `actionShortcutsEligible`
-    /// (presentation, display state, pointer) reports into.
-    private func syncActionShortcutEligibility() {
-        let eligible = actionShortcutsEligible
-        guard eligible != announcedActionShortcutEligibility else { return }
-        announcedActionShortcutEligibility = eligible
-        NotificationCenter.default.post(name: Self.actionShortcutEligibilityDidChange, object: nil)
-    }
 
     // MARK: - Panel view state
     //
@@ -911,18 +869,12 @@ final class NotificationManager {
 
     /// The only way a message becomes live. It publishes the message and its dwell
     /// budget as one value, then hands the countdown to `reconcileDwell`.
-    /// How long a peek message holds the pill when the sender gave no timeout.
-    /// Long enough to read a title, short enough that a chatty sender cannot
-    /// turn the notch into a ticker.
-    static let peekDwellSeconds: TimeInterval = 3
-
     private func beginPresenting(_ item: NotchNotification, as state: NotchDisplayState) {
-        let defaultDwell = item.displayPeek == true
-            ? Self.peekDwellSeconds
-            : AppSettings.shared.messageDwellSeconds
+        // §6/§7: peek degrades to "no auto card, Tier 0 only" - the pill dwell
+        // is the sender timeout ?? the app's dwell setting; no special budget.
         let budget: Duration? = item.urgency == .critical
             ? nil
-            : .seconds(max(0.1, item.timeout ?? defaultDwell))
+            : .seconds(max(0.1, item.timeout ?? AppSettings.shared.messageDwellSeconds))
         stopDwell()
         stopAgingTimers()
         presentation = Presentation(item: item, remaining: budget)

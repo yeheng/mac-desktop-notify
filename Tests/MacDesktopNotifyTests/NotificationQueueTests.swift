@@ -416,7 +416,9 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
 
     /// Peek dwell: when the sender left the timeout to the app, a peek message
     /// holds the pill for the short peek budget, not the full dwell setting.
-    func testPeekDefaultDwellIsThreeSeconds() {
+    /// §6/§7: peek degrades to "no auto card, Tier 0 only" - the pill dwell is
+    /// the sender timeout ?? the app's dwell setting; no special 3s budget.
+    func testPeekUsesStandardDwellBudget() {
         let settings = AppSettings.shared
         let old = settings.messageDwellSeconds
         settings.messageDwellSeconds = 20
@@ -424,12 +426,8 @@ final class NotificationQueueTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(NotchNotification(title: "p", bodyMarkdown: "", urgency: .normal, timeout: nil, displayPeek: true))
-        XCTAssertEqual(m.presentation?.remaining, .seconds(3))
-
-        // A fresh run isolates the non-peek dwell from the peek message's state.
-        let m2 = NotificationManager()
-        m2.push(NotchNotification(title: "n", bodyMarkdown: "", urgency: .normal, timeout: nil, displayPeek: false))
-        XCTAssertEqual(m2.presentation?.remaining, .seconds(20), "a non-peek message keeps the dwell setting")
+        XCTAssertEqual(m.displayState, .closed, "peek never opens the panel")
+        XCTAssertEqual(m.presentation?.remaining, .seconds(20))
     }
 
     // MARK: - List model
