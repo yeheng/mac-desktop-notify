@@ -1,0 +1,138 @@
+/* egui-notify 通知卡片样式（CSS 子集）· Tahoe (macOS 26) Liquid Glass 外观
+
+   相对经典外观的差异：
+     - 卡片宽 372px、连续大圆角（22px），对齐 Tahoe 通知中心
+     - 更低不透明度背景模拟玻璃质感，浅色半透明描边模拟高光边缘
+     - 隐藏 app-name：应用名由分组头（group-title）展示，与通知中心一致
+     - 操作按钮与组头控件为胶囊形（大圆角 + 半透明填充）
+   支持的属性与 @media dark 覆盖规则同 style.css。
+   组内卡片间距见 notify.rs 的 CARD_GAP（7px，对齐通知中心）。 */
+
+toast {
+  width: 372px;
+  padding: 14px;
+  flex-direction: row;
+  gap: 12px;
+  border-radius: 22px;
+  background: rgba(248, 248, 252, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+}
+
+icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  background: rgb(0, 122, 255);
+  color: white;
+  font-size: 18px;
+}
+
+content {
+  width: 264px;
+  gap: 3px;
+}
+
+app-name {
+  display: none;
+}
+
+title-row {
+  flex-direction: row;
+}
+
+title {
+  font-size: 14px;
+  font-weight: bold;
+}
+
+time {
+  font-size: 12px;
+  color: rgba(60, 60, 67, 0.55);
+}
+
+body {
+  font-size: 13px;
+  color: rgba(60, 60, 67, 0.8);
+}
+
+actions {
+  flex-direction: row;
+  gap: 8px;
+}
+
+action-button {
+  font-size: 12.5px;
+  padding: 5px;
+  border-radius: 16px;
+  background: rgba(120, 120, 128, 0.14);
+  color: rgba(0, 0, 0, 0.85);
+}
+
+close-button {
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.05);
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 13px;
+}
+
+group-title {
+  font-size: 17px;
+  font-weight: bold;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+group-toggle {
+  font-size: 13px;
+  padding: 5px;
+  border-radius: 14px;
+  background: rgba(120, 120, 128, 0.18);
+  color: rgba(0, 0, 0, 0.65);
+}
+
+group-clear {
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  background: rgba(120, 120, 128, 0.18);
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 13px;
+}
+
+@media (prefers-color-scheme: dark) {
+  toast {
+    background: rgba(44, 44, 48, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  }
+  icon {
+    background: rgb(10, 132, 255);
+  }
+  time {
+    color: rgba(235, 235, 245, 0.55);
+  }
+  body {
+    color: rgba(235, 235, 245, 0.8);
+  }
+  action-button {
+    background: rgba(120, 120, 128, 0.28);
+    color: rgba(255, 255, 255, 0.92);
+  }
+  close-button {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.65);
+  }
+  group-title {
+    color: rgba(255, 255, 255, 0.92);
+  }
+  group-toggle {
+    background: rgba(120, 120, 128, 0.32);
+    color: rgba(255, 255, 255, 0.75);
+  }
+  group-clear {
+    background: rgba(120, 120, 128, 0.32);
+    color: rgba(255, 255, 255, 0.65);
+  }
+}

@@ -1,0 +1,19 @@
+<!-- egui-notify 通知卡片结构模板（HTML 子集）· Tahoe (macOS 26) Liquid Glass 外观
+
+     占位符与组件用法同 template.html，差异全部由 style-tahoe.css 体现：
+     更大的圆角、半透明"玻璃"质感背景、胶囊形操作按钮；
+     app-name 在 Tahoe 下隐藏（应用名由分组头展示，对齐通知中心样式） -->
+<toast>
+  <icon>{{initial}}</icon>
+  <content>
+    <app-name>{{app}}</app-name>
+    <title-row>
+      <title>{{title}}</title>
+      <spacer/>
+      <time>{{time}}</time>
+    </title-row>
+    <body>{{body}}</body>
+    <actions></actions>
+  </content>
+  <close-button>×</close-button>
+</toast>
