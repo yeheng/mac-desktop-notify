@@ -4,10 +4,10 @@
 //! - 带 background/padding/border-radius/border 的元素渲染为带底色的盒子
 //! - 标签为 close-button 的元素渲染为关闭按钮（仅悬停通知时可见）
 //! - 标签为 actions 的元素渲染为操作按钮行，内容由通知数据注入（action-button 标签选择器控制按钮样式）
-//! - 标签为 spacer 的元素占满所在横行的剩余宽度，把后续元素顶到右端
+//! - 标签为 spacer 的元素把所在横行拆成左/右两段：spacer 之后的内容靠右对齐（如标题行右侧的时间）
 //! - class 属性用于 CSS 类选择器，标签名可直接作为标签选择器
 
-use eframe::egui::{self, Align2, Color32, FontId, RichText};
+use eframe::egui::{self, Align2, Color32, FontId, RichText, Sense};
 
 use crate::style::{Sheet, Style};
 
@@ -184,15 +184,11 @@ fn render_node(
         return;
     }
     if tag == "spacer" {
-        // 占满横行剩余宽度，把后续元素顶到右端（如标题行右侧的时间）
-        let w = ui.available_width();
-        if w.is_finite() && w > 0.0 {
-            ui.allocate_space(egui::vec2(w, 0.0));
-        }
+        // 横行内的 spacer 由父容器拆行处理（见上方 split 逻辑）；走到这里说明在纵列里，无意义，跳过
         return;
     }
     if tag == "close-button" {
-        render_close_button(ui, &style, data, text_ctx, children, events);
+        // 关闭按钮不占行内空间：悬停时由 render_toast 以 overlay 形式画在卡片左缘
         return;
     }
     if tag == "actions" {
@@ -210,8 +206,24 @@ fn render_node(
         bold: style.bold.unwrap_or(text_ctx.bold),
     };
 
+    // 叶子文本元素（如 <time>{{time}}</time>）：不带盒样式时直接把文本渲染进父 ui，
+    // 让外层 right_to_left 等布局把它当普通 widget 定位；套一层 vertical 子布局会吃掉右对齐
+    if !style.direction_row
+        && style.width.is_none()
+        && style.gap.is_none()
+        && style.background.is_none()
+        && style.padding.is_none()
+        && style.border_radius.is_none()
+        && children.iter().all(|c| c.element().is_none())
+    {
+        for child in children {
+            render_node(ui, child, sheet, dark, data, text_ctx, events);
+        }
+        return;
+    }
+
     let content = |ui: &mut egui::Ui, events: &mut ToastEvents| {
-        let inner = |ui: &mut egui::Ui, events: &mut ToastEvents| {
+        let setup = |ui: &mut egui::Ui| {
             // 尺寸/间距约束必须在新建的子 ui 里设置；
             // 在横向布局的父 ui 上直接 set_max_width 会把子内容拉回行起点
             if let Some(width) = style.width {
@@ -222,14 +234,44 @@ fn render_node(
             if let Some(gap) = style.gap {
                 ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
             }
-            for child in children {
-                render_node(ui, child, sheet, dark, data, text_ctx, events);
-            }
+        };
+        // 横行中第一个 <spacer/> 之后的子元素靠右对齐（如标题行右侧的时间）。
+        // 不能用 allocate_space 占满剩余宽度：那会把右端元素的可用宽度压成 0，文本逐字换行
+        let split = if style.direction_row {
+            children
+                .iter()
+                .position(|n| n.element().is_some_and(|(tag, _, _)| tag == "spacer"))
+        } else {
+            None
         };
         if style.direction_row {
-            ui.horizontal(|ui| inner(ui, events));
+            ui.horizontal(|ui| {
+                setup(ui);
+                match split {
+                    Some(pos) => {
+                        for child in &children[..pos] {
+                            render_node(ui, child, sheet, dark, data, text_ctx, events);
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            for child in children[pos + 1..].iter().rev() {
+                                render_node(ui, child, sheet, dark, data, text_ctx, events);
+                            }
+                        });
+                    }
+                    None => {
+                        for child in children {
+                            render_node(ui, child, sheet, dark, data, text_ctx, events);
+                        }
+                    }
+                }
+            });
         } else {
-            ui.vertical(|ui| inner(ui, events));
+            ui.vertical(|ui| {
+                setup(ui);
+                for child in children {
+                    render_node(ui, child, sheet, dark, data, text_ctx, events);
+                }
+            });
         }
     };
 
@@ -278,45 +320,6 @@ fn render_text(ui: &mut egui::Ui, text: &str, data: &ToastData, ctx: TextCtx) {
     ui.label(rich);
 }
 
-fn render_close_button(
-    ui: &mut egui::Ui,
-    style: &Style,
-    data: &ToastData,
-    text_ctx: TextCtx,
-    children: &[Node],
-    events: &mut ToastEvents,
-) {
-    let size = egui::vec2(
-        style.width.unwrap_or(18.0),
-        style.height.unwrap_or(18.0),
-    );
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    // 仅悬停通知时可见，但始终占位避免布局跳动
-    if !data.hovered {
-        return;
-    }
-    if let Some(bg) = style.background {
-        ui.painter()
-            .rect_filled(rect, style.border_radius.unwrap_or(9), bg);
-    }
-    let label = children
-        .iter()
-        .find_map(|n| match n {
-            Node::Text(t) => Some(t.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| "×".into());
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        label,
-        FontId::proportional(style.font_size.unwrap_or(text_ctx.font_size)),
-        style.color.unwrap_or(ui.visuals().text_color()),
-    );
-    if response.clicked() {
-        events.close_clicked = true;
-    }
-}
 
 /// actions 组件：把通知携带的操作渲染成一行按钮，点击后记录选中的文字。
 /// 按钮样式由 `action-button` 标签选择器控制。
@@ -450,6 +453,45 @@ pub fn render_toast(
             }
         })
         .response;
+
+    // 悬停 ×：overlay 画在卡片左缘内侧（原生 NC 悬停样式，不占布局空间）
+    if data.hovered {
+        let close = children.iter().find(|n| {
+            n.element().is_some_and(|(tag, _, _)| tag == "close-button")
+        });
+        if let Some(node) = close {
+            let (tag, classes, close_children) = node.element().unwrap();
+            let cs = sheet.style_for(dark, tag, classes);
+            let size = egui::vec2(cs.width.unwrap_or(24.0), cs.height.unwrap_or(24.0));
+            let center = egui::pos2(
+                response.rect.left() + size.x * 0.5 + 1.0,
+                response.rect.center().y,
+            );
+            let rect = egui::Rect::from_center_size(center, size);
+            if let Some(bg) = cs.background {
+                ui.painter()
+                    .rect_filled(rect, cs.border_radius.unwrap_or(12), bg);
+            }
+            let label = close_children
+                .iter()
+                .find_map(|n| match n {
+                    Node::Text(t) => Some(t.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "×".into());
+            ui.painter().text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                label,
+                FontId::proportional(cs.font_size.unwrap_or(13.0)),
+                cs.color.unwrap_or(ui.visuals().text_color()),
+            );
+            let close_resp = ui.interact(rect, egui::Id::new("toast-close"), Sense::click());
+            if close_resp.clicked() {
+                events.close_clicked = true;
+            }
+        }
+    }
     (response, events)
 }
 

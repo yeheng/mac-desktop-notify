@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, SystemTime};
 
 use eframe::egui::{
@@ -10,16 +8,22 @@ use eframe::egui::{
 use crate::style::Sheet;
 use crate::template::{self, Node, ToastData};
 
-const MARGIN: f32 = 14.0;
+/// 横幅距屏幕右缘的水平边距（实测原生 banner：21.5pt，取整 22）
+const MARGIN_X: f32 = 22.0;
+/// 横幅顶部位置（实测原生 banner：菜单栏底 33.5 + 16 ≈ 49.5pt，含刘海屏菜单栏）
+const MARGIN_TOP: f32 = 49.5;
 /// 组间纵向间距
-const GROUP_GAP: f32 = 14.0;
-/// 组内卡片间距（对齐 macOS 通知中心）
-const CARD_GAP: f32 = 7.0;
+const GROUP_GAP: f32 = 12.0;
+/// 组内卡片间距（实测 NC 堆叠 8pt）
+const CARD_GAP: f32 = 8.0;
 /// 组头与首张卡片的间距
 const HEADER_GAP: f32 = 6.0;
 const ENTER_SECS: f64 = 0.30;
 const LEAVE_SECS: f64 = 0.25;
-const ESTIMATED_HEIGHT: f32 = 76.0;
+/// 折叠/展开动画时长（实测原生 NC 约 0.3s）
+const FOLD_SECS: f64 = 0.30;
+/// 标题+2行正文卡片高（实测 73.7pt）
+const ESTIMATED_HEIGHT: f32 = 74.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -49,6 +53,11 @@ struct Group {
     toasts: Vec<Toast>,
     /// 折叠时只显示最新一条（组头"更多内容/更少内容"切换）
     expanded: bool,
+    /// 折叠动画进度：1 = 完全展开，0 = 折叠到只剩最新一条
+    expand_progress: f32,
+    /// 本段折叠动画的起始进度与时刻（进度按时间插值，与帧率无关）
+    expand_from: f32,
+    expand_start: f64,
     phase: Phase,
     /// egui 时间轴上进入当前 phase 的时刻
     phase_start: f64,
@@ -56,6 +65,8 @@ struct Group {
     y: f32,
     /// 上一帧实测的内容高度，用于堆叠布局
     height: f32,
+    /// 上一帧发给窗口的位置，未变化则跳过移动命令
+    last_pos: Option<egui::Pos2>,
 }
 
 /// 某条通知上被点击的操作
@@ -117,10 +128,14 @@ impl NotificationCenter {
                         app,
                         toasts: vec![toast],
                         expanded: true,
+                        expand_progress: 1.0,
+                        expand_from: 1.0,
+                        expand_start: now,
                         phase: Phase::Enter,
                         phase_start: now,
-                        y: MARGIN,
+                        y: MARGIN_TOP,
                         height: ESTIMATED_HEIGHT,
+                        last_pos: None,
                     },
                 );
             }
@@ -168,17 +183,31 @@ impl NotificationCenter {
         self.groups
             .retain(|g| !(g.phase == Phase::Leave && now - g.phase_start >= LEAVE_SECS));
 
+        // 折叠/展开动画推进：进度由时间插值决定，与帧率解耦
+        let mut animating = false;
+        for group in &mut self.groups {
+            let target = if group.expanded { 1.0 } else { 0.0 };
+            if group.expand_progress != target {
+                let t = ((now - group.expand_start) / FOLD_SECS).clamp(0.0, 1.0) as f32;
+                group.expand_progress = group.expand_from + (target - group.expand_from) * ease(t);
+                animating = true;
+            }
+        }
+
         // 堆叠布局：目标位置 = 上方所有组的累计高度，纵向做指数平滑
-        let mut target = MARGIN;
+        let mut target = MARGIN_TOP;
         let smoothing = 1.0 - (-14.0 * dt).exp() as f32;
         for group in &mut self.groups {
             group.y += (target - group.y) * smoothing;
+            if group.phase != Phase::Show || (group.y - target).abs() > 0.5 {
+                animating = true;
+            }
             target += group.height + GROUP_GAP;
         }
 
         let mut clicked_actions = Vec::new();
         for group in &mut self.groups {
-            show_group(
+            if show_group(
                 ctx,
                 group,
                 monitor,
@@ -187,9 +216,31 @@ impl NotificationCenter {
                 template,
                 dark,
                 &mut clicked_actions,
-            );
+            ) {
+                // 窗口高度还在追赶内容高度，需要继续逐帧调整
+                animating = true;
+            }
         }
-        ctx.request_repaint();
+
+        if animating {
+            // 动画进行中：请求下一帧立即重绘
+            ctx.request_repaint();
+        } else {
+            // 静止：按最近的卡片过期时刻定时唤醒（上限 60s，兼顾相对时间刷新），
+            // 悬停/点击等交互由输入事件自动唤醒，避免全速空转渲染导致动画掉帧
+            let next_expiry = self
+                .groups
+                .iter()
+                .flat_map(|g| g.toasts.iter())
+                .map(|t| t.show_until)
+                .fold(f64::INFINITY, f64::min);
+            let wait = (next_expiry - now).clamp(0.0, 60.0);
+            if wait <= 0.0 {
+                ctx.request_repaint();
+            } else {
+                ctx.request_repaint_after(Duration::from_secs_f64(wait));
+            }
+        }
         clicked_actions
     }
 }
@@ -204,9 +255,9 @@ fn show_group(
     template_root: &Node,
     dark: bool,
     actions_out: &mut Vec<ToastAction>,
-) {
+) -> bool {
     let Some(root) = template::toast_root(template_root) else {
-        return;
+        return false;
     };
     let width = template::toast_width(root, sheet, dark);
 
@@ -218,9 +269,18 @@ fn show_group(
         }
     };
     // 未完全滑入/滑出时，窗口整体向屏幕右侧偏移
-    let x = monitor.x - width - MARGIN + (1.0 - progress) * (width + MARGIN);
+    let x = monitor.x - width - MARGIN_X + (1.0 - progress) * (width + MARGIN_X);
     let id = ViewportId::from_hash_of(("toast-group", &group.app));
-    ctx.send_viewport_cmd_to(id, ViewportCommand::OuterPosition(egui::pos2(x, group.y)));
+    // 位置没变就跳过移动命令：静止时反复发命令会持续惊动窗口服务器
+    let pos = egui::pos2(x, group.y);
+    let moved = match group.last_pos {
+        Some(last) => (last - pos).length() > 0.25,
+        None => true,
+    };
+    if moved {
+        ctx.send_viewport_cmd_to(id, ViewportCommand::OuterPosition(pos));
+        group.last_pos = Some(pos);
+    }
 
     let builder = ViewportBuilder::default()
         .with_title("通知")
@@ -235,6 +295,7 @@ fn show_group(
     let mut toggle_expanded = false;
     let mut clear_group = false;
     let mut dismiss_toast: Option<u64> = None;
+    let mut height_settling = false;
     let app = group.app.clone();
     let initial = app.chars().next().unwrap_or('·').to_string();
 
@@ -247,17 +308,23 @@ fn show_group(
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                // 折叠动画中渲染全部卡片：窗口高度按进度收缩，
+                // 超出高度的部分被窗口边缘裁掉，形成卡片逐张收起的效果
+                let fold = group.expand_progress;
+                let count = if fold > 0.0 { group.toasts.len() } else { 1 };
+                // 折叠态 = 组头 + 第一张卡片；用第一张卡片的底缘反推（含间距，避免重复算 item_spacing）
+                let mut stack_bottom = 0.0;
                 let content = ui.vertical(|ui| {
                     // 组头只在同应用通知达到 2 条时出现，与 macOS 通知中心一致
                     if group.toasts.len() >= 2 {
-                        let events =
+                        let (header_response, events) =
                             render_group_header(ui, &app, group.expanded, sheet, dark);
                         toggle_expanded |= events.toggle;
                         clear_group |= events.clear;
+                        stack_bottom = header_response.rect.bottom();
                         ui.add_space(HEADER_GAP);
                     }
-                    let visible = if group.expanded { group.toasts.len() } else { 1 };
-                    for i in 0..visible.min(group.toasts.len()) {
+                    for i in 0..count.min(group.toasts.len()) {
                         if i > 0 {
                             ui.add_space(CARD_GAP);
                         }
@@ -277,6 +344,9 @@ fn show_group(
                         };
                         let (response, events) =
                             template::render_toast(ui, root, sheet, dark, &data);
+                        if i == 0 {
+                            stack_bottom = response.rect.bottom();
+                        }
 
                         let interaction = response.interact(Sense::click());
                         let toast = &mut group.toasts[i];
@@ -293,18 +363,26 @@ fn show_group(
                         }
                     }
                 });
-                let height = content.response.rect.height();
-                if (height - group.height).abs() > 1.0 {
-                    group.height = height;
-                    vctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(width, height)));
+                let full_height = content.response.rect.height();
+                let collapsed_height = stack_bottom - content.response.rect.top();
+                // 折叠进度在折叠高度与完全展开高度之间插值；展开时两者相等
+                let target_height =
+                    collapsed_height + (full_height - collapsed_height) * fold;
+                if (target_height - group.height).abs() > 0.5 {
+                    group.height = target_height;
+                    height_settling = true;
+                    vctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(
+                        width,
+                        target_height,
+                    )));
                 }
             });
-        vctx.request_repaint();
-        screenshot_debug_hook(&vctx, &app, group.phase);
     });
 
     if toggle_expanded {
+        group.expand_from = group.expand_progress;
         group.expanded = !group.expanded;
+        group.expand_start = now;
     }
     // 组头 ×：批量清理，整组滑出
     if clear_group {
@@ -318,6 +396,7 @@ fn show_group(
             group.toasts.retain(|t| t.id != toast_id);
         }
     }
+    height_settling
 }
 
 #[derive(Default)]
@@ -328,16 +407,17 @@ struct GroupEvents {
 
 /// 组头：应用名 + 右侧"更少内容/更多内容"切换与 ×（批量清理本组）。
 /// 样式由 CSS 的 group-title / group-toggle / group-clear 标签选择器控制。
+/// 返回 (组头 response 用于折叠高度测量, 交互结果)
 fn render_group_header(
     ui: &mut egui::Ui,
     app: &str,
     expanded: bool,
     sheet: &Sheet,
     dark: bool,
-) -> GroupEvents {
+) -> (egui::Response, GroupEvents) {
     let mut events = GroupEvents::default();
     let title_style = sheet.style_for(dark, "group-title", &[]);
-    ui.horizontal(|ui| {
+    let header_response = ui.horizontal(|ui| {
         let mut text = RichText::new(app).size(title_style.font_size.unwrap_or(15.0));
         text = text.color(title_style.color.unwrap_or(ui.visuals().text_color()));
         if title_style.bold.unwrap_or(true) {
@@ -390,7 +470,7 @@ fn render_group_header(
             }
         });
     });
-    events
+    (header_response.response, events)
 }
 
 fn leave(group: &mut Group, now: f64) {
@@ -400,62 +480,41 @@ fn leave(group: &mut Group, now: f64) {
     }
 }
 
-/// 调试钩子：EGUI_NOTIFY_SHOT=1 时，每组在滑入完成后请求一次截屏；
-/// 截图事件会被投递到根视口，由 handle_screenshot_events 接收并写入
-/// /tmp/egui-notify-shot-<app>.bmp（可用 sips -s format png 转 PNG 查看）
-fn screenshot_debug_hook(vctx: &egui::Context, app: &str, phase: Phase) {
-    if std::env::var_os("EGUI_NOTIFY_SHOT").is_none() || phase != Phase::Show {
+/// 主窗口内的样式预览：组头 + 两张示例卡片，与真实通知走同一渲染路径
+pub fn render_preview(ui: &mut egui::Ui, sheet: &Sheet, template_root: &Node, dark: bool) {
+    let Some(root) = template::toast_root(template_root) else {
         return;
-    }
-    static REQUESTED: LazyLock<Mutex<HashSet<String>>> =
-        LazyLock::new(|| Mutex::new(HashSet::new()));
-    let mut requested = REQUESTED.lock().unwrap();
-    if requested.contains(app) {
-        return;
-    }
-    requested.insert(app.to_owned());
-    drop(requested);
-    eprintln!("[shot] request sent for {app}");
-    vctx.send_viewport_cmd(ViewportCommand::Screenshot(egui::UserData::new(
-        app.to_owned(),
-    )));
-}
-
-/// 主窗口每帧调用：接收分组窗口的截图回包并保存（配合 EGUI_NOTIFY_SHOT=1）
-pub fn handle_screenshot_events(ctx: &egui::Context) {
-    if std::env::var_os("EGUI_NOTIFY_SHOT").is_none() {
-        return;
-    }
-    ctx.input(|i| {
-        if !i.raw.events.is_empty() {
-            eprintln!("[shot] root events: {:?}", i.raw.events);
+    };
+    let _ = render_group_header(ui, "微信", true, sheet, dark);
+    ui.add_space(HEADER_GAP);    let samples: [(&str, &str, Vec<String>, &str, bool); 2] = [
+        (
+            "微信",
+            "你收到了一条消息",
+            vec!["回复".to_owned(), "标为已读".to_owned()],
+            "5 分钟前",
+            true,
+        ),
+        ("微信", "你收到了一条消息", vec![], "14 分钟前", false),
+    ];
+    for (i, (title, body, actions, time, hovered)) in samples.iter().enumerate() {
+        if i > 0 {
+            ui.add_space(CARD_GAP);
         }
-    });
-    let screenshots: Vec<(egui::UserData, std::sync::Arc<egui::ColorImage>)> = ctx.input(|i| {
-        i.raw
-            .events
-            .iter()
-            .filter_map(|e| match e {
-                egui::Event::Screenshot {
-                    user_data, image, ..
-                } => Some((user_data.clone(), image.clone())),
-                _ => None,
-            })
-            .collect()
-    });
-    for (user_data, image) in screenshots {
-        if let Some(app) = user_data
-            .data
-            .as_ref()
-            .and_then(|d| d.downcast_ref::<String>())
-        {
-            save_bmp(&image, &format!("/tmp/egui-notify-shot-{app}.bmp"));
-        }
+        let data = ToastData {
+            app: "微信",
+            title,
+            body,
+            initial: "微".to_owned(),
+            hovered: *hovered,
+            actions,
+            time: (*time).to_owned(),
+        };
+        let _ = template::render_toast(ui, root, sheet, dark, &data);
     }
 }
 
 /// ColorImage 写成 24 位 BMP（无依赖；透明像素合成到灰色背景上）
-fn save_bmp(image: &egui::ColorImage, path: &str) {
+pub(crate) fn save_bmp(image: &egui::ColorImage, path: &str) {
     let [w, h] = image.size;
     let row_bytes = w * 3;
     let padded = (row_bytes + 3) & !3;

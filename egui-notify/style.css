@@ -37,7 +37,7 @@ icon {
 }
 
 content {
-  width: 242px;
+  width: 270px;
   gap: 2px;
 }
 
@@ -78,11 +78,12 @@ action-button {
   color: rgba(0, 0, 0, 0.85);
 }
 
+/* 悬停时由 template.rs 绘制在卡片左缘（overlay，不占布局空间） */
 close-button {
-  width: 18px;
-  height: 18px;
-  border-radius: 9px;
-  background: rgba(0, 0, 0, 0.06);
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.08);
   color: rgba(0, 0, 0, 0.6);
   font-size: 13px;
 }
@@ -132,8 +133,8 @@ group-clear {
     color: rgba(255, 255, 255, 0.92);
   }
   close-button {
-    background: rgba(255, 255, 255, 0.12);
-    color: rgba(255, 255, 255, 0.7);
+    background: rgba(80, 80, 80, 0.9);
+    color: rgba(210, 210, 210);
   }
   group-title {
     color: rgba(255, 255, 255, 0.9);

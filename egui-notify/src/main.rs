@@ -45,11 +45,28 @@ impl Appearance {
     }
 }
 
+/// 当前系统主版本号（读取 sw_vers 失败时返回 0，回退经典外观）
+fn macos_major_version() -> u32 {
+    std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .and_then(|ver| ver.trim().split('.').next().map(|m| m.parse().unwrap_or(0)))
+        .unwrap_or(0)
+}
+
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
+        // 截图探针（EGUI_PROBE=1）依赖 glow 后端：wgpu 后端不回投截图事件
+        renderer: if std::env::var_os("EGUI_PROBE").is_some() {
+            eframe::Renderer::Glow
+        } else {
+            eframe::Renderer::default()
+        },
         viewport: egui::ViewportBuilder::default()
             .with_title("通知发送台")
-            .with_inner_size([360.0, 450.0])
+            .with_inner_size([400.0, 700.0])
             // GL 配置只建一次且被所有 viewport 共享：主窗口不开 transparent，
             // 子通知窗口的透明会失效（圆角外渲染成黑色）
             .with_transparent(true),
@@ -65,14 +82,28 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-/// egui 内置字体不含 CJK，从 macOS 系统目录加载中文字体作为回退。
+/// egui 内置字体不含 CJK：枚举 macOS 字体目录里实际安装的字体，
+/// 按偏好顺序挑出中文字体作为回退（不写死具体路径，用户自行安装的中文字体也能兜底）。
 fn load_cjk_font(ctx: &egui::Context) {
-    const CANDIDATES: &[&str] = &[
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "/System/Library/Fonts/STHeiti Medium.ttc",
+    // 文件名偏好顺序：只匹配系统里真实存在的字体文件
+    const PREFER: &[&str] = &[
+        "PingFang",
+        "Hiragino Sans GB",
+        "STHeiti",
+        "Hiragino Sans",
+        "Songti",
+        "Yuanti",
+        "Arial Unicode",
     ];
-    let Some(bytes) = CANDIDATES.iter().find_map(|p| std::fs::read(p).ok()) else {
+    let available = collect_system_fonts();
+    let picked = PREFER
+        .iter()
+        .find_map(|name| available.iter().find(|path| path.contains(name)))
+        .or_else(|| available.first());
+    let Some(bytes) = picked.and_then(|path| {
+        eprintln!("回退字体：{path}");
+        std::fs::read(path).ok()
+    }) else {
         return;
     };
     let mut fonts = egui::FontDefinitions::default();
@@ -88,6 +119,55 @@ fn load_cjk_font(ctx: &egui::Context) {
             .push("cjk-fallback".to_owned());
     }
     ctx.set_fonts(fonts);
+}
+
+/// 递归收集 macOS 标准字体目录（系统/共享/用户）里的字体文件绝对路径
+fn collect_system_fonts() -> Vec<String> {
+    let mut dirs = vec![
+        "/System/Library/Fonts".to_owned(),
+        "/Library/Fonts".to_owned(),
+    ];
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(format!("{}/Library/Fonts", home.to_string_lossy()));
+    }
+    let mut out = Vec::new();
+    for dir in dirs {
+        collect_fonts_in(&dir, &mut out);
+    }
+    // macOS 26 (Tahoe) 起，PingFang 等系统字体以 MobileAsset 形式放在
+    // /System/Library/AssetsV2/com_apple_MobileAsset_Font*/.../AssetData/ 下
+    if let Ok(entries) = std::fs::read_dir("/System/Library/AssetsV2") {
+        for entry in entries.flatten() {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("com_apple_MobileAsset_Font")
+            {
+                collect_fonts_in(&entry.path().to_string_lossy(), &mut out);
+            }
+        }
+    }
+    out
+}
+
+fn collect_fonts_in(dir: &str, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_fonts_in(&path.to_string_lossy(), out);
+            continue;
+        }
+        let is_font = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "ttf" | "ttc" | "otf"));
+        if is_font {
+            out.push(path.to_string_lossy().into_owned());
+        }
+    }
 }
 
 struct View {
@@ -130,11 +210,17 @@ struct ControlApp {
     view: View,
     view_mtime: Option<SystemTime>,
     restored_opaque: bool,
+    probe_sent: bool,
 }
 
 impl Default for ControlApp {
     fn default() -> Self {
-        let appearance = Appearance::Classic;
+        // macOS 26 (Tahoe) 及以上默认 Liquid Glass 外观，旧系统用经典外观
+        let appearance = if macos_major_version() >= 26 {
+            Appearance::Tahoe
+        } else {
+            Appearance::Classic
+        };
         let (view, view_mtime) = load_view(appearance);
         Self {
             center: NotificationCenter::default(),
@@ -149,6 +235,7 @@ impl Default for ControlApp {
             view,
             view_mtime,
             restored_opaque: false,
+            probe_sent: false,
         }
     }
 }
@@ -209,6 +296,24 @@ impl ControlApp {
 impl eframe::App for ControlApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        // 截图探针：EGUI_PROBE=1 时把主窗口（含预览区）写入 /tmp/egui-notify-root.bmp，
+        // 可用 sips -s format png 转 PNG 查看
+        if std::env::var_os("EGUI_PROBE").is_some() {
+            ctx.input(|i| {
+                for e in &i.raw.events {
+                    if let egui::Event::Screenshot { image, .. } = e {
+                        notify::save_bmp(image, "/tmp/egui-notify-root.bmp");
+                    }
+                }
+            });
+            if ctx.input(|i| i.time) > 2.0 && !self.probe_sent {
+                self.probe_sent = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
+                    egui::UserData::default(),
+                ));
+            }
+        }
 
         // 主窗口只需 GL 配置带 alpha（启动时的 transparent 标记），窗口本身要恢复不透明，
         // 否则主窗口内容不绘制
@@ -288,6 +393,11 @@ impl eframe::App for ControlApp {
             if let Some(action) = &self.last_action {
                 ui.weak(format!("上次选择的操作：{action}"));
             }
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label("预览（样式随文件热重载）");
+            let dark = ctx.theme() == egui::Theme::Dark;
+            notify::render_preview(ui, &self.view.sheet, &self.view.template, dark);
         });
 
         let clicked = self
@@ -297,6 +407,5 @@ impl eframe::App for ControlApp {
             println!("通知 #{} 选择了操作：{}", action.id, action.label);
             self.last_action = Some(action.label);
         }
-        notify::handle_screenshot_events(&ctx);
     }
 }

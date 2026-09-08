@@ -4,4 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-eframe = "0.36.1"
+# glow 后端仅用于 EGUI_NOTIFY_SHOT=1 的截屏调试（wgpu 不回投截图事件）；默认渲染器仍是 wgpu
+eframe = { version = "0.36.1", features = ["glow"] }
