@@ -11,6 +11,9 @@ DerivedData/
 # Git worktrees
 .worktrees/
 
+# Rust (egui-notify 子项目)
+/egui-notify/target
+
 # Superpowers subagent-driven-development scratch (ledger, briefs, reports, review packages)
 /.superpowers/
 

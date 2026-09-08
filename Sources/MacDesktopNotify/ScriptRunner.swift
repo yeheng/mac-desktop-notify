@@ -89,35 +89,70 @@ extension ScriptValue: Decodable {
 
 /// 每次执行 = 专用线程 + 独立 JSVirtualMachine。
 ///
-/// @unchecked Sendable 的理由：全部存储是 let（两个 @Sendable 闭包）；
-/// 唯一可变状态在 runSync 的线程栈上。JSC 的 context/VM 只在脚本线程上碰，
-/// host block 也被 JSC 调在该线程上——这是 JSVirtualMachine 的线程封闭要求。
+/// @unchecked Sendable 的理由：存储是 let（两个 @Sendable 闭包 + 一个
+/// OSAllocatedUnfairLock 保护的原子计数）；JSC 的 context/VM 只在脚本
+/// 线程上碰，host block 也被 JSC 调在该线程上——这是 JSVirtualMachine
+/// 的线程封闭要求。
 ///
-/// 看门狗：run() 用 withDiscardingTaskGroup 起两个 task——线程完成与睡满
-/// 预算，先到先得。超时后线程被放弃（JSC 无法外部中断），泄漏到进程结束，
-/// os_log 警告——设计文档 §3.2 的既定取舍。
+/// 看门狗：run() 用 resume-once 盒做双竞速——线程完成与睡满预算，先到先得。
+/// 超时后线程被放弃（JSC 无法外部中断），泄漏到进程结束，os_log 警告。
+///
+/// `aliveThreadCount` 是真实存活的线程数（看门狗超时后泄漏的线程也计入），
+/// 并发闸必须检查它而不是"未完成的请求数"——否则死循环脚本每 100ms 就能
+/// 绕过闸门，不断攒出新的泄漏线程直到资源耗尽。
 final class ScriptEngine: @unchecked Sendable {
     typealias Fetcher = @Sendable (String, [String: ScriptValue]?) -> FetchResponse
     typealias Notifier = @Sendable (NotifyOp) -> String
 
     private let fetch: Fetcher
     private let notify: Notifier
+    /// 真实存活的脚本线程数（含看门狗超时后仍在跑的泄漏线程）。
+    /// 并发闸的依据，不是"还没返回的请求数"。
+    private let aliveThreadCount = OSAllocatedUnfairLock<Int>(initialState: 0)
+
+    var aliveThreads: Int { aliveThreadCount.withLock { $0 } }
 
     init(fetch: @escaping Fetcher, notify: @escaping Notifier) {
         self.fetch = fetch
         self.notify = notify
     }
 
+    /// 原子地尝试占一个并发槽位。达到上限返回 false。
+    /// 与 `aliveThreadCount` 递减配对——线程真实退出时扣减，
+    /// 确保计数反映真实资源占用而非逻辑请求数。
+    func tryAcquireSlot(maxConcurrent: Int) -> Bool {
+        aliveThreadCount.withLock { count in
+            guard count < maxConcurrent else { return false }
+            count += 1
+            return true
+        }
+    }
+
+    /// 回退一个已获取的槽位（脚本加载失败等场景）。
+    func releaseSlot() {
+        aliveThreadCount.withLock { $0 = max(0, $0 - 1) }
+    }
+
+    /// 无上限直接执行（测试和内部调用用）。
+    /// 并发上限由 `ScriptRunner` 层负责，调用前先 `tryAcquireSlot`。
     func run(source: String, input: ScriptValue, budget: Duration) async -> ScriptOutcome {
+        aliveThreadCount.withLock { $0 += 1 }
+        return await runBody(source: source, input: input, budget: budget)
+    }
+
+    /// 已经获取槽位后启动执行（线程退出时由 defer 扣减计数）。
+    func runAcquired(source: String, input: ScriptValue, budget: Duration) async -> ScriptOutcome {
+        await runBody(source: source, input: input, budget: budget)
+    }
+
+    private func runBody(source: String, input: ScriptValue, budget: Duration) async -> ScriptOutcome {
         let deadline = ContinuousClock.now.advanced(by: budget)
         return await withCheckedContinuation { (cont: CheckedContinuation<ScriptOutcome, Never>) in
-            // Swift 6.3 的 DiscardingTaskGroup 是 fire-and-forget（无 next()），
-            // 双 task 竞速不可用；withTaskGroup 提前 return 仍隐式等全部子任务。
-            // 这里用 resume-once 盒直译设计 §3.2：线程完成与睡满预算竞速，
-            // 先到先得，后到 no-op——超时的线程被放弃（JSC 无法外部中断），
-            // 泄漏到进程结束，os_log 警告。
+            // resume-once 盒：线程完成与睡满预算竞速，先到先得，后到 no-op。
+            // 超时的线程被放弃（JSC 无法外部中断），泄漏到进程结束，os_log 警告。
             let once = ResumeOnce(cont)
             Thread.detachNewThread { [self] in
+                defer { aliveThreadCount.withLock { $0 -= 1 } }
                 once.resume(runSync(source: source, input: input, deadline: deadline))
             }
             Task {
@@ -287,10 +322,15 @@ final class ScriptEngine: @unchecked Sendable {
 /// 编排层：按名加载（ScriptStore）→ 执行（ScriptEngine）→ 并发闸。
 /// @MainActor：决策（busy 判定、后续 backfill/钩子的 manager 写入）都在主线程，
 /// engine.run 的等待是 async 不占主线程。
+///
+/// 并发闸检查 `engine.aliveThreads`（真实存活的脚本线程数），而不是"未完成的
+/// 请求数"。看门狗超时后 JSC 线程仍在泄漏运行，若用请求数计数，死循环脚本
+/// 每 100ms 就能绕过闸门，无限累积泄漏线程。
 @MainActor
 final class ScriptRunner {
     static let shared = ScriptRunner()
     /// 设计 §3.1：并发上限 4，超出的执行立即失败 "busy"。
+    /// 上限对应真实存活的脚本线程数（含看门狗超时后仍在泄漏运行的线程）。
     static let maxConcurrent = 4
     /// 设计 §3.2：回填/钩子预算 15s（无人等待，但泄漏线程要有界）。
     static let backfillBudget: Duration = .seconds(15)
@@ -300,7 +340,8 @@ final class ScriptRunner {
     /// 回填/钩子的写入目标；测试注入本地实例避免动全局单例。
     private let targetManager: NotificationManager
     /// 只读调试属性（测试观察闸行为用）。
-    private(set) var activeExecutions = 0
+    /// 等于 engine.aliveThreads，但通过主 actor 读取，测试代码不用跨 actor。
+    var activeExecutions: Int { engine.aliveThreads }
 
     init(store: ScriptStore = .shared,
          engine: ScriptEngine? = nil,
@@ -311,15 +352,14 @@ final class ScriptRunner {
     }
 
     func run(named name: String, input: ScriptValue, budget: Duration) async -> ScriptOutcome {
-        guard activeExecutions < Self.maxConcurrent else {
+        guard engine.tryAcquireSlot(maxConcurrent: Self.maxConcurrent) else {
             return ScriptOutcome(result: nil, logs: [], error: "busy")
         }
         guard let source = try? store.load(name) else {
+            engine.releaseSlot()
             return ScriptOutcome(result: nil, logs: [], error: "脚本未找到：\(name)")
         }
-        activeExecutions += 1
-        defer { activeExecutions -= 1 }
-        return await engine.run(source: source, input: input, budget: budget)
+        return await engine.runAcquired(source: source, input: input, budget: budget)
     }
 
     /// 脚本的 input：消息的已解析字段（设计 §1 契约）。
