@@ -178,6 +178,9 @@ final class APIRouter: Sendable {
         let unreadCount: Int
         let historyCount: Int
         let silenced: Bool
+        /// v4 删除了待显示队列，但设计 §3 承诺保留该字段（恒为 0）以免破坏
+        /// 既有客户端。删除它属于破坏 userspace。
+        let pendingCount: Int
         let listening: ListeningStatus
 
         struct ListeningStatus: Encodable {
@@ -195,6 +198,7 @@ final class APIRouter: Sendable {
             unreadCount: unreadCount,
             historyCount: historyCount,
             silenced: silenced,
+            pendingCount: 0,
             listening: StatusResponse.ListeningStatus(unixSocket: listen.unixSocket, http: listen.http)
         ))
     }

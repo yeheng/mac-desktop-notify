@@ -168,7 +168,8 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         let response = await router.handle(APIRequest(method: "GET", path: "/v1/status", query: [:], body: nil))
         let payload = decoded(response.body)
         XCTAssertEqual(payload["unreadCount"] as? Int, 1)
-        XCTAssertNil(payload["pendingCount"], "v4 删除队列后，恒为 0 的兼容字段不应再出现")
+        // v4 设计 §3：队列删了，字段保留且恒为 0——删掉它是破坏 userspace。
+        XCTAssertEqual(payload["pendingCount"] as? Int, 0, "兼容字段必须保留")
         XCTAssertEqual(payload["silenced"] as? Bool, false)
     }
 

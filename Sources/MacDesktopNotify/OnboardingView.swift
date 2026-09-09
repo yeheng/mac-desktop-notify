@@ -71,7 +71,6 @@ struct OnboardingView: View {
 
     private func finish(preset: Preset?) {
         preset?.apply(to: settings)
-        settings.onboardingPreset = preset?.rawValue
         settings.onboardingCompleted = true
         onDismiss()
     }

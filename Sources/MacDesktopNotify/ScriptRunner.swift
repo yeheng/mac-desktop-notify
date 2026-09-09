@@ -355,7 +355,13 @@ final class ScriptRunner {
         guard engine.tryAcquireSlot(maxConcurrent: Self.maxConcurrent) else {
             return ScriptOutcome(result: nil, logs: [], error: "busy")
         }
-        guard let source = try? store.load(name) else {
+        let source: String
+        do {
+            source = try store.load(name)
+        } catch ScriptStore.ScriptStoreError.readFailed(let reason) {
+            engine.releaseSlot()
+            return ScriptOutcome(result: nil, logs: [], error: "脚本无法读取：\(name)（\(reason)）")
+        } catch {
             engine.releaseSlot()
             return ScriptOutcome(result: nil, logs: [], error: "脚本未找到：\(name)")
         }

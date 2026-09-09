@@ -468,7 +468,7 @@ private struct AppearanceSettingsContent: View {
         // and most users never need to make that admission. The section
         // surfaces only when enabled from the CLI:
         // `defaults write com.yeheng.macdesktopnotify island.debugGeometry -bool true`
-        if AppSettings.debugGeometryEnabled {
+        if settings.debugGeometryEnabled {
             Section {
                 SliderRow(
                     title: "刘海宽度偏移",

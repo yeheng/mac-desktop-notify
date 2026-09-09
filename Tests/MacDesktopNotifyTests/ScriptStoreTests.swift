@@ -34,4 +34,18 @@ final class ScriptStoreTests: XCTestCase {
             XCTAssertEqual($0 as? ScriptStore.ScriptStoreError, .invalidName)
         }
     }
+
+    /// 文件在、但读不出来，必须报 readFailed 而不是 notFound——
+    /// 否则诊断信息把用户指向一个并不存在的问题（评审 #9）。
+    func testUnreadableScriptReportsReadFailed() throws {
+        let (store, dir) = try makeStore()
+        // 非法 UTF-8 字节：文件存在，String(contentsOf:encoding:.utf8) 会失败。
+        try Data([0xFF, 0xFE, 0xFF]).write(to: dir.appendingPathComponent("bad.js"))
+
+        XCTAssertThrowsError(try store.load("bad")) { error in
+            guard case .readFailed = error as? ScriptStore.ScriptStoreError else {
+                return XCTFail("必须报告 readFailed，实际 \(error)")
+            }
+        }
+    }
 }
