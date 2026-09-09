@@ -12,7 +12,18 @@ extension NotificationManager {
         switch intent {
         case .activationZoneEntered:
             guard !pointer.nearIsland else { return }
-            pointer.zone = .inActivationZone
+            // The panel and the activation zone overlap, so a fresh claim can
+            // arrive while the pointer is already on the panel. Fold it into
+            // the existing state instead of overwriting it - the `onPanel`
+            // payload exists precisely to carry this claim. Overwriting it
+            // would lose the fact that the pointer is on the panel, and the
+            // hover-exit that follows would then be ignored, leaving the card
+            // on screen until a click.
+            if case .onPanel = pointer.zone {
+                pointer.zone = .onPanel(zoneClaimsPointer: true)
+            } else {
+                pointer.zone = .inActivationZone
+            }
             delayed.cancel(.manualCollapse)
             // The zone is larger than the visible pill, so this tick is the
             // earliest "expansion is armed" signal there is - it lands inside
