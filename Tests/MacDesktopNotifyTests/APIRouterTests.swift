@@ -250,4 +250,17 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertTrue(text.contains("\"ok\":false"))
         XCTAssertTrue(text.contains("timeout"))
     }
+
+    /// 一个 action 缺 label 不得杀死整条推送（评审 #3）。
+    func testActionMissingLabelDoesNotRejectThePush() async throws {
+        let response = await router.handle(APIRequest(
+            method: "POST", path: "/v1/push", query: [:],
+            body: json(["title": "t", "actions": [
+                ["url": "https://a.test"],
+                ["label": "保留", "url": "https://b.test"]
+            ]])
+        ))
+        XCTAssertEqual(response.status, 200, "缺 label 的 action 不得拒绝整条推送")
+        XCTAssertEqual(manager.current?.actions.map(\.label), ["保留"])
+    }
 }

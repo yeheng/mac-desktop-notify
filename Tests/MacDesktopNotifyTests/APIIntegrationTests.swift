@@ -275,10 +275,25 @@ final class APIIntegrationTests: XCTestCase {
         }
 
         XCTAssertEqual(payload["ref"] as? String, "r1")
-        XCTAssertEqual(payload["ref"] as? String, "r1")
         XCTAssertEqual(payload["ok"] as? Bool, true)
         XCTAssertEqual(payload["outcome"] as? String, "displayed")
         XCTAssertEqual(manager.current?.title, "从 WS 推送")
+    }
+
+    /// 一条带 nan timeout 的 URL 推送不得毒化整个 history 接口（评审 #2）。
+    /// URL 是唯一能造出 NaN 的入口——JSON 数字无法表达它。
+    func testNaNFTimeoutFromURLDoesNotPoisonHistory() async throws {
+        let base = try await startServer()
+        let url = try XCTUnwrap(URL(string: "notch-notify://push?title=nan&timeout=nan"))
+        let n = try XCTUnwrap(URLNotificationParser.parsePush(url))
+        await MainActor.run { manager.push(n) }
+        XCTAssertNil(manager.current?.timeout, "NaN 必须被闸口拦下")
+
+        let (status, data) = try await request(base.appendingPathComponent("v1/history"), method: "GET")
+        XCTAssertEqual(status, 200)
+        let payload = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        XCTAssertEqual((payload["items"] as? [[String: Any]])?.count, 1,
+                       "history 必须仍能编码，而不是退化成 {}")
     }
 
     /// A ping must be answered with a pong carrying the same payload. Driven

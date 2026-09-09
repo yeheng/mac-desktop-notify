@@ -164,4 +164,30 @@ final class PushValidatorTests: XCTestCase {
         // ack 的 input=1 两边都生效，script 的 input 两边都生效。
         XCTAssertEqual(viaURL.actions.map(\.wantsComment), [true, true, false])
     }
+
+    // MARK: - 非有限值与缺 label（评审 #2、#3）
+
+    /// NaN 不是"很大的数"，是垃圾：它穿透 min/max 后会毒化所有
+    /// JSONEncoder（history 响应与落盘快照都编码它）。
+    func testNonFiniteTimeoutIsDroppedNotClamped() {
+        for raw in [Double.nan, .infinity, -.infinity] {
+            let result = PushValidator.makeNotification(
+                title: "t", body: nil, urgencyRaw: nil,
+                timeout: raw, group: nil, actions: [])
+            guard case .success(let n) = result else {
+                return XCTFail("有限值之外的 timeout 不应拒绝整条推送：\(raw)")
+            }
+            XCTAssertNil(n.timeout, "\(raw) 必须被当作未提供，而不是 clamp 出一个 NaN")
+        }
+    }
+
+    /// 缺 label 的条目解码为空串，随后被 normalizedActions 丢弃——
+    /// 逐条丢弃机制本就存在，不该让整个数组解码失败。
+    func testActionMissingLabelDecodesAsEmptyAndIsDropped() throws {
+        let json = #"[{"url":"https://a.test"},{"label":"保留","url":"https://b.test"}]"#
+        let dtos = try JSONDecoder().decode([PushValidator.ActionDTO].self, from: Data(json.utf8))
+        let actions = PushValidator.actions(from: dtos)
+        XCTAssertEqual(actions.count, 2, "缺 label 不得让整个数组解码失败")
+        XCTAssertEqual(PushValidator.normalizedActions(actions).map(\.label), ["保留"])
+    }
 }

@@ -157,4 +157,13 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.historyCount, NotificationManager.maxHistoryCount)
         XCTAssertEqual(m.history.first?.title, "n20", "restored history keeps the newest messages")
     }
+
+    /// 一条 action 缺 label 不得让整份快照解码失败——load() 用的是 try?，
+    /// 解码失败会把全部历史静默丢掉（评审 #3 的同源缺陷）。
+    func testPersistedActionWithoutLabelStillDecodes() throws {
+        let json = Data(#"{"url":"https://x.test"}"#.utf8)
+        let action = try JSONDecoder().decode(NotificationAction.self, from: json)
+        XCTAssertEqual(action.label, "")
+        XCTAssertEqual(action.url?.host, "x.test")
+    }
 }
