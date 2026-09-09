@@ -83,4 +83,30 @@ final class WSCodecTests: XCTestCase {
         let frame: [UInt8] = [0x81, 0x05] + Array("hello".utf8)
         XCTAssertNil(WSCodec.decode(Data(frame)), "client frames must be masked")
     }
+
+    /// 一帧缓冲里塞满小帧：每帧都要正确解出。
+    /// 旧实现每帧把整个剩余 buffer 转成 [UInt8] 再拷回 Data，代价 O(n²)；
+    /// 本用例钉住功能不变，让那次重构可以安全进行。
+    func testDecodesManyFramesInOneBuffer() throws {
+        let one = clientMasked(WSCodec.encode(opcode: 0x9, payload: Data("ping".utf8)))
+        var buffer = Data()
+        for _ in 0..<500 { buffer.append(one) }
+
+        let (frames, remainder) = try XCTUnwrap(WSCodec.decode(buffer))
+        XCTAssertEqual(frames.count, 500)
+        XCTAssertTrue(frames.allSatisfy { $0.opcode == 0x9 && $0.payload == Data("ping".utf8) })
+        XCTAssertTrue(remainder.isEmpty)
+    }
+
+    /// 空输入与"刚好一整帧"的边界：游标不能越界，remainder 必须是空。
+    func testEmptyAndExactBuffers() throws {
+        let (empty, emptyRemainder) = try XCTUnwrap(WSCodec.decode(Data()))
+        XCTAssertTrue(empty.isEmpty)
+        XCTAssertTrue(emptyRemainder.isEmpty)
+
+        let exact = clientMasked(WSCodec.encode(opcode: 0x1, payload: Data("x".utf8)))
+        let (frames, remainder) = try XCTUnwrap(WSCodec.decode(exact))
+        XCTAssertEqual(frames.count, 1)
+        XCTAssertTrue(remainder.isEmpty)
+    }
 }

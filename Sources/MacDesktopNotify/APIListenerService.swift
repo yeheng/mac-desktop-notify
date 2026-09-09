@@ -101,12 +101,50 @@ final class APIListenerService {
         }
     }
 
+    /// Whether something is actually listening on this unix socket path.
+    ///
+    /// A stale file refuses the connection immediately, a live listener
+    /// accepts it (the backlog makes `connect` succeed before `accept`), so
+    /// this is a cheap, decisive probe. It exists because "a file exists" is
+    /// not proof that the listener is dead: nothing in `main.swift` enforces a
+    /// single instance, so a second launch used to unlink the running app's
+    /// socket and bind its own — a silent split, where HTTP at least reports a
+    /// port conflict.
+    private static func socketIsLive(at path: String) -> Bool {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        addr.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        let pathBytes = Array(path.utf8)
+        guard pathBytes.count < MemoryLayout.size(ofValue: addr.sun_path) else { return false }
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            raw.copyBytes(from: pathBytes)
+        }
+
+        let result = withUnsafePointer(to: &addr) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        return result == 0
+    }
+
     private func startSocket(router: APIRouter) {
-        // A socket file left by a previous run blocks the bind; the
-        // listener below is dead by definition, so the file is garbage.
-        // An occupier we cannot remove (a directory, permissions) means the
-        // transport cannot come up at all: report and stay off.
+        // A socket file left by a previous run blocks the bind, and is garbage
+        // by definition — but "a file exists" is not proof of that. Probe
+        // first: if something is listening, another instance owns this
+        // transport and unlinking would silently cut it off.
         if FileManager.default.fileExists(atPath: socketPath) {
+            if Self.socketIsLive(at: socketPath) {
+                socketError = "另一个实例正在使用该 socket"
+                isSocketListening = false
+                return
+            }
+            // An occupier we cannot remove (a directory, permissions) means the
+            // transport cannot come up at all: report and stay off.
             do {
                 try FileManager.default.removeItem(atPath: socketPath)
             } catch {

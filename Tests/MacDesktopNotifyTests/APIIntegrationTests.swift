@@ -296,6 +296,45 @@ final class APIIntegrationTests: XCTestCase {
                        "history 必须仍能编码，而不是退化成 {}")
     }
 
+    /// 特征化测试：客户端发一半 body 就半关连接时，服务器会及时关掉它。
+    ///
+    /// 2026-09-09 评审曾把这条列为"receive 在 EOF 上空转、饿死串行队列"。
+    /// 实测证伪：半关后服务器仍能立刻服务新连接，且客户端在毫秒级看到 EOF。
+    /// 保留此用例作为回归护栏 —— 该行为依赖 Network.framework 在后续
+    /// receive 上以 error 形式上报 EOF，值得钉住。
+    func testHalfClosedRequestIsClosedByTheServer() async throws {
+        let base = try await startServer()
+        let port = try XCTUnwrap(base.port)
+
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0, "socket() 失败")
+        defer { close(fd) }
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = UInt16(port).bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let connected = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        XCTAssertEqual(connected, 0, "connect() 失败")
+
+        let partial = Data("POST /v1/push HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 100\r\n\r\n{".utf8)
+        _ = partial.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        XCTAssertEqual(shutdown(fd, SHUT_WR), 0, "shutdown() 失败")
+
+        // 在后台线程等 EOF，别阻塞主 actor（服务器需要它路由别的请求）。
+        let eof = await Task.detached { () -> Int in
+            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            guard poll(&pfd, 1, 3000) == 1 else { return -1 }   // -1 = 超时
+            var byte: UInt8 = 0
+            return read(fd, &byte, 1)                            // 0 = 对端已关闭
+        }.value
+        XCTAssertEqual(eof, 0, "服务器必须关闭凑不齐 body 的连接（-1 表示超时悬挂）")
+    }
+
     /// A ping must be answered with a pong carrying the same payload. Driven
     /// through the raw client because `URLSessionWebSocketTask.sendPing` has
     /// no way to bound how long its pong handler takes to fire.
