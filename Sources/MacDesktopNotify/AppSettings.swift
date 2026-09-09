@@ -157,7 +157,7 @@ final class AppSettings {
         miniSummaryOnNotchlessScreens = defaults.object(forKey: Keys.miniSummaryOnNotchlessScreens.rawValue) as? Bool ?? true
         mirrorSummaryOnAllDisplays = defaults.object(forKey: Keys.mirrorSummaryOnAllDisplays.rawValue) as? Bool ?? false
         contentFontSize = defaults.object(forKey: Keys.contentFontSize.rawValue) as? Double ?? 12
-        panelWidth = defaults.object(forKey: Keys.panelWidth.rawValue) as? Double ?? 460
+        panelWidth = defaults.object(forKey: Keys.panelWidth.rawValue) as? Double ?? 720
         panelHeight = defaults.object(forKey: Keys.panelHeight.rawValue) as? Double ?? 360
         notchWidthOffset = defaults.object(forKey: Keys.notchWidthOffset.rawValue) as? Double ?? 0
         notchHeightOffset = defaults.object(forKey: Keys.notchHeightOffset.rawValue) as? Double ?? 0
@@ -194,7 +194,7 @@ final class AppSettings {
 
     func resetDisplayDefaults() {
         contentFontSize = 12
-        panelWidth = 460
+        panelWidth = 720
         panelHeight = 360
         notchWidthOffset = 0
         notchHeightOffset = 0

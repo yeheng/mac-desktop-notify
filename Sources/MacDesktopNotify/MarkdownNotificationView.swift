@@ -405,9 +405,13 @@ private struct MessageListView: View {
 }
 
 /// The message currently being presented: full Markdown body and actions.
+/// Action capsules ride the header's tag row - buttons and tag share one
+/// line; an action that needs a typed reason falls back to the full
+/// `ActionRow` below the body.
 private struct CurrentCard: View {
     let notification: NotchNotification
     private var manager: NotificationManager { .shared }
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -419,22 +423,37 @@ private struct CurrentCard: View {
                 Text("正在显示 · \(notification.urgency.accessibilityLabel)")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.66))
-                Spacer()
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if showsInlineActions {
+                    InlineActionCapsules(notification: notification)
+                }
                 Text(notification.timestamp.formatted(.relative(presentation: .named)))
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(PanelTextOpacity.timestamp))
             }
             // Combine the header only, never the whole card: a card-level
-            // `.combine` folds ActionRow's buttons and the critical snooze
-            // control out of VoiceOver. The header is also the only place the
-            // title reaches assistive tech - the card renders just body and
-            // actions - so the combined label carries it along with urgency.
+            // `.combine` folds the buttons below and the critical snooze
+            // control out of VoiceOver. The header's own combine would fold
+            // the inline action capsules too, so they are mirrored as named
+            // accessibility actions. The header is also the only place the
+            // title reaches assistive tech, so the combined label carries it
+            // along with urgency.
             .accessibilityElement(children: .combine)
             .accessibilityLabel("当前消息：\(notification.title)，\(notification.urgency.accessibilityLabel)")
             // §5.5: the swipe gesture is gone; VoiceOver keeps a named way to
             // put the card away.
             .accessibilityAction(named: "收起当前消息") {
                 manager.dismissCurrent()
+            }
+            .accessibilityActions {
+                if showsInlineActions {
+                    ForEach(Array(notification.actions.enumerated()), id: \.offset) { _, action in
+                        Button("操作：\(action.label)") {
+                            manager.performAction(action, for: notification)
+                        }
+                    }
+                }
             }
 
             Text(notification.title)
@@ -444,7 +463,7 @@ private struct CurrentCard: View {
 
             NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
 
-            if !notification.actions.isEmpty {
+            if !notification.actions.isEmpty, !showsInlineActions {
                 ActionRow(actions: notification.actions) { action, comment in
                     manager.performAction(action, for: notification, comment: comment)
                 }
@@ -455,7 +474,13 @@ private struct CurrentCard: View {
             }
         }
         .padding(12)
-        .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(.white.opacity(hovering ? 0.14 : 0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onHover { hovering = $0 }
+        .animation(.easeInOut(duration: 0.12), value: hovering)
+    }
+
+    private var showsInlineActions: Bool {
+        InlineActionCapsules.canInline(notification)
     }
 
     /// Critical-specific affordances: snooze (it stays, but stops hogging the
@@ -487,7 +512,9 @@ private struct CurrentCard: View {
 
 /// A past message. Tap to expand the rendered Markdown body inline - the
 /// explicit open that marks it read (v4 §4). §5.2: read-only - delete/read
-/// toggles live in the history window.
+/// toggles live in the history window. Collapsed rows carry their action
+/// capsules on the title row itself - buttons and tag share one line; an
+/// action that needs a typed reason stays in the expanded body's ActionRow.
 private struct HistoryRow: View {
     let notification: NotchNotification
     let isExpanded: Bool
@@ -524,6 +551,9 @@ private struct HistoryRow: View {
                                 .frame(width: 5, height: 5)
                                 .accessibilityHidden(true)
                         }
+                        if showsInlineActions {
+                            InlineActionCapsules(notification: notification)
+                        }
                     }
                     if !isExpanded, let previewText {
                         Text(previewText)
@@ -555,6 +585,17 @@ private struct HistoryRow: View {
             .accessibilityHint(isExpanded ? "收起正文" : "展开正文")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { toggle() }
+            // The row combines its children, which would fold the inline
+            // action capsules out of VoiceOver - mirror them as named actions.
+            .accessibilityActions {
+                if showsInlineActions {
+                    ForEach(Array(notification.actions.enumerated()), id: \.offset) { _, action in
+                        Button("操作：\(action.label)") {
+                            manager.performAction(action, for: notification)
+                        }
+                    }
+                }
+            }
 
             if isExpanded {
                 Text(notification.title)
@@ -576,6 +617,13 @@ private struct HistoryRow: View {
         .background(.white.opacity(hovering ? 0.12 : 0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
+    /// Inline capsules only on the collapsed row: the expanded body already
+    /// offers the same actions through `ActionRow`, showing both would
+    /// duplicate them.
+    private var showsInlineActions: Bool {
+        !isExpanded && InlineActionCapsules.canInline(notification)
+    }
+
     /// Collapsed preview renders inline Markdown instead of showing raw source
     /// asterisks. Fenced code blocks are skipped entirely: log dumps read as
     /// noise two lines at a time, and their ``` markers would leak into the
@@ -593,6 +641,36 @@ private struct HistoryRow: View {
             .joined(separator: " ")
         guard !flat.isEmpty else { return nil }
         return MarkdownCache.shared.inline(flat)
+    }
+}
+
+/// Action capsules rendered directly on a card's title/tag row, matching the
+/// reference layout where tags and buttons share one line. Comment-requesting
+/// actions are excluded - their input field only fits in the full `ActionRow`,
+/// which callers fall back to when `canInline` is false.
+private struct InlineActionCapsules: View {
+    let notification: NotchNotification
+    private var manager: NotificationManager { .shared }
+
+    var body: some View {
+        ForEach(Array(notification.actions.enumerated()), id: \.offset) { index, action in
+            Button {
+                manager.performAction(action, for: notification)
+            } label: {
+                Text(action.label)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .fixedSize()
+            }
+            .buttonStyle(ActionCapsuleStyle(primary: index == 0))
+            .help("操作：\(action.label)")
+            .accessibilityLabel("操作：\(action.label)")
+        }
+    }
+
+    static func canInline(_ notification: NotchNotification) -> Bool {
+        !notification.actions.isEmpty && notification.actions.allSatisfy { !$0.wantsComment }
     }
 }
 
