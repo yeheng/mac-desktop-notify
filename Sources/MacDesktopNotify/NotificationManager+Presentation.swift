@@ -138,16 +138,36 @@ extension NotificationManager {
     /// The only way a message becomes live. It publishes the message and its dwell
     /// budget as one value, then hands the countdown to `reconcileDwell`.
     private func beginPresenting(_ item: NotchNotification, as state: NotchDisplayState) {
-        // §6/§7: peek degrades to "no auto card, Tier 0 only" - the pill dwell
-        // is the sender timeout ?? the app's dwell setting; no special budget.
-        let budget: Duration? = item.urgency == .critical
+        presentation = Presentation(item: item, remaining: Self.budget(for: item))
+        displayState = state
+        armLiveRules()
+    }
+
+    /// The budget a message runs on. §6/§7: peek degrades to "no auto card,
+    /// Tier 0 only" - the pill dwell is the sender timeout ?? the app's dwell
+    /// setting; no special budget. Criticals block (nil).
+    private static func budget(for item: NotchNotification) -> Duration? {
+        item.urgency == .critical
             ? nil
             : .seconds(max(0.1, item.timeout ?? AppSettings.shared.messageDwellSeconds))
+    }
+
+    /// Re-derives the live message's budget and re-arms every rule from the
+    /// current `presentation`. The single place those rules are established:
+    /// `beginPresenting` (a new message) and `update(id:)` (a script backfill
+    /// rewrote the live one) both end here, so a rewritten card cannot keep the
+    /// budget of the message it used to be - one that becomes critical must
+    /// stop auto-closing, one that grows actions must stop retiring.
+    ///
+    /// Internal (not `private`) because `+History.update(id:)` is the other
+    /// caller, and stored-property visibility rules put it in a sibling file.
+    func armLiveRules() {
+        guard var live = presentation else { return }
         stopDwell()
         stopAgingTimers()
-        presentation = Presentation(item: item, remaining: budget)
-        displayState = state
-        if item.urgency == .critical {
+        live.remaining = Self.budget(for: live.item)
+        presentation = live
+        if live.item.urgency == .critical {
             armCriticalIdleDemotion()
         }
         armActionHoldAging()
