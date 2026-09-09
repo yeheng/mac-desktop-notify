@@ -517,6 +517,12 @@ private struct AppearanceSettingsContent: View {
 private struct NotificationSettingsContent: View {
     @Bindable var settings: AppSettings
 
+    /// Queried live rather than inline: the answer changes when the user
+    /// leaves for System Settings and grants the permission, and a plain
+    /// `AXIsProcessTrusted()` call in `body` has no observation source, so the
+    /// pane kept saying "未授权" until something unrelated forced a redraw.
+    @State private var axTrusted = AXIsProcessTrusted()
+
     /// Choosing a preset writes its values; the picker itself is derived, so
     /// a custom combination left over from older per-toggle settings shows as
     /// no selection instead of a lie.
@@ -561,7 +567,7 @@ private struct NotificationSettingsContent: View {
             // The permission and the shortcuts it unlocks live in one
             // section: sending the user to another pane to grant it made
             // the dependency invisible.
-            if AXIsProcessTrusted() {
+            if axTrusted {
                 Label("已授权辅助功能，Esc 在任何 App 中可用", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .font(.callout)
@@ -580,6 +586,10 @@ private struct NotificationSettingsContent: View {
             Text("快捷键")
         } footer: {
             SectionFooter("Esc 在指针停留于面板或手动打开面板时生效；⌃⌥N 为系统级热键，无需辅助功能授权。")
+        }
+        // 用户去系统设置授权后切回来：重新查询，否则界面一直显示"未授权"。
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            axTrusted = AXIsProcessTrusted()
         }
 
         Section {
