@@ -92,4 +92,38 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
         try await Task.sleep(for: .seconds(1))
         XCTAssertNil(m.current, "no stale aging timer may act on the next presentation")
     }
+
+    // MARK: - 定时器生命周期（评审 #5）
+
+    /// snooze 一个带 actions 的 critical 之后，释放定时器必须重新武装：
+    /// critical 的 remaining 是 nil，武装时 guard 不过只做了 cancel，
+    /// 之后再无人调度，消息就永远挂在 pill 上。
+    func testSnoozingCriticalWithActionsRearmsTheHoldTimer() async throws {
+        let m = NotificationManager()
+        m.actionHoldIdleLimit = .milliseconds(60)
+        let critical = NotchNotification(
+            title: "审批", bodyMarkdown: "x", urgency: .critical, timeout: nil,
+            actions: [approveAction])
+        m.push(critical)
+        XCTAssertFalse(m.delayed.isActive(.actionHoldAging), "前置：critical 的 hold 尚未激活")
+
+        m.snoozeCurrentCritical()
+        XCTAssertTrue(m.delayed.isActive(.actionHoldAging), "snooze 后必须重新武装释放定时器")
+
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(m.presentation?.actionsHoldReleased, true, "无人理会的 hold 必须被释放")
+    }
+
+    /// 定时器 fire 时用户恰好看着面板，不能永久放弃——必须重新排队，
+    /// 否则 ageOutCriticals / actions-hold 会在时间巧合下静默失效。
+    func testHoldReleaseRetriesWhenTheUserIsLooking() async throws {
+        let m = NotificationManager()
+        m.actionHoldIdleLimit = .milliseconds(60)
+        m.push(make("approve", timeout: 60, actions: [approveAction]))
+        m.openMessageCenter()                 // openReason == .click，首次 fire 必然 guard 失败
+
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertTrue(m.delayed.isActive(.actionHoldAging), "被看到的卡片应重新排队而不是放弃")
+        XCTAssertEqual(m.presentation?.actionsHoldReleased, false)
+    }
 }

@@ -25,17 +25,30 @@ extension NotificationManager {
         displayState = .closed
         presentCompact()
         applyDismissRules()
+        // A snoozed critical may carry actions, which re-activates the hold.
+        // Without re-arming here, the release timer stays cancelled: it was
+        // disarmed back when the critical still had `remaining == nil`, and
+        // nothing else re-schedules it.
+        armActionHoldAging()
         reconcileDwell()
     }
 
     /// Ages out an untouched critical so the top of the screen is not held
-    /// hostage forever. Called from `beginPresenting` when a critical takes the
+    /// hostage forever. Called from `armLiveRules` when a critical takes the
     /// screen; cancelled by anything that retires the presentation.
     func armCriticalIdleDemotion() {
         guard AppSettings.shared.ageOutCriticals else {
             delayed.cancel(.criticalAging)
             return
         }
+        scheduleCriticalIdleDemotion()
+    }
+
+    /// One firing of the critical demotion. A guard that fails because the user
+    /// is *currently* looking at the card re-queues instead of giving up: the
+    /// question this timer answers is "was it ever left alone", and a single
+    /// moment of attention is not an answer to that.
+    private func scheduleCriticalIdleDemotion() {
         delayed.schedule(.criticalAging, after: Self.criticalIdleDemotion) { [weak self] in
             guard let self else { return }
             guard let live = self.presentation, live.item.urgency == .critical, live.remaining == nil else { return }
@@ -43,7 +56,10 @@ extension NotificationManager {
             // demote.
             guard self.pointer.completelyGone,
                   self.displayState.openReason != .click,
-                  self.displayState.openReason != .hover else { return }
+                  self.displayState.openReason != .hover else {
+                self.scheduleCriticalIdleDemotion()
+                return
+            }
             var demoted = live
             demoted.remaining = Self.criticalSnoozeBudget
             self.presentation = demoted
@@ -65,6 +81,12 @@ extension NotificationManager {
             delayed.cancel(.actionHoldAging)
             return
         }
+        scheduleActionHoldAging()
+    }
+
+    /// One firing of the hold release. Same retry shape as the critical
+    /// demotion above: a momentary glance re-queues, it does not cancel.
+    private func scheduleActionHoldAging() {
         delayed.schedule(.actionHoldAging, after: actionHoldIdleLimit) { [weak self] in
             guard let self else { return }
             guard self.dwellHeldForActions, let live = self.presentation else { return }
@@ -72,12 +94,15 @@ extension NotificationManager {
             // opening means the actions are being looked at.
             guard self.pointer.completelyGone,
                   self.displayState.openReason != .click,
-                  self.displayState.openReason != .hover else { return }
+                  self.displayState.openReason != .hover else {
+                self.scheduleActionHoldAging()
+                return
+            }
             var released = live
             released.actionsHoldReleased = true
-            // The message's own budget, recomputed like `beginPresenting`'s
-            // non-peek branch (a peek message never expands, so it never held).
-            released.remaining = .seconds(max(0.1, live.item.timeout ?? AppSettings.shared.messageDwellSeconds))
+            // Keep the budget the message already had: a snoozed critical's
+            // 5-minute promise must not be shortened to the default dwell.
+            released.remaining = live.remaining
             self.presentation = released
             // v3 (§3.1): the dwell only runs on the pill layer, so the aged-out
             // card steps down to the pill for its released budget to run -
