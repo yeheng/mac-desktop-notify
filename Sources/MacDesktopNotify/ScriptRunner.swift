@@ -485,7 +485,10 @@ final class ScriptRunner {
     /// fetch：脚本线程内同步 URLSession（semaphore），仅 http/https，
     /// 超时 10s。notify：semaphore 等 MainActor Task 完成——主线程从不同步
     /// 等脚本线程，无死锁环（设计 §3.1）。
-    private static func productionEngine() -> ScriptEngine {
+    /// Internal (not private) so a test can exercise the real bridges: they are
+    /// the deadlock-prone glue (a script thread blocking on MainActor), and
+    /// every other script test injects a fake engine that never touches them.
+    static func productionEngine() -> ScriptEngine {
         ScriptEngine(fetch: scriptFetch, notify: scriptNotify)
     }
 }

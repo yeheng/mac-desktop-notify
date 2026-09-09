@@ -96,9 +96,12 @@ final class PerScreenInstancesTests: XCTestCase {
 
     // MARK: - Display identity
 
-    func testDisplayIDIsUsableAsAKey() {
-        // Guarded: a headless test host has no screens at all.
-        guard let screen = NSScreen.main else { return }
+    func testDisplayIDIsUsableAsAKey() throws {
+        // A headless test host has no screens at all: skip loudly rather than
+        // returning quietly, which would count as a pass and hide the gap.
+        guard let screen = NSScreen.main else {
+            throw XCTSkip("无屏幕环境")
+        }
         XCTAssertNotEqual(screen.displayID, 0, "a display with no id cannot be tracked")
         XCTAssertEqual(screen.displayID, screen.displayID, "and it must be stable across reads")
     }

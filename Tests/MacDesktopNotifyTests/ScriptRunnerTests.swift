@@ -138,17 +138,23 @@ final class ScriptRunnerTests: SettingsIsolatedTestCase {
         for _ in 0..<5 {
             handles.append(Task { await runner.run(named: "slow", input: .object([:]), budget: .seconds(30)) })
         }
-        // 第 5 个立即被拒（busy）——不等 gate 放行，轮询有界时间。
+        // 旧用例轮询 `activeExecutions < 5`——而闸门上限就是 4，该条件恒真，
+        // 循环第一轮就 break，注释宣称的"等待闸门占满"从未发生。
+        XCTAssertLessThanOrEqual(runner.activeExecutions, ScriptRunner.maxConcurrent,
+                                 "闸门上限即 maxConcurrent，恒不可能达到 5")
+        // 真正等到 4 个执行都进入闸内（它们都阻塞在 fetch 的 gate 上）。
         let deadline = Date().addingTimeInterval(5)
-        var sawBusy = false
-        while Date() < deadline {
-            if await runner.activeExecutions < 5 { sawBusy = true; break }
+        while Date() < deadline, runner.activeExecutions < 4 {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
+        XCTAssertEqual(runner.activeExecutions, 4, "前四个执行必须占满闸门")
+
         for _ in 0..<4 { gate.signal() }  // 放行全部执行——不在测试进程留永久阻塞线程
         var outcomes: [ScriptOutcome] = []
         for handle in handles { outcomes.append(await handle.value) }
-        XCTAssertEqual(outcomes[4].error, "busy")
+        // 调度顺序不保证第 5 个就是被拒的那个：断言"恰好一个 busy"。
+        XCTAssertEqual(outcomes.filter { $0.error == "busy" }.count, 1,
+                       "5 个请求、闸门 4：恰好一个必须被拒")
     }
 
     // MARK: - Push backfill (§2.1)

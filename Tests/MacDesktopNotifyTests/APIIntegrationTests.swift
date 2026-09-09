@@ -296,6 +296,46 @@ final class APIIntegrationTests: XCTestCase {
                        "history 必须仍能编码，而不是退化成 {}")
     }
 
+    /// 生产脚本桥（脚本线程 semaphore ↔ MainActor）是全 app 最容易死锁的
+    /// 胶水：其余脚本测试全部注入假 engine，这条是唯一走真桥的端到端。
+    func testProductionFetchBridgeReachesTheServer() async throws {
+        let base = try await startServer()
+        let engine = ScriptRunner.productionEngine()
+        let outcome = await engine.run(
+            source: """
+            const r = fetch("\(base.absoluteString)/v1/status")
+            if (!r.ok) throw new Error("fetch failed: " + r.status)
+            return JSON.parse(r.body).unreadCount
+            """,
+            input: .object([:]), budget: .seconds(10))
+        XCTAssertNil(outcome.error, "生产 fetch 桥不得超时或抛错：\(outcome.error ?? "")")
+        XCTAssertEqual(outcome.result, .number(0))
+    }
+
+    /// 生产 fetch 桥的 scheme 白名单：脚本不得读本地文件。
+    func testProductionFetchBridgeRejectsNonHTTPScheme() async throws {
+        let engine = ScriptRunner.productionEngine()
+        let outcome = await engine.run(
+            source: "const r = fetch('file:///etc/passwd'); return r.status",
+            input: .object([:]), budget: .seconds(5))
+        XCTAssertEqual(outcome.result, .number(0), "scheme 白名单必须拒绝 file://")
+    }
+
+    /// 生产 notify 桥：脚本线程同步等 MainActor 推送落地并拿回 outcome。
+    /// 生产桥固定打 `NotificationManager.shared`（`performScriptNotify`），
+    /// 所以这里断言 shared 并负责清理。
+    func testProductionNotifyBridgePushesThroughTheManager() async throws {
+        defer { NotificationManager.shared.clear() }
+        let engine = ScriptRunner.productionEngine()
+        let outcome = await engine.run(
+            source: "return notify.push({ title: 'from script', body: 'hi' })",
+            input: .object([:]), budget: .seconds(10))
+        XCTAssertNil(outcome.error, "notify 桥不得超时：\(outcome.error ?? "")")
+        XCTAssertEqual(outcome.result, .string("displayed"))
+        XCTAssertEqual(NotificationManager.shared.history.last?.title, "from script",
+                       "生产 notify 桥必须真的落到 manager 上")
+    }
+
     /// 特征化测试：客户端发一半 body 就半关连接时，服务器会及时关掉它。
     ///
     /// 2026-09-09 评审曾把这条列为"receive 在 EOF 上空转、饿死串行队列"。
