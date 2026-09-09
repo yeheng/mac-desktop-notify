@@ -34,12 +34,21 @@ struct ScriptStore: Sendable {
         }
     }
 
+    /// Distinguishes "no such script" from "the file is there but unreadable".
+    /// The old `try?` collapsed both into `.notFound`, so a permissions or
+    /// encoding problem sent the user hunting for a file that was present all
+    /// along — and `readFailed` carried the real reason without ever being
+    /// thrown.
     func load(_ name: String) throws -> String {
         guard Self.isValidName(name) else { throw ScriptStoreError.invalidName }
         let file = directory.appendingPathComponent(name + ".js")
-        guard let source = try? String(contentsOf: file, encoding: .utf8) else {
+        guard FileManager.default.fileExists(atPath: file.path) else {
             throw ScriptStoreError.notFound
         }
-        return source
+        do {
+            return try String(contentsOf: file, encoding: .utf8)
+        } catch {
+            throw ScriptStoreError.readFailed(error.localizedDescription)
+        }
     }
 }

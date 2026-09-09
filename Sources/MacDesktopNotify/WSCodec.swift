@@ -30,66 +30,79 @@ enum WSCodec {
     }
 
     static func decode(_ data: Data) -> (frames: [WSFrame], remainder: Data)? {
+        let bytes = [UInt8](data)      // one conversion per receive, not per frame
         var frames: [WSFrame] = []
-        var remainder = data
-        while true {
-            guard let frame = decodeOne(remainder) else { return nil }   // violation
-            if let frame {
-                frames.append(frame.frame)
-                remainder = frame.remainder
-            } else {
-                return (frames, remainder)   // incomplete; stop
+        var cursor = 0
+        while cursor < bytes.count {
+            switch decodeOne(bytes, from: cursor) {
+            case .violation:
+                return nil
+            case .needMoreData:
+                return (frames, Data(bytes[cursor...]))
+            case .frame(let frame, let next):
+                frames.append(frame)
+                cursor = next
             }
         }
+        return (frames, Data())
     }
 
-    /// Returns nil on protocol violation; `.none` inside Optional when more
-    /// bytes are needed.
-    private static func decodeOne(_ data: Data) -> (frame: WSFrame, remainder: Data)?? {
-        let bytes = [UInt8](data)
-        guard bytes.count >= 2 else { return .some(nil) }
+    /// Three outcomes, one enum: the same shape `HTTPCodec.parseRequestHead`
+    /// uses. The old `??` return encoded "violation" and "need more bytes" as
+    /// two kinds of nil and forced a guard/if-let double jump at the call site.
+    private enum DecodeStep {
+        case violation
+        case needMoreData
+        case frame(WSFrame, Int)
+    }
 
-        let fin = bytes[0] & 0x80 != 0
-        let opcode = bytes[0] & 0x0F
-        let masked = bytes[1] & 0x80 != 0
-        var length = Int(bytes[1] & 0x7F)
-        var offset = 2
+    /// Decodes the frame starting at `start`, returning the index just past it.
+    /// `bytes` is the whole receive buffer, converted once by `decode`: the old
+    /// per-frame `[UInt8](data)` + `Data(bytes[offset...])` pair copied the
+    /// entire remainder twice per frame, which is O(n²) on a buffered burst.
+    private static func decodeOne(_ bytes: [UInt8], from start: Int) -> DecodeStep {
+        guard bytes.count - start >= 2 else { return .needMoreData }
+
+        let fin = bytes[start] & 0x80 != 0
+        let opcode = bytes[start] & 0x0F
+        let masked = bytes[start + 1] & 0x80 != 0
+        var length = Int(bytes[start + 1] & 0x7F)
+        var offset = start + 2
 
         // Client→server frames MUST be masked (RFC 6455 §5.1).
-        guard masked else { return nil }
+        guard masked else { return .violation }
 
         switch length {
         case 126:
-            guard bytes.count >= offset + 2 else { return .some(nil) }
+            guard bytes.count >= offset + 2 else { return .needMoreData }
             length = Int(bytes[offset]) << 8 | Int(bytes[offset + 1])
             offset += 2
         case 127:
-            guard bytes.count >= offset + 8 else { return .some(nil) }
+            guard bytes.count >= offset + 8 else { return .needMoreData }
             var value = 0
             for i in 0..<8 { value = value << 8 | Int(bytes[offset + i]) }
-            guard value >= 0, value <= maxMessageSize else { return nil }
+            guard value >= 0, value <= maxMessageSize else { return .violation }
             length = value
             offset += 8
         default:
             break
         }
-        guard length <= maxMessageSize else { return nil }
+        guard length <= maxMessageSize else { return .violation }
 
         // Control frames must not be fragmented and stay ≤ 125 bytes.
-        if opcode >= 0x8, (!fin || length > 125) { return nil }
+        if opcode >= 0x8, (!fin || length > 125) { return .violation }
 
-        guard bytes.count >= offset + 4 + length else { return .some(nil) }
-        let mask = Array(bytes[offset..<(offset + 4)])
+        guard bytes.count >= offset + 4 + length else { return .needMoreData }
+        let mask = [bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]]
         offset += 4
         // One contiguous buffer, XORed in place: no intermediate Array from a
         // high-order `.map`, no per-byte closure dispatch — allocation stays
         // O(1) regardless of frame size.
         var payload = Data(bytes[offset..<(offset + length)])
         for i in 0..<length {
-            payload[i] ^= mask[i % 4]
+            payload[i] ^= mask[i & 3]
         }
-        offset += length
-        return .some((WSFrame(fin: fin, opcode: opcode, payload: payload), Data(bytes[offset...])))
+        return .frame(WSFrame(fin: fin, opcode: opcode, payload: payload), offset + length)
     }
 
     static func encode(opcode: UInt8, payload: Data) -> Data {

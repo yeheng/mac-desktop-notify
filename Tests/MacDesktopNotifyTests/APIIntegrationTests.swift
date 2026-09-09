@@ -275,10 +275,104 @@ final class APIIntegrationTests: XCTestCase {
         }
 
         XCTAssertEqual(payload["ref"] as? String, "r1")
-        XCTAssertEqual(payload["ref"] as? String, "r1")
         XCTAssertEqual(payload["ok"] as? Bool, true)
         XCTAssertEqual(payload["outcome"] as? String, "displayed")
         XCTAssertEqual(manager.current?.title, "从 WS 推送")
+    }
+
+    /// 一条带 nan timeout 的 URL 推送不得毒化整个 history 接口（评审 #2）。
+    /// URL 是唯一能造出 NaN 的入口——JSON 数字无法表达它。
+    func testNaNFTimeoutFromURLDoesNotPoisonHistory() async throws {
+        let base = try await startServer()
+        let url = try XCTUnwrap(URL(string: "notch-notify://push?title=nan&timeout=nan"))
+        let n = try XCTUnwrap(URLNotificationParser.parsePush(url))
+        await MainActor.run { manager.push(n) }
+        XCTAssertNil(manager.current?.timeout, "NaN 必须被闸口拦下")
+
+        let (status, data) = try await request(base.appendingPathComponent("v1/history"), method: "GET")
+        XCTAssertEqual(status, 200)
+        let payload = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        XCTAssertEqual((payload["items"] as? [[String: Any]])?.count, 1,
+                       "history 必须仍能编码，而不是退化成 {}")
+    }
+
+    /// 生产脚本桥（脚本线程 semaphore ↔ MainActor）是全 app 最容易死锁的
+    /// 胶水：其余脚本测试全部注入假 engine，这条是唯一走真桥的端到端。
+    func testProductionFetchBridgeReachesTheServer() async throws {
+        let base = try await startServer()
+        let engine = ScriptRunner.productionEngine()
+        let outcome = await engine.run(
+            source: """
+            const r = fetch("\(base.absoluteString)/v1/status")
+            if (!r.ok) throw new Error("fetch failed: " + r.status)
+            return JSON.parse(r.body).unreadCount
+            """,
+            input: .object([:]), budget: .seconds(10))
+        XCTAssertNil(outcome.error, "生产 fetch 桥不得超时或抛错：\(outcome.error ?? "")")
+        XCTAssertEqual(outcome.result, .number(0))
+    }
+
+    /// 生产 fetch 桥的 scheme 白名单：脚本不得读本地文件。
+    func testProductionFetchBridgeRejectsNonHTTPScheme() async throws {
+        let engine = ScriptRunner.productionEngine()
+        let outcome = await engine.run(
+            source: "const r = fetch('file:///etc/passwd'); return r.status",
+            input: .object([:]), budget: .seconds(5))
+        XCTAssertEqual(outcome.result, .number(0), "scheme 白名单必须拒绝 file://")
+    }
+
+    /// 生产 notify 桥：脚本线程同步等 MainActor 推送落地并拿回 outcome。
+    /// 生产桥固定打 `NotificationManager.shared`（`performScriptNotify`），
+    /// 所以这里断言 shared 并负责清理。
+    func testProductionNotifyBridgePushesThroughTheManager() async throws {
+        defer { NotificationManager.shared.clear() }
+        let engine = ScriptRunner.productionEngine()
+        let outcome = await engine.run(
+            source: "return notify.push({ title: 'from script', body: 'hi' })",
+            input: .object([:]), budget: .seconds(10))
+        XCTAssertNil(outcome.error, "notify 桥不得超时：\(outcome.error ?? "")")
+        XCTAssertEqual(outcome.result, .string("displayed"))
+        XCTAssertEqual(NotificationManager.shared.history.last?.title, "from script",
+                       "生产 notify 桥必须真的落到 manager 上")
+    }
+
+    /// 特征化测试：客户端发一半 body 就半关连接时，服务器会及时关掉它。
+    ///
+    /// 2026-09-09 评审曾把这条列为"receive 在 EOF 上空转、饿死串行队列"。
+    /// 实测证伪：半关后服务器仍能立刻服务新连接，且客户端在毫秒级看到 EOF。
+    /// 保留此用例作为回归护栏 —— 该行为依赖 Network.framework 在后续
+    /// receive 上以 error 形式上报 EOF，值得钉住。
+    func testHalfClosedRequestIsClosedByTheServer() async throws {
+        let base = try await startServer()
+        let port = try XCTUnwrap(base.port)
+
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0, "socket() 失败")
+        defer { close(fd) }
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = UInt16(port).bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let connected = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        XCTAssertEqual(connected, 0, "connect() 失败")
+
+        let partial = Data("POST /v1/push HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 100\r\n\r\n{".utf8)
+        _ = partial.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        XCTAssertEqual(shutdown(fd, SHUT_WR), 0, "shutdown() 失败")
+
+        // 在后台线程等 EOF，别阻塞主 actor（服务器需要它路由别的请求）。
+        let eof = await Task.detached { () -> Int in
+            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            guard poll(&pfd, 1, 3000) == 1 else { return -1 }   // -1 = 超时
+            var byte: UInt8 = 0
+            return read(fd, &byte, 1)                            // 0 = 对端已关闭
+        }.value
+        XCTAssertEqual(eof, 0, "服务器必须关闭凑不齐 body 的连接（-1 表示超时悬挂）")
     }
 
     /// A ping must be answered with a pong carrying the same payload. Driven

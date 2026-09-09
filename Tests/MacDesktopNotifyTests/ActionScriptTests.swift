@@ -22,8 +22,14 @@ final class ActionScriptTests: SettingsIsolatedTestCase {
 
     func testScriptActionRunsHookAndInputCarriesComment() async throws {
         let dir = try makeDir()
+        // 脚本在 comment 不符时抛错——这样"没有失败通知"才真正证明了
+        // comment 到达了脚本，而不是"什么都没跑也没报错"。
         let (runner, m) = makeRunner(
-            dir: dir, source: "return { got: input.label, note: input.comment }")
+            dir: dir,
+            source: """
+            if (input.comment !== 'staging 没问题') { throw new Error('comment missing') }
+            return { got: input.label, note: input.comment }
+            """)
 
         let action = NotificationAction(label: "批准", script: "approve", wantsComment: true)
         var n = NotchNotification(title: "审批", bodyMarkdown: "发布 v2", urgency: .normal, timeout: 60)
@@ -31,9 +37,10 @@ final class ActionScriptTests: SettingsIsolatedTestCase {
 
         await runner.runActionHook(action: action, notification: n, comment: "staging 没问题")
 
-        // 钩子本身 fire-and-forget：断言只验证「执行没抛、没有错误通知被推入」。
-        // input 正确性由 ScriptEngineTests 的 testInputAndReturnValue 覆盖。
-        XCTAssertFalse(m.history.contains { $0.title.hasPrefix("脚本失败") })
+        // 钩子是 fire-and-forget：runActionHook 只在失败时推诊断通知，
+        // 所以"没有失败通知"等价于"脚本执行成功且 input.comment 正确"。
+        XCTAssertFalse(m.history.contains { $0.title.hasPrefix("脚本失败") },
+                       "comment 未到达脚本，或钩子根本没执行")
     }
 
     func testHookFailurePushesErrorNotification() async throws {

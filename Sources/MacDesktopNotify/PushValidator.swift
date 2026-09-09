@@ -43,7 +43,10 @@ enum PushValidator {
         /// comment.
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            label = try container.decode(String.self, forKey: .label)
+            // The only non-optional field. A missing label must not kill the
+            // whole array: `normalizedActions` already drops empty labels, so
+            // an absent one becomes empty and takes the same path.
+            label = try container.decodeIfPresent(String.self, forKey: .label) ?? ""
             url = try container.decodeIfPresent(String.self, forKey: .url)
             script = try container.decodeIfPresent(String.self, forKey: .script)
             if let b = try? container.decode(Bool.self, forKey: .input) {
@@ -94,8 +97,12 @@ enum PushValidator {
             cappedBody = String(cappedBody.prefix(maxBodyLength))
         }
 
-        let clampedTimeout = timeout.map {
-            min(max($0, timeoutRange.lowerBound), timeoutRange.upperBound)
+        // A non-finite timeout is not a big number, it is garbage: NaN survives
+        // min/max and then poisons every JSONEncoder on the way out (history
+        // responses and the on-disk snapshot both encode it). Treat it as "not
+        // provided" rather than clamping it into the model.
+        let clampedTimeout = timeout.flatMap {
+            $0.isFinite ? min(max($0, timeoutRange.lowerBound), timeoutRange.upperBound) : nil
         }
 
         return .success(NotchNotification(

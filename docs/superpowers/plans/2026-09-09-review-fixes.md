@@ -33,7 +33,7 @@
 
 **背景**：`update(id:)` 是唯一能在卡片上屏后改写它的路径，但它不重跑 dwell/aging/dismiss 规则，导致脚本回填成 critical 的卡片仍按普通消息的预算自灭。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `Tests/MacDesktopNotifyTests/BackfillRulesTests.swift`：
 
@@ -94,12 +94,12 @@ final class BackfillRulesTests: SettingsIsolatedTestCase {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `swift test --build-path build --filter BackfillRulesTests`
 Expected: 前两个用例 FAIL（`a critical must never auto-close` / `an operable card must never auto-close`），第三个可能已通过。
 
-- [ ] **Step 3: 抽出 `armLiveRules()`**
+- [x] **Step 3: 抽出 `armLiveRules()`**
 
 `Sources/MacDesktopNotify/NotificationManager+Presentation.swift`，把 `beginPresenting` 换成：
 
@@ -141,7 +141,7 @@ Expected: 前两个用例 FAIL（`a critical must never auto-close` / `an operab
     }
 ```
 
-- [ ] **Step 4: 让 `update(id:)` 走闸口**
+- [x] **Step 4: 让 `update(id:)` 走闸口**
 
 `Sources/MacDesktopNotify/NotificationManager+History.swift:13-22` 换成：
 
@@ -163,17 +163,17 @@ Expected: 前两个用例 FAIL（`a critical must never auto-close` / `an operab
     }
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `swift test --build-path build --filter BackfillRulesTests`
 Expected: 3 tests PASS
 
-- [ ] **Step 6: 跑全量测试**
+- [x] **Step 6: 跑全量测试**
 
 Run: `swift test --build-path build`
 Expected: 292 tests, 0 failures
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add Sources/MacDesktopNotify/NotificationManager+Presentation.swift \
@@ -196,7 +196,7 @@ git commit -m "fix(interaction): 回填写入活卡片后重新推导 dwell 与 
 
 **背景**：`Double("nan")` 穿透 `min/max`（实测 clamp 后仍是 NaN），`JSONEncoder` 对 NaN 抛异常，于是 `/v1/history` 与落盘双双静默失效；`ActionDTO.label` 是唯一 throw 字段，缺字段会整组失败。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 追加到 `Tests/MacDesktopNotifyTests/PushValidatorTests.swift`：
 
@@ -231,12 +231,12 @@ git commit -m "fix(interaction): 回填写入活卡片后重新推导 dwell 与 
     }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `swift test --build-path build --filter PushValidatorTests` 与 `--filter testActionMissingLabelIsDroppedNotFatal`
 Expected: 前者 FAIL（timeout 为 nan 而非 nil）；后者 FAIL（返回 400）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `PushValidator.swift:97-99`：
 
@@ -259,12 +259,12 @@ Expected: 前者 FAIL（timeout 为 nan 而非 nil）；后者 FAIL（返回 400
             label = try container.decodeIfPresent(String.self, forKey: .label) ?? ""
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `swift test --build-path build --filter PushValidatorTests`
 Expected: PASS
 
-- [ ] **Step 5: 加一条端到端回归**
+- [x] **Step 5: 加一条端到端回归**
 
 追加到 `Tests/MacDesktopNotifyTests/APIIntegrationTests.swift`（注意 `startServer()` 会重置 `manager`，所以必须先起服务器再推送）：
 
@@ -286,12 +286,12 @@ Expected: PASS
     }
 ```
 
-- [ ] **Step 6: 跑全量测试**
+- [x] **Step 6: 跑全量测试**
 
 Run: `swift test --build-path build`
 Expected: 全绿
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add Sources/MacDesktopNotify/PushValidator.swift Tests/MacDesktopNotifyTests/
@@ -312,7 +312,7 @@ git commit -m "fix(api): timeout 拒绝非有限值，action 缺 label 不再杀
 
 **背景**：snooze 后没人重新武装 actions-hold 定时器，带 actions 的 critical 永远不退役；两个 aging 定时器都是一次性的，fire 那一刻 guard 不过就永久放弃。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 追加到 `Tests/MacDesktopNotifyTests/ActionHoldTests.swift`：
 
@@ -348,12 +348,12 @@ git commit -m "fix(api): timeout 拒绝非有限值，action 缺 label 不再杀
     }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `swift test --build-path build --filter ActionHoldTests`
 Expected: 两个新用例 FAIL
 
-- [ ] **Step 3: 实现重试语义**
+- [x] **Step 3: 实现重试语义**
 
 `NotificationManager+Dwell.swift:34-56` 换成：
 
@@ -395,7 +395,7 @@ Expected: 两个新用例 FAIL
     }
 ```
 
-- [ ] **Step 4: 实现 actions-hold 的两处修正**
+- [x] **Step 4: 实现 actions-hold 的两处修正**
 
 `NotificationManager+Dwell.swift:20-29` 的 `snoozeCurrentCritical` 末尾补一行：
 
@@ -448,17 +448,17 @@ Expected: 两个新用例 FAIL
     }
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `swift test --build-path build --filter ActionHoldTests` 与 `--filter CriticalAgingTests`
 Expected: PASS
 
-- [ ] **Step 6: 跑全量测试**
+- [x] **Step 6: 跑全量测试**
 
 Run: `swift test --build-path build`
 Expected: 全绿
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add Sources/MacDesktopNotify/NotificationManager+Dwell.swift Tests/MacDesktopNotifyTests/
@@ -479,7 +479,7 @@ git commit -m "fix(interaction): snooze 后重新武装 hold 定时器，aging �
 
 **背景**：面板顶部 20pt 落在激活区内（`IslandGeometry.verticalHoverPadding = 20`），`activationZoneEntered` 直接覆写 zone，丢掉"指针在面板上"的事实，导致 hover 退出被忽略、卡片卡住。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 追加到 `Tests/MacDesktopNotifyTests/IslandStateTests.swift`：
 
@@ -503,12 +503,12 @@ git commit -m "fix(interaction): snooze 后重新武装 hold 定时器，aging �
     }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `swift test --build-path build --filter testZoneEntryOnPanelKeepsThePanelClaim`
 Expected: FAIL（`m.pointer.onPanel` 为 false）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `NotificationManager+Pointer.swift:13-15`：
 
@@ -526,12 +526,12 @@ Expected: FAIL（`m.pointer.onPanel` 为 false）
             }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `swift test --build-path build --filter IslandStateTests`
 Expected: PASS
 
-- [ ] **Step 5: 跑全量测试并提交**
+- [x] **Step 5: 跑全量测试并提交**
 
 ```bash
 swift test --build-path build
@@ -552,7 +552,7 @@ git commit -m "fix(interaction): 激活区声明不再覆盖面板 hover 状态"
 **Interfaces:**
 - Produces: `WSCodec.decode(_:)` 签名不变；`HTTPServer.pump(peerClosed:)` 私有
 
-- [ ] **Step 1: 写半包请求的失败测试**
+- [x] **Step 1: 写半包请求的失败测试**
 
 追加到 `Tests/MacDesktopNotifyTests/APIIntegrationTests.swift`：
 
@@ -579,12 +579,12 @@ git commit -m "fix(interaction): 激活区声明不再覆盖面板 hover 状态"
     }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `swift test --build-path build --filter testHalfSentBodyDoesNotHangTheServer`
 Expected: FAIL（URLSession 3 秒超时 / 连接被拒）
 
-- [ ] **Step 3: 修 HTTPServer**
+- [x] **Step 3: 修 HTTPServer**
 
 `HTTPServer.swift:150-165` 的 `receive()` 换成：
 
@@ -623,12 +623,12 @@ Expected: FAIL（URLSession 3 秒超时 / 连接被拒）
 
 并删除 `receive()` 尾部原来的 `if isComplete, self.head == nil { self.connection.cancel() }`。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `swift test --build-path build --filter APIIntegrationTests`
 Expected: PASS
 
-- [ ] **Step 5: 重写 WSCodec 解码为单次拷贝**
+- [x] **Step 5: 重写 WSCodec 解码为单次拷贝**
 
 `WSCodec.swift:32-93` 换成：
 
@@ -704,12 +704,12 @@ Expected: PASS
     }
 ```
 
-- [ ] **Step 6: 跑 WSCodec 测试**
+- [x] **Step 6: 跑 WSCodec 测试**
 
 Run: `swift test --build-path build --filter WSCodecTests`
 Expected: PASS（7 个既有用例不变）
 
-- [ ] **Step 7: 写 socket 占用测试**
+- [x] **Step 7: 写 socket 占用测试**
 
 追加到 `Tests/MacDesktopNotifyTests/APIListenerServiceTests.swift`：
 
@@ -737,12 +737,12 @@ Expected: PASS（7 个既有用例不变）
 
 在文件顶部补 `import Network`。
 
-- [ ] **Step 8: 跑测试确认失败**
+- [x] **Step 8: 跑测试确认失败**
 
 Run: `swift test --build-path build --filter testLiveSocketIsNotUnlinked`
 Expected: FAIL（文件被删 / socketError 为 nil）
 
-- [ ] **Step 9: 实现存活探测**
+- [x] **Step 9: 实现存活探测**
 
 `APIListenerService.swift:105-117` 换成：
 
@@ -795,12 +795,12 @@ Expected: FAIL（文件被删 / socketError 为 nil）
     }
 ```
 
-- [ ] **Step 10: 跑测试确认通过**
+- [x] **Step 10: 跑测试确认通过**
 
 Run: `swift test --build-path build --filter APIListenerServiceTests`
 Expected: PASS
 
-- [ ] **Step 11: 全量测试并提交**
+- [x] **Step 11: 全量测试并提交**
 
 ```bash
 swift test --build-path build
@@ -822,7 +822,7 @@ git commit -m "fix(transport): 半包请求不再空转、WS 解码去掉 O(n²)
 **Interfaces:**
 - Produces: `MiniSummaryBars.layoutFrame(forScreenFrame:notch:contentSize:)`（`static`，纯函数）；`SettingsWindowController.isQuitShortcut(_:)`（`static`）
 
-- [ ] **Step 1: 写纯函数测试**
+- [x] **Step 1: 写纯函数测试**
 
 创建 `Tests/MacDesktopNotifyTests/MiniSummaryBarTests.swift`：
 
@@ -875,12 +875,12 @@ final class ShortcutTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `swift test --build-path build --filter MiniSummaryBarTests --filter ShortcutTests`
 Expected: 编译失败（两个符号不存在）
 
-- [ ] **Step 3: 实现 mini bar 重排**
+- [x] **Step 3: 实现 mini bar 重排**
 
 `MiniSummaryBar.swift` 的 `MiniSummaryBars` 加 observer 与纯函数：
 
@@ -937,7 +937,7 @@ Expected: 编译失败（两个符号不存在）
     }
 ```
 
-- [ ] **Step 4: 实现 ⌘Q 修正**
+- [x] **Step 4: 实现 ⌘Q 修正**
 
 `SettingsWindowController.swift` 的监视器闭包体换成：
 
@@ -965,7 +965,7 @@ Expected: 编译失败（两个符号不存在）
     }
 ```
 
-- [ ] **Step 5: 实现辅助功能状态刷新**
+- [x] **Step 5: 实现辅助功能状态刷新**
 
 `SettingsView.swift:564` 的 `if AXIsProcessTrusted() {` 前插入状态与观察：
 
@@ -983,12 +983,12 @@ Expected: 编译失败（两个符号不存在）
             }
 ```
 
-- [ ] **Step 6: 跑测试确认通过**
+- [x] **Step 6: 跑测试确认通过**
 
 Run: `swift test --build-path build --filter MiniSummaryBarTests` 与 `--filter ShortcutTests`
 Expected: PASS
 
-- [ ] **Step 7: 全量测试并提交**
+- [x] **Step 7: 全量测试并提交**
 
 ```bash
 swift test --build-path build
@@ -1014,7 +1014,7 @@ git commit -m "fix(ui): 迷你摘要条随内容重排、⌘Q 兼容 Caps Lock�
 **Interfaces:**
 - Produces: `MarkdownBlocksView(bodyMarkdown:style:)`；`MarkdownBlocksStyle`（`proseFont`/`codeFont`/`proseColor`/`codeColor`/`codeBackground`）
 
-- [ ] **Step 1: 恢复 `/v1/status` 的兼容字段**
+- [x] **Step 1: 恢复 `/v1/status` 的兼容字段**
 
 `APIRouter.swift` 的 `StatusResponse` 加：
 
@@ -1026,7 +1026,7 @@ git commit -m "fix(ui): 迷你摘要条随内容重排、⌘Q 兼容 Caps Lock�
 
 `status()` 的构造加 `pendingCount: 0`。
 
-- [ ] **Step 2: 改测试断言**
+- [x] **Step 2: 改测试断言**
 
 `APIRouterTests.swift:171` 的
 
@@ -1040,7 +1040,7 @@ git commit -m "fix(ui): 迷你摘要条随内容重排、⌘Q 兼容 Caps Lock�
         XCTAssertEqual(payload["pendingCount"] as? Int, 0, "v4 设计 §3：字段保留且恒为 0")
 ```
 
-- [ ] **Step 3: 接线 ScriptStore.readFailed**
+- [x] **Step 3: 接线 ScriptStore.readFailed**
 
 `ScriptStore.swift:40-42`：
 
@@ -1096,7 +1096,7 @@ git commit -m "fix(ui): 迷你摘要条随内容重排、⌘Q 兼容 Caps Lock�
     }
 ```
 
-- [ ] **Step 4: 删死状态与裸 key**
+- [x] **Step 4: 删死状态与裸 key**
 
 - `AppSettings.swift:88-90` 删除 `onboardingPreset` 属性、`:229` 附近的 `Keys.onboardingPreset` case、init 里的赋值行，以及 `OnboardingView.swift:74` 的写入。
 - `AppSettings.swift:141-143` 的 `debugGeometryEnabled` 改为走 `Keys`：
@@ -1110,7 +1110,7 @@ git commit -m "fix(ui): 迷你摘要条随内容重排、⌘Q 兼容 Caps Lock�
 
 并加 `case debugGeometry = "island.debugGeometry"` 到 `Keys`。原实现是静态只读，调用方若依赖 `AppSettings.debugGeometryEnabled` 静态形式，一并改为实例访问。
 
-- [ ] **Step 5: 抽公共 Markdown 渲染视图**
+- [x] **Step 5: 抽公共 Markdown 渲染视图**
 
 创建 `Sources/MacDesktopNotify/MarkdownBlocksView.swift`：
 
@@ -1206,7 +1206,7 @@ private struct HistoryWindowBody: View {
 }
 ```
 
-- [ ] **Step 6: 删死文件**
+- [x] **Step 6: 删死文件**
 
 ```bash
 git rm Sources/MacDesktopNotify/Info.plist
@@ -1214,7 +1214,7 @@ git rm Sources/MacDesktopNotify/Info.plist
 
 `Package.swift:20` 删除 `exclude: ["Info.plist"]`（该行随之变成 `path: "Sources/MacDesktopNotify"` 结尾）。
 
-- [ ] **Step 7: 全量测试并提交**
+- [x] **Step 7: 全量测试并提交**
 
 ```bash
 swift test --build-path build
@@ -1237,7 +1237,7 @@ git commit -m "fix(cleanup): 恢复 status.pendingCount、接线 readFailed、�
 **Interfaces:**
 - Produces: `ScriptRunner.productionEngine()` 由 `private static` 改为 `static`
 
-- [ ] **Step 1: 修并发闸测试**
+- [x] **Step 1: 修并发闸测试**
 
 `ScriptRunnerTests.swift:125-152` 的轮询与断言换成：
 
@@ -1273,7 +1273,7 @@ git commit -m "fix(cleanup): 恢复 status.pendingCount、接线 readFailed、�
     }
 ```
 
-- [ ] **Step 2: 让 action hook 测试真的验证 input**
+- [x] **Step 2: 让 action hook 测试真的验证 input**
 
 `ActionScriptTests.swift` 的 `testScriptActionRunsHookAndInputCarriesComment` 中脚本源改为：
 
@@ -1290,12 +1290,12 @@ git commit -m "fix(cleanup): 恢复 status.pendingCount、接线 readFailed、�
         XCTAssertFalse(m.history.contains { $0.title.hasPrefix("脚本失败") })
 ```
 
-- [ ] **Step 3: 跑测试确认新断言真的会红**
+- [x] **Step 3: 跑测试确认新断言真的会红**
 
 临时把脚本源的 `!==` 改成 `===` 跑一次，确认用例 FAIL，再改回。
 Run: `swift test --build-path build --filter testScriptActionRunsHookAndInputCarriesComment`
 
-- [ ] **Step 4: 生产脚本桥端到端测试**
+- [x] **Step 4: 生产脚本桥端到端测试**
 
 `ScriptRunner.swift:482-484` 的 `private static func productionEngine()` 去掉 `private`。
 
@@ -1327,7 +1327,7 @@ Run: `swift test --build-path build --filter testScriptActionRunsHookAndInputCar
     }
 ```
 
-- [ ] **Step 5: 修空转通过与重复断言**
+- [x] **Step 5: 修空转通过与重复断言**
 
 `PerScreenInstancesTests.swift:100-101`：
 
@@ -1341,7 +1341,7 @@ Run: `swift test --build-path build --filter testScriptActionRunsHookAndInputCar
 
 `APIIntegrationTests.swift:277-278` 删掉重复的那一行。
 
-- [ ] **Step 6: 全量测试并提交**
+- [x] **Step 6: 全量测试并提交**
 
 ```bash
 swift test --build-path build

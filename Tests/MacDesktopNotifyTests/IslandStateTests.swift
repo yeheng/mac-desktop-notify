@@ -442,4 +442,25 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         XCTAssertEqual(presenter.expandCount, 0)
     }
 
+    // MARK: - 区域重叠（评审 #4）
+
+    /// 面板顶部 20pt 落在激活区内（IslandGeometry.verticalHoverPadding），
+    /// 从面板侧边进入（nearIsland == false）再上移到顶部条带时，
+    /// 激活区声明必须折叠进 onPanel，而不是把它覆写掉。
+    func testZoneEntryOnPanelKeepsThePanelClaim() {
+        let m = NotificationManager()
+        m.push(make("t"))
+        XCTAssertEqual(m.displayState, .opened(reason: .notification))
+
+        m.setHovering(true)                       // .hoverBegan, nearIsland == false
+        XCTAssertTrue(m.pointer.onPanel)
+        XCTAssertFalse(m.pointer.nearIsland)
+
+        m.setPointerNearIsland(true)              // .activationZoneEntered
+        XCTAssertTrue(m.pointer.onPanel, "面板声明必须存活")
+        XCTAssertTrue(m.pointer.nearIsland)
+
+        m.setHovering(false)                      // 真正离开面板：§3.1 应当退役卡片
+        XCTAssertNil(m.current, "entered-then-left 必须 advance()")
+    }
 }

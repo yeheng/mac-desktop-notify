@@ -355,7 +355,13 @@ final class ScriptRunner {
         guard engine.tryAcquireSlot(maxConcurrent: Self.maxConcurrent) else {
             return ScriptOutcome(result: nil, logs: [], error: "busy")
         }
-        guard let source = try? store.load(name) else {
+        let source: String
+        do {
+            source = try store.load(name)
+        } catch ScriptStore.ScriptStoreError.readFailed(let reason) {
+            engine.releaseSlot()
+            return ScriptOutcome(result: nil, logs: [], error: "脚本无法读取：\(name)（\(reason)）")
+        } catch {
             engine.releaseSlot()
             return ScriptOutcome(result: nil, logs: [], error: "脚本未找到：\(name)")
         }
@@ -479,7 +485,10 @@ final class ScriptRunner {
     /// fetch：脚本线程内同步 URLSession（semaphore），仅 http/https，
     /// 超时 10s。notify：semaphore 等 MainActor Task 完成——主线程从不同步
     /// 等脚本线程，无死锁环（设计 §3.1）。
-    private static func productionEngine() -> ScriptEngine {
+    /// Internal (not private) so a test can exercise the real bridges: they are
+    /// the deadlock-prone glue (a script thread blocking on MainActor), and
+    /// every other script test injects a fake engine that never touches them.
+    static func productionEngine() -> ScriptEngine {
         ScriptEngine(fetch: scriptFetch, notify: scriptNotify)
     }
 }

@@ -37,7 +37,10 @@ struct NotificationAction: Sendable, Equatable, Codable {
     /// `script`. Both decode; neither key is fatal.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        label = try container.decode(String.self, forKey: .label)
+        // Same tolerance as `PushValidator.ActionDTO`: one action missing a
+        // label must not fail the whole snapshot, because `HistoryStore.load`
+        // uses `try?` and would silently drop every message on disk.
+        label = try container.decodeIfPresent(String.self, forKey: .label) ?? ""
         url = try container.decodeIfPresent(URL.self, forKey: .url)
         script = try container.decodeIfPresent(String.self, forKey: .script)
         wantsComment = try container.decodeIfPresent(Bool.self, forKey: .wantsComment) ?? false

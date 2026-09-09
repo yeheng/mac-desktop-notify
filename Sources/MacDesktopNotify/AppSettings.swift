@@ -84,10 +84,6 @@ final class AppSettings {
     var ageOutCriticals: Bool { didSet { save(ageOutCriticals, key: Keys.ageOutCriticals) } }
     /// Whether the first-run guide has been completed (or skipped).
     var onboardingCompleted: Bool { didSet { save(onboardingCompleted, key: Keys.onboardingCompleted) } }
-    /// Set while the user picked an onboarding preset, so the guide can mark it.
-    var onboardingPreset: String? {
-        didSet { save(onboardingPreset, key: Keys.onboardingPreset) }
-    }
     /// Same-value assignments are ignored: a redundant write would rebind
     /// both listeners via `apiSettingsDidChange` for nothing. The settings UI
     /// only commits a new port on submit (see ApiSettingsPane), so every
@@ -138,8 +134,13 @@ final class AppSettings {
     /// CLI:
     /// `defaults write com.yeheng.macdesktopnotify island.debugGeometry -bool true`
     /// Read on demand (not cached) so the flag can flip between window opens.
-    static var debugGeometryEnabled: Bool {
-        UserDefaults.standard.bool(forKey: "island.debugGeometry")
+    ///
+    /// Routed through `Keys` like every other persisted key: the old raw-string
+    /// version read `UserDefaults.standard` directly, so it ignored the injected
+    /// suite and escaped `resetAllForTesting`'s `Keys.allCases` sweep.
+    var debugGeometryEnabled: Bool {
+        get { defaults.bool(forKey: Keys.debugGeometry.rawValue) }
+        set { defaults.set(newValue, forKey: Keys.debugGeometry.rawValue) }
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -169,7 +170,6 @@ final class AppSettings {
         quietMode = QuietMode(rawValue: defaults.string(forKey: Keys.quietMode.rawValue) ?? "") ?? .off
         ageOutCriticals = defaults.object(forKey: Keys.ageOutCriticals.rawValue) as? Bool ?? true
         onboardingCompleted = defaults.object(forKey: Keys.onboardingCompleted.rawValue) as? Bool ?? false
-        onboardingPreset = defaults.string(forKey: Keys.onboardingPreset.rawValue)
         showNotchCalibration = defaults.object(forKey: Keys.showNotchCalibration.rawValue) as? Bool ?? false
         globalPanelHotkeyEnabled = defaults.object(forKey: Keys.globalPanelHotkeyEnabled.rawValue) as? Bool ?? true
         apiUnixSocketEnabled = defaults.object(forKey: Keys.apiUnixSocketEnabled.rawValue) as? Bool ?? true
@@ -249,8 +249,8 @@ final class AppSettings {
         case quietMode = "island.quietMode"
         case ageOutCriticals = "island.ageOutCriticals"
         case onboardingCompleted = "island.onboardingCompleted"
-        case onboardingPreset = "island.onboardingPreset"
         case showNotchCalibration = "island.showNotchCalibration"
+        case debugGeometry = "island.debugGeometry"
         case globalPanelHotkeyEnabled = "island.globalPanelHotkeyEnabled"
         case apiUnixSocketEnabled = "island.apiUnixSocketEnabled"
         case apiHttpEnabled = "island.apiHttpEnabled"

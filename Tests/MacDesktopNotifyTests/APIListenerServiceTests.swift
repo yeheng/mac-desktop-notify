@@ -179,4 +179,51 @@ final class APIListenerServiceTests: SettingsIsolatedTestCase {
         XCTAssertTrue(converged, "must converge to both listeners after a mid-startup restart")
         XCTAssertNil(service.httpError, "a cancelled stale start must not report an error")
     }
+
+    /// 用 POSIX 直接造一个真正在 listen 的 unix socket。
+    ///
+    /// 不用 NWListener：实测它在本进程里对 unix 端点会报 `.ready` 却不创建
+    /// socket 文件（见本文件上方关于 bind 失败分支的说明），造不出前置条件。
+    private func makeLiveUnixSocket(at path: String) -> Int32 {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0, "socket() 失败")
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            raw.copyBytes(from: Array(path.utf8))
+        }
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        XCTAssertEqual(bound, 0, "bind() 失败：\(String(cString: strerror(errno)))")
+        XCTAssertEqual(Darwin.listen(fd, 1), 0, "listen() 失败")
+        return fd
+    }
+
+    /// 另一个实例正在监听时，restart() 必须报错而不是 unlink 掉它的 socket
+    /// 文件（评审 #6）：main.swift 没有单实例守护，双击两次 .app 就会走到
+    /// 这条路径，而 socket 冲突不像端口冲突那样会自己报错。
+    func testLiveSocketIsNotUnlinked() async throws {
+        let path = tempSocketPath
+        let fd = makeLiveUnixSocket(at: path)
+        defer {
+            close(fd)
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path),
+                      "前置条件：监听中的 socket 文件必须存在")
+
+        pinAPI(unixSocket: true, http: false, port: 4770)
+        let service = APIListenerService(socketPath: path)
+        defer { service.stop() }
+        service.restart()
+
+        let errored = await waitUntil { service.socketError != nil }
+        XCTAssertTrue(errored, "必须报告占用错误，而不是静默接管")
+        XCTAssertFalse(service.isSocketListening)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path),
+                      "存活实例的 socket 文件不得被删除")
+    }
 }

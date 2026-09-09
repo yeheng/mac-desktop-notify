@@ -12,12 +12,17 @@ extension NotificationManager {
     /// that has passed.
     func update(id: UUID, _ transform: (inout NotchNotification) -> Void) {
         var changed = false
+        var liveChanged = false
         if presentation?.item.id == id, var live = presentation {
             transform(&live.item)
             presentation = live
             changed = true
+            liveChanged = true
         }
         changed = messages.update(id: id, transform) || changed
+        // A rewritten live card must be re-ruled: the fields the dismiss and
+        // dwell rules read have changed under them.
+        if liveChanged { armLiveRules() }
         if changed { schedulePersist() }
     }
 

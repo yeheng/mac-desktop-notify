@@ -674,36 +674,22 @@ private struct InlineActionCapsules: View {
     }
 }
 
-/// Renders parsed Markdown blocks (prose + code cards) for a message body.
+/// The panel's styling of the shared Markdown block renderer.
 private struct NotificationBodyView: View {
     let bodyMarkdown: String
     private var settings: AppSettings { .shared }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .prose(let attributed):
-                    Text(attributed)
-                        .font(.system(size: settings.contentFontSize, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .textSelection(.enabled)
-                case .code(let code):
-                    Text(code)
-                        .font(.system(size: settings.contentFontSize, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.88))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(9)
-                        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var blocks: [MarkdownBlock] {
-        MarkdownCache.shared.blocks(for: bodyMarkdown)
+        MarkdownBlocksView(
+            bodyMarkdown: bodyMarkdown,
+            style: MarkdownBlocksStyle(
+                proseFont: .system(size: settings.contentFontSize, design: .rounded),
+                codeFont: .system(size: settings.contentFontSize, design: .monospaced),
+                proseColor: .white.opacity(0.9),
+                codeColor: .white.opacity(0.88),
+                codeBackground: .white.opacity(0.07)
+            )
+        )
     }
 }
 

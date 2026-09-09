@@ -94,10 +94,34 @@ private struct MiniSummaryView: View {
 @MainActor
 final class MiniSummaryBars {
     private var windows: [CGDirectDisplayID: NSWindow] = [:]
+    private var unreadObserver: NSObjectProtocol?
 
     /// Which displays currently show a bar. Exposed so the routing rule can be
     /// asserted without a window server standing behind it.
     private(set) var visibleDisplayIDs: Set<CGDirectDisplayID> = []
+
+    init() {
+        // The window frame is derived from the SwiftUI content's fitting size,
+        // so anything that changes the content — an unread badge appearing,
+        // the count growing — has to re-run layout. Nothing else does: unread
+        // changes trigger no presentation transition, so without this observer
+        // the bar keeps its old width and clips the badge.
+        unreadObserver = NotificationCenter.default.addObserver(
+            forName: NotificationManager.unreadCountDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.relayoutVisible() }
+        }
+    }
+
+    private func relayoutVisible() {
+        for id in visibleDisplayIDs {
+            guard let window = windows[id],
+                  let screen = NSScreen.screens.first(where: { $0.displayID == id }) else { continue }
+            layout(window, on: screen)
+        }
+    }
 
     func show(on screen: NSScreen) {
         let window = windows[screen.displayID] ?? makeWindow()
@@ -165,17 +189,26 @@ final class MiniSummaryBars {
     /// centred 300pt notch frame on notchless screens, and the activation zone
     /// is derived from the same rect, so the bar lands under the pointer's
     /// hover target rather than somewhere it has to be hunted for.
+    ///
+    /// Pure geometry, so the rule can be asserted without a window server -
+    /// the same reason `SummaryRouting` is free of AppKit.
+    static func layoutFrame(forScreenFrame screen: NSRect, notch: NSRect, contentSize: NSSize) -> NSRect {
+        let width = max(28, contentSize.width)
+        let height = max(20, contentSize.height)
+        return NSRect(
+            x: screen.midX - width / 2,
+            y: screen.maxY - notch.height - height - 2,
+            width: width,
+            height: height
+        )
+    }
+
     private func layout(_ window: NSWindow, on screen: NSScreen) {
-        let notch = IslandGeometry.notchFrame(for: screen)
-        let size = window.contentView?.fittingSize ?? .zero
-        let width = max(28, size.width)
-        let height = max(20, size.height)
         window.setFrame(
-            NSRect(
-                x: screen.frame.midX - width / 2,
-                y: screen.frame.maxY - notch.height - height - 2,
-                width: width,
-                height: height
+            Self.layoutFrame(
+                forScreenFrame: screen.frame,
+                notch: IslandGeometry.notchFrame(for: screen),
+                contentSize: window.contentView?.fittingSize ?? .zero
             ),
             display: true
         )

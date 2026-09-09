@@ -316,29 +316,15 @@ private struct HistoryWindowBody: View {
     let bodyMarkdown: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .prose(let attributed):
-                    Text(attributed)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
-                case .code(let code):
-                    Text(code)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(9)
-                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var blocks: [MarkdownBlock] {
-        MarkdownCache.shared.blocks(for: bodyMarkdown)
+        MarkdownBlocksView(
+            bodyMarkdown: bodyMarkdown,
+            style: MarkdownBlocksStyle(
+                proseFont: .system(size: 12),
+                codeFont: .system(size: 11, design: .monospaced),
+                proseColor: .primary,
+                codeColor: .primary,
+                codeBackground: Color.primary.opacity(0.06)
+            )
+        )
     }
 }

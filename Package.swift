@@ -16,8 +16,7 @@ let package = Package(
             dependencies: [
                 .product(name: "DynamicNotchKit", package: "DynamicNotchKit")
             ],
-            path: "Sources/MacDesktopNotify",
-            exclude: ["Info.plist"]
+            path: "Sources/MacDesktopNotify"
         ),
         .testTarget(
             name: "MacDesktopNotifyTests",
