@@ -25,7 +25,7 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
     func testInfoCardClosesAfterDelay() async throws {
         AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
-        m.notificationAutoCloseDelay = .milliseconds(120)
+        m.dwellTiming.autoClose = .milliseconds(120)
         m.push(make("info"))
         XCTAssertEqual(m.displayState, .opened(reason: .notification))
 
@@ -39,7 +39,7 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
     func testPointerOnCardCancelsAutoClose() async throws {
         AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
-        m.notificationAutoCloseDelay = .milliseconds(120)
+        m.dwellTiming.autoClose = .milliseconds(120)
         m.push(make("info"))
         m.setHovering(true)
 
@@ -52,7 +52,7 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
     func testLeaveAfterEnteringCollapsesCard() async throws {
         AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
-        m.notificationAutoCloseDelay = .seconds(10)
+        m.dwellTiming.autoClose = .seconds(10)
         m.push(make("info"))
         m.setHovering(true)
         XCTAssertEqual(m.unreadCount, 1, "v4: entering the panel is looking, not opening")
@@ -67,7 +67,7 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
     func testOperableCardNeverAutoCloses() async throws {
         AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
-        m.notificationAutoCloseDelay = .milliseconds(120)
+        m.dwellTiming.autoClose = .milliseconds(120)
         m.push(make("approve", actions: [action]))
         try await Task.sleep(for: .milliseconds(400))
         XCTAssertEqual(m.displayState, .opened(reason: .notification))
@@ -78,7 +78,7 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
     func testCriticalCardNeverAutoCloses() async throws {
         AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
-        m.notificationAutoCloseDelay = .milliseconds(120)
+        m.dwellTiming.autoClose = .milliseconds(120)
         m.push(make("crit", urgency: .critical))
         try await Task.sleep(for: .milliseconds(400))
         XCTAssertEqual(m.displayState, .opened(reason: .notification))
@@ -116,7 +116,7 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
     func testAutoCloseRetiresWithoutRotation() async throws {
         AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
-        m.notificationAutoCloseDelay = .milliseconds(200)
+        m.dwellTiming.autoClose = .milliseconds(200)
         m.push(make("a"))
         m.push(make("b"))                          // b displaced a; a waits in history
 

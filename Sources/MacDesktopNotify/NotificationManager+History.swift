@@ -85,7 +85,14 @@ extension NotificationManager {
 
     private func writeSnapshot() {
         guard let store = historyStore, AppSettings.shared.persistHistory else { return }
-        try? store.save(HistorySnapshot(items: messages.history, readIDs: messages.readIDs))
+        do {
+            try store.save(HistorySnapshot(items: messages.history, readIDs: messages.readIDs))
+        } catch {
+            // The user believes history is kept; if it is not, that has to leave
+            // a trace. (This is the failure that used to hide behind `try?` and
+            // let a single NaN kill persistence for a whole session.)
+            Diagnostics.degrade("历史写盘失败", error)
+        }
     }
 
     // MARK: - Read state (v4 §4)

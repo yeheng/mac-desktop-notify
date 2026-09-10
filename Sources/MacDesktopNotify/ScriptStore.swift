@@ -15,7 +15,14 @@ struct ScriptStore: Sendable {
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("MacDesktopNotify", isDirectory: true)
                 .appendingPathComponent("scripts", isDirectory: true)
-            try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+            do {
+                try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+            } catch {
+                // Swallowing this made every later `load` report "script not
+                // found", which is the confusion the read/notFound split exists
+                // to avoid.
+                Diagnostics.degrade("脚本目录创建失败", error)
+            }
             self.directory = base
         }
     }

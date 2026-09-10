@@ -1,5 +1,26 @@
 import AppKit
 
+// MARK: - The dependency boundary
+//
+// Everything in this file, plus `SummaryRouting` and the forced `.notch` style in
+// `NotchPresenter.makeNotch`, exists because DynamicNotchKit's rendering decisions
+// are not visible to us: it picks notch-vs-floating itself, its `@Entry var
+// notchStyle` and `DynamicNotchSection` are internal, and it does not answer
+// "would you draw a pill on this screen". So the app re-derives four things:
+//
+//   1. `hasNotch` below - the kit's private test for the same question (line 20).
+//   2. `notchFrame` below - the kit's own `notchFrameWithMenubarAsBackup`.
+//   3. `SummaryRouting` - the kit silently hides the window for `compact()` on a
+//      floating screen, which would leave those users with no summary at all.
+//   4. the forced `.notch` style - the floating renderer wraps our 720pt panel in
+//      a `Capsule` clip over a translucent material (kit commit 46c2af2), which
+//      showed as pale wedges in the panel's corners on notchless displays.
+//
+// The dependency is pinned to that exact revision in `Package.swift`, so these
+// compensations cannot silently change under us. Removing them for real means
+// owning the shape/window code locally or opening that API upstream - a decision
+// about maintaining a fork, not something to do quietly here.
+
 extension NSScreen {
     /// The display's stable identifier.
     ///

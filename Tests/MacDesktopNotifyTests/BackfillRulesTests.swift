@@ -15,7 +15,7 @@ final class BackfillRulesTests: SettingsIsolatedTestCase {
 
     func testBackfillToCriticalGetsCriticalRules() async throws {
         let m = NotificationManager()
-        m.notificationAutoCloseDelay = .milliseconds(80)
+        m.dwellTiming.autoClose = .milliseconds(80)
         let n = makeLiveCard(m)
 
         m.update(id: n.id) { $0.urgency = .critical }
@@ -27,7 +27,7 @@ final class BackfillRulesTests: SettingsIsolatedTestCase {
 
     func testBackfillAddingActionsGetsOperableRules() async throws {
         let m = NotificationManager()
-        m.notificationAutoCloseDelay = .milliseconds(80)
+        m.dwellTiming.autoClose = .milliseconds(80)
         let n = makeLiveCard(m)
 
         m.update(id: n.id) {

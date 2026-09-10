@@ -114,20 +114,21 @@ extension NotificationManager {
     // MARK: - Dismiss rules (§3)
     //
     // One adjudication point every state transition ends at. Inputs: the open
-    // reason, the live card's operability, the pointer position. It owns exactly
-    // one timer - the info card's auto-close - and cancels it up front so every
-    // call site re-derives from scratch.
+    // reason, the live card's policy, the pointer position. It owns exactly one
+    // timer - the info card's auto-close - and cancels it up front so every call
+    // site re-derives from scratch.
 
     func applyDismissRules() {
         delayed.cancel(.notificationAutoClose)
         guard case .opened(reason: .notification) = displayState,
               let live = presentation,
-              !displaySuppressed else { return }
-        // Operable cards never auto-close: their exit paths are the action
-        // itself, idle aging (§8, unchanged), or a manual close.
-        let operable = !live.item.actions.isEmpty || live.item.urgency == .critical
-        guard !operable, !pointer.onPanel else { return }
-        delayed.schedule(.notificationAutoClose, after: notificationAutoCloseDelay) { [weak self] in
+              !displaySuppressed,
+              // Operable cards never auto-close: their exit paths are the action
+              // itself, idle aging (§8), or a manual close. The table says which
+              // cards those are; this function no longer re-derives it.
+              let after = live.policy.autoCloseAfter,
+              !pointer.onPanel else { return }
+        delayed.schedule(.notificationAutoClose, after: after) { [weak self] in
             guard let self,
                   self.displayState.openReason == .notification,
                   self.presentation != nil else { return }

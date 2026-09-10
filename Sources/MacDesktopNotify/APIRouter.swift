@@ -90,11 +90,9 @@ final class APIRouter: Sendable {
             script: dto.script
         ) {
         case .success(let notification):
-            // Only jump to MainActor when calling manager
-            let outcome = await MainActor.run { manager.push(notification) }
-            if notification.script != nil {
-                Task { await ScriptRunner.shared.backfill(notification: notification) }
-            }
+            // Only jump to MainActor when calling manager. The funnel owns the
+            // script backfill, so this door cannot forget it.
+            let outcome = await MainActor.run { NotificationIngress.deliver(notification, to: manager) }
             return .ok(PushResponse(outcome: outcome.label, id: notification.id.uuidString))
         case .failure(let rejection):
             return .error(status: 400, reason: rejection.description, field: "title")
@@ -266,16 +264,13 @@ final class APIRouter: Sendable {
                 script: dto.script
             ) {
             case .success(let notification):
-                let outcome = await MainActor.run { manager.push(notification) }
-                if notification.script != nil {
-                    Task { await ScriptRunner.shared.backfill(notification: notification) }
-                }
+                let outcome = await MainActor.run { NotificationIngress.deliver(notification, to: manager) }
                 return encodeFrame(WSResultFrame(
                     ref: dto.ref,
                     ok: true,
                     outcome: outcome.label,
                     id: notification.id.uuidString
-                ))
+                ), ref: dto.ref)
             case .failure(let rejection):
                 return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: rejection.description))
             }
@@ -304,8 +299,19 @@ final class APIRouter: Sendable {
         }
     }
 
-    private func encodeFrame<T: Encodable>(_ frame: T) -> Data {
-        (try? JSONEncoder().encode(frame)) ?? Data("{\"type\":\"result\",\"ok\":false}".utf8)
+    /// Encodes one result frame. When the frame itself cannot be encoded the
+    /// client must still be able to correlate the answer, so the fallback keeps
+    /// the `ref` - a ref-less frame leaves a waiting client guessing.
+    private func encodeFrame<T: Encodable>(_ frame: T, ref: String? = nil) -> Data {
+        do {
+            return try JSONEncoder().encode(frame)
+        } catch {
+            Diagnostics.degrade("WS 结果帧编码失败", error)
+            var fallback: [String: Any] = ["type": "result", "ok": false, "error": "响应编码失败"]
+            if let ref { fallback["ref"] = ref }
+            return (try? JSONSerialization.data(withJSONObject: fallback))
+                ?? Data(#"{"type":"result","ok":false,"error":"响应编码失败"}"#.utf8)
+        }
     }
 }
 
@@ -313,9 +319,17 @@ final class APIRouter: Sendable {
 
 extension APIResponse {
     /// Unified encoding path: all responses use JSONEncoder with Encodable types.
+    ///
+    /// A payload that cannot be encoded is a server-side bug, and answering
+    /// `200 {}` hides it: the caller reads a success with an empty body and has
+    /// no way to tell it from a real empty result. It is a 500.
     static func ok<T: Encodable>(_ value: T) -> APIResponse {
-        let body = (try? JSONEncoder().encode(value)) ?? Data("{}".utf8)
-        return APIResponse(status: 200, body: body)
+        do {
+            return APIResponse(status: 200, body: try JSONEncoder().encode(value))
+        } catch {
+            Diagnostics.degrade("API 响应编码失败", error)
+            return APIResponse(status: 500, body: Data(#"{"error":"响应编码失败"}"#.utf8))
+        }
     }
 
     static func error(status: Int, reason: String, field: String? = nil) -> APIResponse {
@@ -323,7 +337,12 @@ extension APIResponse {
             let error: String
             let field: String?
         }
-        let body = (try? JSONEncoder().encode(ErrorPayload(error: reason, field: field))) ?? Data("{}".utf8)
+        let payload = ErrorPayload(error: reason, field: field)
+        guard let body = try? JSONEncoder().encode(payload) else {
+            // Not recursing into another encode: the static body is the floor.
+            Diagnostics.degrade("API 错误响应编码失败", reason: reason)
+            return APIResponse(status: 500, body: Data(#"{"error":"响应编码失败"}"#.utf8))
+        }
         return APIResponse(status: status, body: body)
     }
 }
