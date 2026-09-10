@@ -40,6 +40,16 @@ final class PushValidatorTests: XCTestCase {
         XCTAssertEqual(n.bodyMarkdown.count, 5000)
     }
 
+    /// title 以前在任何入口都没有上限：HTTP 可以塞进 32KB，它会一路进渲染器、
+    /// 历史快照与 `/v1/history` 响应（评审 2026-09-10）。
+    func testTitleIsCapped() throws {
+        let n = try PushValidator.makeNotification(
+            title: String(repeating: "宽", count: 500),
+            body: nil, urgencyRaw: nil, timeout: nil, group: nil, actions: []
+        ).get()
+        XCTAssertEqual(n.title.count, PushValidator.maxTitleLength)
+    }
+
     func testUnknownUrgencyFallsBackToNormal() throws {
         let n = try PushValidator.makeNotification(
             title: "t", body: nil, urgencyRaw: "banana", timeout: nil, group: nil, actions: []

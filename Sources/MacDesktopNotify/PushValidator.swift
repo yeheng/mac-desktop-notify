@@ -20,10 +20,71 @@ enum PushRejection: Error, Equatable, CustomStringConvertible {
 /// here so the two front doors cannot drift apart.
 enum PushValidator {
     static let maxBodyLength = 5000
+    static let maxTitleLength = 200
     static let timeoutRange: ClosedRange<TimeInterval> = 1...60
     static let maxActions = 3
     static let maxActionLabelLength = 24
     static let maxGroupLength = 64
+
+    /// Every sender-controlled field of a message, after normalization.
+    ///
+    /// The shape exists so there is exactly one place where "what a sender
+    /// sent" becomes "what the model stores" - see `normalize`.
+    struct Fields: Equatable {
+        var title: String
+        var body: String
+        var urgency: UrgencyLevel
+        var timeout: TimeInterval?
+        var group: String?
+        var actions: [NotificationAction]
+    }
+
+    /// The one normalization of sender-controlled fields.
+    ///
+    /// `makeNotification` (a new push) and `ScriptRunner.applySuccess` (a script
+    /// rewriting a card) both end here, because the alternative is a bug this
+    /// codebase has already shipped once: the backfill path wrote a raw
+    /// `timeout` straight into the model, a NaN poisoned `JSONEncoder`, and the
+    /// failure was swallowed - silently killing persistence for the rest of the
+    /// session. One gate, both doors, and any future door as well.
+    static func normalize(
+        title: String,
+        body: String?,
+        urgencyRaw: String?,
+        timeout: Double?,
+        group: String?,
+        actions: [NotificationAction]
+    ) -> Fields {
+        var trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedTitle.count > maxTitleLength {
+            trimmedTitle = String(trimmedTitle.prefix(maxTitleLength))
+        }
+        return Fields(
+            title: trimmedTitle,
+            body: cappedBody(body ?? ""),
+            urgency: UrgencyLevel(rawValue: urgencyRaw ?? "") ?? .normal,
+            timeout: clampedTimeout(timeout),
+            group: normalizedGroup(group),
+            actions: normalizedActions(actions)
+        )
+    }
+
+    /// Truncate, never reject: a 32 KB title is a sender bug, not a reason to
+    /// lose the message. Every door had its own idea about this (the script path
+    /// capped at 200, the push paths capped at nothing at all).
+    static func cappedBody(_ body: String) -> String {
+        body.count > maxBodyLength ? String(body.prefix(maxBodyLength)) : body
+    }
+
+    /// A non-finite timeout is not a big number, it is garbage: NaN survives
+    /// min/max and then poisons every JSONEncoder on the way out (history
+    /// responses and the on-disk snapshot both encode it). Treat it as "not
+    /// provided" rather than clamping it into the model.
+    static func clampedTimeout(_ timeout: Double?) -> TimeInterval? {
+        timeout.flatMap {
+            $0.isFinite ? min(max($0, timeoutRange.lowerBound), timeoutRange.upperBound) : nil
+        }
+    }
 
     /// An inbound action as every JSON ingress decodes it (HTTP body, WS
     /// frame, URL `actions=` payload). One type for all three doors: two
@@ -83,35 +144,29 @@ enum PushValidator {
         actions: [NotificationAction],
         script: String? = nil
     ) -> Result<NotchNotification, PushRejection> {
-        var trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        var rawTitle = title
         if let script {
             // §2.1：脚本推送的 title 可以为空——脚本会回填；占位标题让
             // 消息立即落地。名字先过校验，防把非法名写进占位/历史。
             guard ScriptStore.isValidName(script) else { return .failure(.invalidScriptName) }
-            if trimmedTitle.isEmpty { trimmedTitle = "⏳ 脚本生成中：\(script)" }
-        }
-        guard !trimmedTitle.isEmpty else { return .failure(.missingTitle) }
-
-        var cappedBody = body ?? ""
-        if cappedBody.count > maxBodyLength {
-            cappedBody = String(cappedBody.prefix(maxBodyLength))
+            if rawTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                rawTitle = "⏳ 脚本生成中：\(script)"
+            }
         }
 
-        // A non-finite timeout is not a big number, it is garbage: NaN survives
-        // min/max and then poisons every JSONEncoder on the way out (history
-        // responses and the on-disk snapshot both encode it). Treat it as "not
-        // provided" rather than clamping it into the model.
-        let clampedTimeout = timeout.flatMap {
-            $0.isFinite ? min(max($0, timeoutRange.lowerBound), timeoutRange.upperBound) : nil
-        }
+        let fields = normalize(
+            title: rawTitle, body: body, urgencyRaw: urgencyRaw,
+            timeout: timeout, group: group, actions: actions
+        )
+        guard !fields.title.isEmpty else { return .failure(.missingTitle) }
 
         return .success(NotchNotification(
-            title: trimmedTitle,
-            bodyMarkdown: cappedBody,
-            urgency: UrgencyLevel(rawValue: urgencyRaw ?? "") ?? .normal,
-            timeout: clampedTimeout,
-            actions: normalizedActions(actions),
-            group: normalizedGroup(group),
+            title: fields.title,
+            bodyMarkdown: fields.body,
+            urgency: fields.urgency,
+            timeout: fields.timeout,
+            actions: fields.actions,
+            group: fields.group,
             script: script
         ))
     }

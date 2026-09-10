@@ -211,17 +211,20 @@ struct IslandExpandedView: View {
                 // the whole backlog. The full message center is reserved for
                 // an explicit open (manualExpanded). The card keeps the
                 // list's scroll + shrink-to-content bounds, minus the list.
-                ScrollView {
+                // The scroll view is inset to the card's box (`.padding(16)`
+                // outside the frame, not on the content), so the viewport *is*
+                // the card: the scrollbar `PanelScrollView` draws sits inside
+                // the card's edge and clips where the card clips.
+                PanelScrollView {
                     CurrentCard(notification: current)
                         .id(current.id)
                         .transition(.asymmetric(
                             insertion: .move(edge: .top).combined(with: .opacity),
                             removal: .opacity
                         ))
-                        .padding(16)
                 }
-                .scrollIndicators(.hidden)
-                .frame(maxHeight: max(160, settings.panelHeight - 75))
+                .frame(maxHeight: max(120, settings.panelHeight - 75 - 32))
+                .padding(16)
             }
             if !showsFullList {
                 Button {
@@ -355,7 +358,7 @@ private struct MessageListView: View {
     }
 
     var body: some View {
-        ScrollView {
+        PanelScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
                 if let current = manager.current {
                     CurrentCard(notification: current)
@@ -380,15 +383,18 @@ private struct MessageListView: View {
                     .id(notification.id)
                 }
             }
-            .padding(16)
             // Animate history churn so pushes slide in instead of popping.
             .animation(.easeInOut(duration: 0.2), value: manager.pastHistory)
         }
-        .scrollIndicators(.hidden)
         // Upper bound only, so the panel shrinks to its content (see the outer
         // frame's note). The header above costs ~75pt, which is the only fixed
         // tax on the panel's height.
-        .frame(maxHeight: max(160, settings.panelHeight - 75))
+        //
+        // `.padding` sits outside the frame (not on the content) so the
+        // viewport matches the rows' box: the scrollbar ends up inside the
+        // cards rather than in the panel's gutter.
+        .frame(maxHeight: max(120, settings.panelHeight - 75 - 32))
+        .padding(16)
     }
 
     /// Accordion toggle: tapping the open row folds it; tapping any other row

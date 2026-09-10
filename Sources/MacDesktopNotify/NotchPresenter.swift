@@ -224,7 +224,17 @@ final class NotchPresenter: NotchPresenting {
             // fires on hover exit as well as entry and ignores the app's
             // setting, so the ticks live in `IslandHaptics` instead.
             hoverBehavior: [.increaseShadow],
-            style: .auto
+            // Not `.auto`. On a display without a notch, `.auto` resolves to the
+            // kit's floating style, which wraps our 720pt panel in a `Capsule`
+            // clip over a translucent `.popover` material. The panel is a
+            // rounded rectangle, so the material shows through as pale wedges
+            // at the four corners, and the capsule's half-height arcs cut the
+            // panel's own corners as well. The notch style draws the same panel
+            // on every display (the kit falls back to a menubar-height notch
+            // rect when the screen has none, which is the rect `IslandGeometry`
+            // already assumes); the compact pill is still not asked of the kit
+            // on notchless screens - `SummaryRouting` draws the mini bar there.
+            style: .notch(topCornerRadius: 15, bottomCornerRadius: 20)
         ) {
             IslandExpandedView()
         } compactLeading: {
@@ -384,6 +394,13 @@ final class NotchPresenter: NotchPresenting {
             MainActor.assumeIsolated { self?.applySharingType() }
         })
         invalidationObservers.append(appCenter.addObserver(
+            forName: AppSettings.notchGeometryDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.syncCalibrationOverlay() }
+        })
+        invalidationObservers.append(appCenter.addObserver(
             forName: AppSettings.summaryRoutingDidChange,
             object: nil,
             queue: .main
@@ -488,15 +505,22 @@ final class NotchPresenter: NotchPresenting {
     /// actually using. Off by default; toggled in Settings → 外观 → 高级.
     @MainActor
     private final class CalibrationOverlay {
-        var windows: [CGDirectDisplayID: NSWindow] = [:]
+        /// One window per display, plus the hosting view that draws it: the
+        /// geometry is baked into `CalibrationOverlayView` at construction, so
+        /// re-rendering means replacing `rootView` and re-framing means the
+        /// screen rect. Both happen on every update — otherwise a resolution
+        /// change or a slider drag leaves the frame it was born with on screen,
+        /// which is the one thing this overlay exists to disprove.
+        private var windows: [CGDirectDisplayID: NSWindow] = [:]
+        private var hosts: [CGDirectDisplayID: NSHostingView<CalibrationOverlayView>] = [:]
 
         func update(screens: [NSScreen]) {
             let current = Set(screens.map(\.displayID))
-            for (id, window) in windows where !current.contains(id) {
-                window.orderOut(nil)
-                windows.removeValue(forKey: id)
+            for id in windows.keys where !current.contains(id) {
+                windows.removeValue(forKey: id)?.orderOut(nil)
+                hosts.removeValue(forKey: id)
             }
-            for screen in screens where windows[screen.displayID] == nil {
+            for screen in screens {
                 let notch = IslandGeometry.notchFrame(for: screen)
                 let activation = IslandGeometry.compactActivationFrame(
                     notchFrame: notch,
@@ -505,13 +529,20 @@ final class NotchPresenter: NotchPresenting {
                 )
                 let overlay = CalibrationOverlayView(notchFrame: notch, activationFrame: activation)
 
+                if let host = hosts[screen.displayID], let window = windows[screen.displayID] {
+                    host.rootView = overlay
+                    window.setFrame(screen.frame, display: true)
+                    continue
+                }
+
                 let window = NSWindow(
                     contentRect: screen.frame,
                     styleMask: [.borderless],
                     backing: .buffered,
                     defer: false
                 )
-                window.contentView = NSHostingView(rootView: overlay)
+                let host = NSHostingView(rootView: overlay)
+                window.contentView = host
                 window.isOpaque = false
                 window.backgroundColor = .clear
                 window.level = .screenSaver
@@ -520,12 +551,14 @@ final class NotchPresenter: NotchPresenting {
                 window.setFrame(screen.frame, display: true)
                 window.orderFrontRegardless()
                 windows[screen.displayID] = window
+                hosts[screen.displayID] = host
             }
         }
 
         func removeAll() {
             for window in windows.values { window.orderOut(nil) }
             windows.removeAll()
+            hosts.removeAll()
         }
     }
 

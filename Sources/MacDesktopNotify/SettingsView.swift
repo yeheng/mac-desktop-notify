@@ -338,6 +338,17 @@ private struct GeneralSettingsContent: View {
     @Bindable var settings: AppSettings
     @State private var loginError: String?
 
+    /// The login item can be turned off in System Settings behind our back, and
+    /// the toggle would then read ON forever. The system is the source of
+    /// truth, so every pane appearance (and every return from System Settings)
+    /// re-derives it instead of trusting the stored mirror.
+    private func syncLaunchAtLogin() {
+        let on = AppSettings.loginItemIsOn(SMAppService.mainApp.status)
+        if settings.launchAtLogin != on {
+            settings.launchAtLogin = on
+        }
+    }
+
     var body: some View {
         Section {
             Toggle("悬停时展开面板", isOn: $settings.hoverToExpand)
@@ -411,6 +422,10 @@ private struct GeneralSettingsContent: View {
             }
         } header: {
             Text("系统")
+        }
+        .onAppear(perform: syncLaunchAtLogin)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            syncLaunchAtLogin()
         }
     }
 }
@@ -549,7 +564,7 @@ private struct NotificationSettingsContent: View {
         Section {
             Toggle("普通消息使用轻提醒", isOn: $settings.normalMessagesPeek)
         } footer: {
-            SectionFooter("开启后，normal 与 low 消息只在摘要栏短暂显示标题（约 3 秒），不展开面板；critical 不受影响。单条推送可用 URL 参数 display=expand 或 display=peek 覆盖。")
+            SectionFooter("开启后，normal 与 low 消息不展开面板，只在摘要栏停留；停留时长取消息自带的 timeout，未传则用本档位的停留时长。摘要栏本身只显示紧急度与未读数，标题在通知卡与消息中心里。单条推送可用 URL 参数 display=expand 或 display=peek 覆盖。")
         }
 
         Section {
@@ -561,6 +576,12 @@ private struct NotificationSettingsContent: View {
 
         Section {
             Toggle("⌃⌥N 全局切换面板", isOn: $settings.globalPanelHotkeyEnabled)
+            if settings.panelHotkeyUnavailable {
+                Label("⌃⌥N 已被其他应用占用，未能注册。请在该应用里改键，然后重新打开这个开关。",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.callout)
+            }
             ShortcutRow(title: "全局切换面板", shortcut: "⌃ ⌥ N")
             ShortcutRow(title: "收起面板", shortcut: "Esc")
 

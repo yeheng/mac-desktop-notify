@@ -136,6 +136,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// The debounced history write is only a latency optimization; quitting
+    /// inside its window would drop the newest message (or the last read-state
+    /// change), which is the one thing persistence exists to prevent.
+    func applicationWillTerminate(_ notification: Notification) {
+        NotificationManager.shared.flushPersist()
+    }
+
     // MARK: - URL ingress
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -222,7 +229,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func syncPanelHotkey() {
         panelHotkey?.unregister()
         panelHotkey = nil
-        guard AppSettings.shared.globalPanelHotkeyEnabled else { return }
+        guard AppSettings.shared.globalPanelHotkeyEnabled else {
+            AppSettings.shared.panelHotkeyUnavailable = false
+            return
+        }
         panelHotkey = SystemHotkey.register(
             keyCode: SystemHotkey.nKeyCode,
             carbonModifiers: SystemHotkey.controlOptionModifiers,
@@ -231,6 +241,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) {
             NotificationManager.shared.togglePanel()
         }
+        // Carbon refuses a chord another app already owns, and the refusal is
+        // otherwise invisible: the toggle would read ON while nothing responds
+        // to the key. Runtime-only state, rendered by Settings → 通知.
+        AppSettings.shared.panelHotkeyUnavailable = panelHotkey == nil
     }
 
     // MARK: - Menu bar

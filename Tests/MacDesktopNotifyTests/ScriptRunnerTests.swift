@@ -194,4 +194,59 @@ final class ScriptRunnerTests: SettingsIsolatedTestCase {
         XCTAssertTrue(m.current?.bodyMarkdown.hasPrefix("⚠️ 脚本失败：") == true)
         XCTAssertTrue(m.current?.bodyMarkdown.contains("orig") == true)
     }
+
+    // MARK: - 回填不得绕过入参闸门（评审 2026-09-10）
+
+    /// 回填曾经是唯一绕过 `PushValidator` 的写入路径：`{timeout: NaN}` 直写模型，
+    /// `JSONEncoder` 随即抛错、被 `try?` 吞掉，本会话后续落盘全部失效。
+    func testBackfillCannotWriteANonFiniteTimeout() throws {
+        var message = NotchNotification(title: "t", bodyMarkdown: "", urgency: .normal, timeout: 30)
+
+        ScriptRunner.applySuccess(fields: ["timeout": .number(.nan)], to: &message)
+
+        XCTAssertNil(message.timeout, "NaN 必须被闸口拦下，而不是写进模型")
+        XCTAssertNoThrow(try JSONEncoder().encode(message), "模型必须永远可编码")
+    }
+
+    func testBackfillClampsTimeoutAndCapsGroupAndTitle() throws {
+        var message = NotchNotification(title: "t", bodyMarkdown: "", urgency: .normal, timeout: nil)
+        let longTitle = String(repeating: "宽", count: 400)
+
+        ScriptRunner.applySuccess(fields: [
+            "timeout": .number(9999),
+            "group": .string(String(repeating: "g", count: 200)),
+            "title": .string(longTitle),
+        ], to: &message)
+
+        XCTAssertEqual(message.timeout, 60, "timeout 必须落在 1...60")
+        XCTAssertEqual(message.group?.count, PushValidator.maxGroupLength)
+        XCTAssertEqual(message.title.count, PushValidator.maxTitleLength)
+    }
+
+    /// 脚本回填没有返回 urgency 时，非法值既不能进模型，也不能把现有值抹掉。
+    func testBackfillKeepsUrgencyWhenTheScriptSendsGarbage() throws {
+        var message = NotchNotification(title: "t", bodyMarkdown: "", urgency: .critical, timeout: nil)
+
+        ScriptRunner.applySuccess(fields: ["urgency": .string("banana")], to: &message)
+
+        XCTAssertEqual(message.urgency, .critical)
+    }
+
+    // MARK: - 日志上界（评审 2026-09-10）
+
+    /// `console.log` 以前无上限地 append，再整份回吐给调用方：一个
+    /// `for(;;) console.log('x')` 就是一次 OOM。只保留有界的尾部。
+    func testRunawayLoggingStaysBounded() async throws {
+        let engine = ScriptEngine(
+            fetch: { _, _ in FetchResponse(status: 200, ok: true, body: "{}") },
+            notify: { _ in "displayed" })
+        let outcome = await engine.run(
+            source: "for (let i = 0; i < 5000; i++) console.log('line ' + i); return 1",
+            input: .object([:]), budget: .seconds(10))
+
+        XCTAssertNil(outcome.error)
+        XCTAssertLessThanOrEqual(outcome.logs.count, 201, "日志必须有上界")
+        XCTAssertEqual(outcome.logs.last, "…（日志已截断，仅保留最近 200 行）")
+        XCTAssertEqual(outcome.logs.dropLast().last, "line 4999", "保留的是最新的尾部")
+    }
 }

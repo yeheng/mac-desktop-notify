@@ -9,6 +9,7 @@ import SwiftUI
 @MainActor
 final class HistoryWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    private var keyMonitor: Any?
 
     func show() {
         if let window {
@@ -31,11 +32,14 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         window.isReleasedWhenClosed = false
         self.window = window
+        keyMonitor = WindowShortcuts.install(for: window)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func windowWillClose(_ notification: Notification) {
+        WindowShortcuts.remove(keyMonitor)
+        keyMonitor = nil
         window = nil
     }
 }
