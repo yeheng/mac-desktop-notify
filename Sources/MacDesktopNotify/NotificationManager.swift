@@ -192,6 +192,12 @@ final class NotificationManager {
     var hasContent: Bool { !messages.history.isEmpty }
     var latestNotification: NotchNotification? { messages.history.last }
 
+    /// The newest message that has not been read. The compact pill uses this for
+    /// its title marquee, so a collapsed island still says what is waiting.
+    var latestUnread: NotchNotification? {
+        messages.history.last { !isRead($0) }
+    }
+
     /// The urgency the pill and panel header should be tinted with: the live
     /// message if there is one, otherwise the most recent history entry.
     var displayUrgency: UrgencyLevel? { current?.urgency ?? latestNotification?.urgency }

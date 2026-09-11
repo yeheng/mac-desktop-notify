@@ -118,6 +118,32 @@ final class IslandBindingsTests: SettingsIsolatedTestCase {
         XCTAssertFalse(empty.predicate(.hasStatus))
     }
 
+    func testLatestUnreadTitleBinding() {
+        let manager = NotificationManager()
+        manager.push(make("first"))
+        manager.push(make("second"))
+        var current = bindings(manager)
+        XCTAssertEqual(current.latestUnreadTitle, "second")
+        XCTAssertEqual(current.string(for: .latestUnreadTitle), "second")
+
+        manager.setRead(manager.latestUnread!.id, read: true)
+        current = bindings(manager)
+        XCTAssertEqual(current.latestUnreadTitle, "first", "read messages drop out")
+    }
+
+    func testShowsUnreadTitlePredicate() {
+        let manager = NotificationManager()
+        manager.push(make("a"))
+        XCTAssertTrue(bindings(manager).predicate(.showsUnreadTitle), "unread and no island text")
+
+        let withIsland = NotificationManager()
+        withIsland.push(make("b", island: IslandContent(text: "42%")))
+        XCTAssertFalse(
+            bindings(withIsland).predicate(.showsUnreadTitle),
+            "a live island status line wins over the backlog title"
+        )
+    }
+
     func testSettingsPredicatesFollowTheToggle() {
         AppSettings.shared.showUrgency = false
         AppSettings.shared.showHistoryCount = false

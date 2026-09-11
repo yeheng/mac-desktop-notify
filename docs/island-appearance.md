@@ -241,6 +241,7 @@ app 监听 `themes/`、`layouts/` 与 Application Support 目录，文件变化�
 | `tint` | 颜色 | 主题 `textPrimary` | 颜色来源（见第 6 节） |
 | `lineLimit` | 整数 | 不限 | clamp 1…50 |
 | `fontFamily` | 字符串 | 主题 `fontFamily` | 节点级字体族覆盖，用于 Nerd Font 图标 |
+| `marquee` | 布尔 | `false` | 超长时横向滚动（收起 pill 的未读标题）；短文本保持静止 |
 
 `value` 的绑定为 `nil` 时（例如 `$islandText` 且当前消息没有 island 文本），整个文本节点**不渲染**。通常配合 `"if": "hasIslandText"` 写明意图。
 
@@ -393,7 +394,7 @@ if → frame → padding → background → clip → opacity → a11y
 
 ## 7. 绑定与谓词
 
-### 7.1 绑定（8 个，全部预格式化）
+### 7.1 绑定（9 个，全部预格式化）
 
 数字、日期、复数、本地化永远在 Swift 里做，DSL 只拿到现成字符串。
 
@@ -407,8 +408,9 @@ if → frame → padding → background → clip → opacity → a11y
 | `$unread` | Int | 未读数量 |
 | `$progress` | Double? | island 进度，已 clamp 到 0…1；`nil` 即不渲染 |
 | `$urgency` | Color | 紧急度颜色（normal→`accent`，critical→`critical`，low→`.secondary`，无紧急度→`accent`）。**`showUrgency` 关闭时恒为 `.secondary`** |
+| `$latestUnreadTitle` | String? | 最新一条**未读**消息的标题（已读的不算）；`nil` 即不渲染 |
 
-### 7.2 谓词（12 个，用于 `if`）
+### 7.2 谓词（13 个，用于 `if`）
 
 | 谓词 | 定义 |
 |---|---|
@@ -424,8 +426,11 @@ if → frame → padding → background → clip → opacity → a11y
 | `showsMiniBarBadge` | `showHistoryCount && 未读 > 0`（迷你条徽章守卫，阈值与 pill 不同） |
 | `hasProgress` | 当前消息有进度 |
 | `showsCurrentCard` | `!showsFullList`：面板展示当前卡片（而非完整列表） |
+| `showsUnreadTitle` | `$latestUnreadTitle != nil && $islandText == nil`：收起 pill 要显示未读标题（且有实时 island 状态行时让位给状态行） |
 
 未知谓词 → 当 true（可见）+ 一条诊断。
+
+**内置 pill 收起时的优先级**（`layouts/classic.json` 就是这个规则）：有实时 island 状态行 → 显示状态行；否则有未读 → 显示最新未读标题（`$latestUnreadTitle`，超长则 `marquee`）；否则只有图标。自定义 `compactLeading` 时把这两个 `text` 节点都写上，否则你要的行为会被你自己的布局覆盖掉。
 
 ### 7.3 `showUrgency` 关闭时三个面的行为不同
 
@@ -460,7 +465,9 @@ cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/layouts/*.json "$CFG/layout
     "compactLeading": {
       "type": "hstack", "spacing": 4, "children": [
         { "type": "image", "system": "$icon", "size": 10, "weight": "bold", "tint": "$urgency" },
-        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "if": "hasIslandText" }
+        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "if": "hasIslandText" },
+        { "type": "text", "value": "$latestUnreadTitle", "size": 11, "weight": "semibold",
+          "marquee": true, "if": "showsUnreadTitle" }
       ]
     },
     "compactTrailing": {
@@ -590,7 +597,9 @@ cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/layouts/*.json "$CFG/layout
     "compactLeading": {
       "type": "hstack", "spacing": 5, "children": [
         { "type": "image", "system": "$icon", "size": 11, "weight": "bold", "tint": "$urgency" },
-        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "tint": "textPrimary", "if": "hasIslandText" }
+        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "tint": "textPrimary", "if": "hasIslandText" },
+        { "type": "text", "value": "$latestUnreadTitle", "size": 11, "weight": "semibold", "tint": "textPrimary",
+          "marquee": true, "if": "showsUnreadTitle" }
       ]
     },
     "compactTrailing": {
@@ -670,7 +679,9 @@ cp "$(pwd)/Sources/MacDesktopNotify/Island/Examples/layouts/github.json" "$CFG/l
       "type": "hstack", "spacing": 5, "children": [
         { "type": "text", "value": "\uf09b", "size": 12, "weight": "bold",
           "tint": "$urgency", "fontFamily": "JetBrainsMono Nerd Font" },
-        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "if": "hasIslandText" }
+        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "if": "hasIslandText" },
+        { "type": "text", "value": "$latestUnreadTitle", "size": 11, "weight": "semibold",
+          "marquee": true, "if": "showsUnreadTitle" }
       ]
     },
     "compactTrailing": {

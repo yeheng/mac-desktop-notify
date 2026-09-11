@@ -4,6 +4,7 @@
 状态：已评审修订，待批准
 修订记录：按评审结论修订 3 处阻断级自相矛盾（悬停归属 §1、绑定集 §2.5、深度诊断 §4/§9）与 4 处须修项（badge 双格式、面板高度预算、token 表活路径、emptyState 槽）；绑定集 12→8、谓词集 11→10、slots 4→3；badge 增必填 `format` 键；emptyState 槽删除；§4/§9 删除 AnyView 退化预案。
 二次评审修订 4 处阻断级：B1 谓词无法表达连词守卫（新增 `showsPillBadge` / `showsMiniBarBadge`，谓词 10→12，示例改用之）；B2 `showUrgency` 语义与 `$urgency` 不一致（`$urgency` 改为 settings 相关，示例去掉 compact 面的 `if: showUrgency`，§2.5 描述按面订正）；B3 未知根 `type` / 空 `children` 会产出"合法但空白"的面（§5 增根节点非空校验与回退）；B4 token 表缺 `HistoryRow` 的 fill/hover（补 `historyRowFill`/`historyRowFillHover`/`historyRowRadius`/`badgeFill`，`fontDesign`/`fontScale` 作用域写明，闭集措辞收窄为"表内 token"）。
+实现期扩展：布局/主题下拉选择（`island.layoutID` / `layouts/<id>.json`）、自定义字体族 `fontFamily`/`monoFontFamily`、收起 pill 的未读标题走马灯（新增绑定 `$latestUnreadTitle`、谓词 `showsUnreadTitle`、`text.marquee`；绑定 8→9、谓词 12→13）。
 基线：`4c822ea`（`island` 状态行 / blocks DSL 已落地）
 范围：灵动岛**外壳**（刘海 pill 两面 + 展开面板 + 无刘海迷你条）的布局与外观可配置化
 
@@ -141,7 +142,7 @@ Linus 三问：
 | `type` | 键 | 说明 |
 |---|---|---|
 | `vstack` / `hstack` / `zstack` | `spacing`, `alignment`, `children` | 容器 |
-| `text` | `value`(绑定/字面串), `size`, `weight`, `design`, `tint`, `lineLimit`, `fontFamily` | 文本；`fontFamily` 是节点级字体覆盖（Nerd Font 图标用这里） |
+| `text` | `value`(绑定/字面串), `size`, `weight`, `design`, `tint`, `lineLimit`, `fontFamily`, `marquee` | 文本；`fontFamily` 是节点级字体覆盖（Nerd Font 图标用这里）；`marquee` 超长时横向滚动（收起 pill 的未读标题） |
 | `image` | `system`(SF Symbol，可为绑定), `size`, `weight`, `tint` | 图标；默认 `accessibilityHidden(true)` |
 | `dot` | `size`, `fill` | 紧急度圆点 |
 | `badge` | `value`(Int 绑定), **`format` 必填**（`"timesN"` = `×N`；`"count"` = 裸数字）, `fill`, `clip` | `×N` / 计数胶囊；compact 面用 `timesN`（`:170`），miniBar 用 `count`（`:72`） |
@@ -169,7 +170,7 @@ a11y:       { label, hidden }
 
 没有表达式、没有插值、没有运算、没有字符串拼接。
 
-### 2.5 绑定闭集（8 个，全部预格式化）
+### 2.5 绑定闭集（9 个，全部预格式化）
 
 | 绑定 | 类型 | 来源 |
 |---|---|---|
@@ -181,8 +182,9 @@ a11y:       { label, hidden }
 | `$unread` | Int | `manager.unreadCount` |
 | `$progress` | Double? | `current?.island?.progress` 已 clamp 的 0…1；nil = 不显示 |
 | `$urgency` | Color | `displayUrgency` → token 解析（`normal` 与 `nil`→`accent`、`critical`→`critical`、`low`→`.secondary`）；`settings.showUrgency == false` 时**恒为 `.secondary`**（与内置紧凑面一致）。`.low`/降级用 `.secondary` 而非 hex：语义动态色（`MarkdownNotificationView.swift:8-15`） |
+| `$latestUnreadTitle` | String? | `manager.latestUnread?.title`（最新一条未读；已读的不算）；nil 即丢。收起 pill 的走马灯用它 |
 
-谓词闭集（12 个，每个一行定义——T3 白名单依据）：
+谓词闭集（13 个，每个一行定义——T3 白名单依据）：
 
 | 谓词 | 定义 |
 |---|---|
@@ -191,6 +193,7 @@ a11y:       { label, hidden }
 | `hasCurrent` | `manager.current != nil` |
 | `hasUnread` | `unreadCount > 0` |
 | `manyUnread` | `unreadCount > 1`（pill 徽章阈值，`:169`） |
+| `showsUnreadTitle` | `latestUnreadTitle != nil && islandText == nil`（收起 pill 的未读标题优先级） |
 | `isCritical` | `displayUrgency == .critical` |
 | `showUrgency` | `settings.showUrgency`。三个内置面在 `false` 时的行为**不同**，DSL 需按面复现：紧凑 pill 图标**仍画**、tint 降 `.secondary`（`:158`）；面板头部 dot **整体隐藏**（`:287`）；miniBar 的 icon/dot **整体隐藏**（`MiniSummaryBar.swift:53`） |
 | `showHistoryCount` | `settings.showHistoryCount` |
@@ -201,6 +204,7 @@ a11y:       { label, hidden }
 
 - **未知谓词 → 当 true（可见）** + 一条诊断。拼错 `if` 不该静默吞掉一块 UI；多显示一点无害。
 - 谓词闭集无 `not` / `and` / `or`。需要反向语义就新增一个具名谓词。无 `isHovering`：悬停属于包装层交互（§1），进 DSL 会搅动 `setCompactContentWidth` 上报。
+- **收起 pill 的未读标题**：有未读且无实时 island 状态行时，`compactLeading` 显示 `$latestUnreadTitle` 并以 `marquee` 形式滚动（超长才滚）。谓词 `showsUnreadTitle = latestUnreadTitle != nil && islandText == nil` 承担这个优先级；内置 pill 与 `layouts/classic.json` 同一规则。
 - 格式化（数字、日期、复数、本地化）永远在 Swift；DSL 只拿到现成字符串，`badge.format` 是渲染器唯一的格式化点（`timesN` = `×N`，`count` = 裸数字）。
 
 ### 2.6 surface 语义

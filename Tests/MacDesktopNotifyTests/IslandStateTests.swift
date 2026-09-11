@@ -463,4 +463,26 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         m.setHovering(false)                      // 真正离开面板：§3.1 应当退役卡片
         XCTAssertNil(m.current, "entered-then-left 必须 advance()")
     }
+
+    // MARK: - 收起 pill 的未读标题
+
+    /// The pill's marquee names the newest unread message; read ones drop out.
+    func testLatestUnreadIsTheNewestUnreadMessage() {
+        let manager = NotificationManager()
+        let first = make("first")
+        let second = make("second")
+        manager.push(first)
+        manager.push(second)
+        XCTAssertEqual(manager.latestUnread?.id, second.id, "newest unread wins")
+
+        manager.setRead(second.id, read: true)
+        XCTAssertEqual(manager.latestUnread?.id, first.id, "read messages are skipped")
+
+        manager.setRead(first.id, read: true)
+        XCTAssertNil(manager.latestUnread)
+    }
+
+    func testLatestUnreadIsNilWhenNothingArrived() {
+        XCTAssertNil(NotificationManager().latestUnread)
+    }
 }

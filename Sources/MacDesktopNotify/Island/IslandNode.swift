@@ -30,11 +30,12 @@ enum IslandBindingKey: String, CaseIterable, Sendable {
     case unread
     case progress
     case urgency
+    case latestUnreadTitle
 
     /// Whether the binding can feed a `text`/`image` value.
     var isTextual: Bool {
         switch self {
-        case .status, .islandText, .panelTitle, .panelSubtitle, .icon: true
+        case .status, .islandText, .panelTitle, .panelSubtitle, .icon, .latestUnreadTitle: true
         case .unread, .progress, .urgency: false
         }
     }
@@ -55,6 +56,8 @@ enum IslandPredicate: String, CaseIterable, Sendable {
     case showsMiniBarBadge
     case hasProgress
     case showsCurrentCard
+    /// `hasUnread && !hasIslandText`: the builtin pill's rule for "\u6536\u8d77\u65f6\u663e\u793a\u672a\u8bfb\u6807\u9898".
+    case showsUnreadTitle
 }
 
 // MARK: - Values
@@ -214,7 +217,8 @@ enum IslandNodeKind: Equatable, Sendable {
         design: IslandFontDesign?,
         tint: IslandColorSource?,
         lineLimit: Int?,
-        fontFamily: String?
+        fontFamily: String?,
+        marquee: Bool
     )
     case image(system: IslandIconSource, size: CGFloat?, weight: IslandFontWeight?, tint: IslandColorSource?)
     case dot(size: CGFloat?, fill: IslandColorSource?)

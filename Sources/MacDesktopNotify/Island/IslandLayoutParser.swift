@@ -163,7 +163,8 @@ private struct Walker {
                 design: fontDesign(dict["design"], path: "\(path).design"),
                 tint: color(dict["tint"], path: "\(path).tint"),
                 lineLimit: integer(dict["lineLimit"], path: "\(path).lineLimit", range: 1...50),
-                fontFamily: string(dict["fontFamily"], path: "\(path).fontFamily")
+                fontFamily: string(dict["fontFamily"], path: "\(path).fontFamily"),
+                marquee: boolean(dict["marquee"], path: "\(path).marquee")
             ), modifiers: modifiers, children: [])
 
         case "image":
@@ -450,6 +451,15 @@ private struct Walker {
             return nil
         }
         return Self.bounded(value)
+    }
+
+    private mutating func boolean(_ raw: Any?, path: String, fallback: Bool = false) -> Bool {
+        guard let raw else { return fallback }
+        guard let value = raw as? Bool else {
+            report(path, "必须是布尔值")
+            return fallback
+        }
+        return value
     }
 
     private mutating func alignment(_ raw: Any?, path: String) -> IslandAlignment? {

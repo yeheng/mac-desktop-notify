@@ -15,11 +15,16 @@ struct IslandBindings: Equatable, Sendable {
     var unread: Int = 0
     var progress: Double?
     var urgency: UrgencyLevel?
+    /// Newest unread message's title, for the collapsed pill's marquee.
+    var latestUnreadTitle: String?
     var showUrgency: Bool = true
     var showHistoryCount: Bool = true
     var currentExists: Bool = false
     var isCritical: Bool = false
     var showsCurrentCard: Bool = true
+    /// Not a `$` binding: the renderer pauses a marquee while the pointer is on
+    /// the island, the same way the builtin pill does.
+    var pointerNearIsland: Bool = false
 
     static let empty = IslandBindings()
 
@@ -38,6 +43,8 @@ struct IslandBindings: Equatable, Sendable {
         unread = manager.unreadCount
         progress = current?.island?.progress
         urgency = manager.displayUrgency
+        latestUnreadTitle = manager.latestUnread?.title
+        pointerNearIsland = manager.pointerNearIsland
         showUrgency = settings.showUrgency
         showHistoryCount = settings.showHistoryCount
         currentExists = current != nil
@@ -63,6 +70,7 @@ struct IslandBindings: Equatable, Sendable {
         case .showsMiniBarBadge: showHistoryCount && unread > 0
         case .hasProgress: progress != nil
         case .showsCurrentCard: showsCurrentCard
+        case .showsUnreadTitle: latestUnreadTitle != nil && islandText == nil
         }
     }
 
@@ -75,6 +83,7 @@ struct IslandBindings: Equatable, Sendable {
         case .panelTitle: panelTitle
         case .panelSubtitle: panelSubtitle
         case .icon: icon
+        case .latestUnreadTitle: latestUnreadTitle
         case .unread, .progress, .urgency: nil
         }
     }

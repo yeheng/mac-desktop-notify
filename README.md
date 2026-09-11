@@ -552,7 +552,7 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 | `type` | 键 |
 |---|---|
 | `vstack` / `hstack` / `zstack` | `spacing`, `alignment`, `children` |
-| `text` | `value`(绑定/字面串), `size`, `weight`, `design`, `tint`, `lineLimit`, `fontFamily`(Nerd Font 图标) |
+| `text` | `value`(绑定/字面串), `size`, `weight`, `design`, `tint`, `lineLimit`, `fontFamily`(Nerd Font 图标), `marquee`(超长时走马灯) |
 | `image` | `system`(SF Symbol，可为绑定), `size`, `weight`, `tint` |
 | `dot` | `size`, `fill` |
 | `badge` | `value`(`$unread`), **`format` 必填**（`timesN`=`×N`，`count`=裸数字）, `fill`, `clip` |
@@ -572,9 +572,9 @@ a11y:       { label, hidden }
 
 **取值规则**：`$xxx` = 绑定；`@xxx` 或裸名 = 主题 token；`#RRGGBB` / `#RRGGBBAA` = 字面色。没有表达式、插值、运算或拼接。颜色 token 也可写成 `{"light":"#...","dark":"#..."}`。
 
-**绑定（8 个，全部预格式化）**：`$status`、`$islandText`、`$panelTitle`、`$panelSubtitle`、`$icon`、`$unread`、`$progress`、`$urgency`。
+**绑定（9 个，全部预格式化）**：`$status`、`$islandText`、`$panelTitle`、`$panelSubtitle`、`$icon`、`$unread`、`$progress`、`$urgency`、`$latestUnreadTitle`（最新未读标题，收起 pill 的走马灯用它）。
 
-**谓词（12 个，用于 `if`）**：`hasStatus`、`hasIslandText`、`hasCurrent`、`hasUnread`、`manyUnread`、`isCritical`、`showUrgency`、`showHistoryCount`、`showsPillBadge`、`showsMiniBarBadge`、`hasProgress`、`showsCurrentCard`。未知谓词按 **true（可见）** 处理。
+**谓词（13 个，用于 `if`）**：`hasStatus`、`hasIslandText`、`hasCurrent`、`hasUnread`、`manyUnread`、`isCritical`、`showUrgency`、`showHistoryCount`、`showsPillBadge`、`showsMiniBarBadge`、`hasProgress`、`showsCurrentCard`、`showsUnreadTitle`（有未读且无 island 文本）。未知谓词按 **true（可见）** 处理。
 
 **原生内容槽**：`messageBody` 是消息卡片/历史列表（含滚动与内边距），`headerActions` 是面板头部按钮，`footerActions` 是「查看全部消息」。这些内容、Markdown 正文、点击/URL/脚本都留在 Swift，JSON 只决定盒子怎么摆。
 

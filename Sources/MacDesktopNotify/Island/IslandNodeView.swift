@@ -11,6 +11,7 @@ struct IslandNodeView: View {
     @Environment(\.islandBindings) private var bindings
     @Environment(\.islandTokens) private var theme
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if let condition = node.modifiers.condition, !bindings.predicate(condition) {
@@ -38,17 +39,30 @@ struct IslandNodeView: View {
         case .zstack(let alignment):
             ZStack(alignment: (alignment ?? .center).alignment) { children }
 
-        case .text(let value, let size, let weight, let design, let tint, let lineLimit, let fontFamily):
+        case .text(let value, let size, let weight, let design, let tint, let lineLimit, let fontFamily, let marquee):
             if let string = bindings.text(value) {
-                Text(string)
-                    .font(theme.font(
-                        size: size ?? 11,
-                        weight: (weight ?? .regular).weight,
-                        design: (design ?? theme.fontDesign).design,
-                        family: fontFamily
-                    ))
-                    .foregroundStyle(tint.flatMap { bindings.color($0, tokens: theme, scheme: scheme) } ?? theme.textPrimary)
-                    .lineLimit(lineLimit)
+                let font = theme.font(
+                    size: size ?? 11,
+                    weight: (weight ?? .regular).weight,
+                    design: (design ?? theme.fontDesign).design,
+                    family: fontFamily
+                )
+                let color = tint.flatMap { bindings.color($0, tokens: theme, scheme: scheme) } ?? theme.textPrimary
+                if marquee {
+                    MarqueeText(
+                        text: string,
+                        font: font,
+                        maxWidth: 120,
+                        speed: 22,
+                        paused: reduceMotion || bindings.pointerNearIsland
+                    )
+                    .foregroundStyle(color)
+                } else {
+                    Text(string)
+                        .font(font)
+                        .foregroundStyle(color)
+                        .lineLimit(lineLimit)
+                }
             }
 
         case .image(let system, let size, let weight, let tint):

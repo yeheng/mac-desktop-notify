@@ -5,7 +5,9 @@
       "type": "hstack", "spacing": 5, "children": [
         { "type": "text", "value": "\uf09b", "size": 12, "weight": "bold",
           "tint": "$urgency", "fontFamily": "JetBrainsMono Nerd Font" },
-        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "if": "hasIslandText" }
+        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "if": "hasIslandText" },
+        { "type": "text", "value": "$latestUnreadTitle", "size": 11, "weight": "semibold",
+          "marquee": true, "if": "showsUnreadTitle" }
       ]
     },
     "compactTrailing": {

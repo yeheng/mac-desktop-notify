@@ -178,9 +178,21 @@ struct CompactIslandView: View {
                     .foregroundStyle(settings.showUrgency ? theme.urgencyColor(manager.displayUrgency) : Color.secondary)
                     .accessibilityHidden(true)
                 if let text = manager.current?.island?.text {
+                    // A live island status line beats the unread backlog: it is
+                    // the thing that is happening right now.
                     Text(text)
                         .lineLimit(1)
                         .fixedSize()
+                } else if let unread = manager.latestUnread {
+                    // Collapsed with a backlog: name the newest unread message,
+                    // scrolling so a long title does not widen the pill.
+                    MarqueeText(
+                        text: unread.title,
+                        font: theme.font(size: 11, weight: .semibold, design: theme.fontDesign.design),
+                        maxWidth: 120,
+                        speed: 22,
+                        paused: reduceMotion || manager.pointerNearIsland
+                    )
                 }
             }
         case .trailing:

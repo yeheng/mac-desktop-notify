@@ -148,7 +148,7 @@ final class IslandLayoutParserTests: XCTestCase {
     func testStringLengthIsTruncated() {
         let long = String(repeating: "a", count: 400)
         let root = node(#"{"surfaces":{"compactLeading":{"type":"text","value":"\#(long)"}}}"#)
-        guard case .text(let value, _, _, _, _, _, _)? = root?.kind else { return XCTFail("expected text") }
+        guard case .text(let value, _, _, _, _, _, _, _)? = root?.kind else { return XCTFail("expected text") }
         guard case .literal(let text) = value else { return XCTFail("expected literal") }
         XCTAssertEqual(text.count, IslandLayoutParser.maxStringLength)
     }
@@ -196,8 +196,15 @@ final class IslandLayoutParserTests: XCTestCase {
 
     func testTextFontFamilyParses() {
         let root = node(#"{"surfaces":{"compactLeading":{"type":"text","value":"x","fontFamily":"JetBrainsMono Nerd Font"}}}"#)
-        guard case .text(_, _, _, _, _, _, let family)? = root?.kind else { return XCTFail("expected text") }
+        guard case .text(_, _, _, _, _, _, let family, _)? = root?.kind else { return XCTFail("expected text") }
         XCTAssertEqual(family, "JetBrainsMono Nerd Font")
+    }
+
+    func testTextMarqueeParses() {
+        let root = node(#"{"surfaces":{"compactLeading":{"type":"text","value":"$latestUnreadTitle","marquee":true,"if":"showsUnreadTitle"}}}"#)
+        guard case .text(_, _, _, _, _, _, _, let marquee)? = root?.kind else { return XCTFail("expected text") }
+        XCTAssertTrue(marquee)
+        XCTAssertEqual(root?.modifiers.condition, .showsUnreadTitle)
     }
 
     // MARK: - Colors

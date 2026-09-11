@@ -58,7 +58,7 @@ final class IslandRendererTests: SettingsIsolatedTestCase {
     func testConditionPicksVisibility() throws {
         // `if` must gate rendering: with no island text the node is skipped.
         let node = IslandNode(
-            kind: .text(value: .literal("x"), size: 11, weight: nil, design: nil, tint: nil, lineLimit: nil, fontFamily: nil),
+            kind: .text(value: .literal("x"), size: 11, weight: nil, design: nil, tint: nil, lineLimit: nil, fontFamily: nil, marquee: false),
             modifiers: IslandModifiers(condition: .hasIslandText),
             children: []
         )
@@ -85,6 +85,24 @@ final class IslandRendererTests: SettingsIsolatedTestCase {
         )
     }
 
+    /// The marquee must render (and, when overlong, stay within `maxWidth`).
+    func testMarqueeRendersWithoutCrashing() {
+        let content = MarqueeText(
+            text: String(repeating: "很长的标题 ", count: 12),
+            font: .system(size: 11, weight: .semibold),
+            maxWidth: 120,
+            speed: 22,
+            paused: true
+        )
+        .foregroundStyle(Color.white)
+        .background(Color.black)
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = 1
+        renderer.proposedSize = ProposedViewSize(width: 200, height: 20)
+        let image = try? XCTUnwrap(renderer.cgImage)
+        XCTAssertNotNil(image)
+    }
+
     private func render(text: String, family: String?) -> Data {
         let node = IslandNode(
             kind: .text(
@@ -94,7 +112,8 @@ final class IslandRendererTests: SettingsIsolatedTestCase {
                 design: nil,
                 tint: nil,
                 lineLimit: nil,
-                fontFamily: family
+                fontFamily: family,
+                marquee: false
             ),
             modifiers: IslandModifiers(),
             children: []
