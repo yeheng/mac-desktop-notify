@@ -6,6 +6,7 @@ import SwiftUI
 @MainActor
 final class OnboardingWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    private var keyMonitor: Any?
 
     var isActive: Bool { window != nil }
 
@@ -31,6 +32,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         window.isReleasedWhenClosed = false
         self.window = window
+        keyMonitor = WindowShortcuts.install(for: window)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -40,6 +42,8 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        WindowShortcuts.remove(keyMonitor)
+        keyMonitor = nil
         window = nil
     }
 }

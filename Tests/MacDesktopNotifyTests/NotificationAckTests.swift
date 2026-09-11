@@ -238,4 +238,38 @@ final class NotificationAckTests: XCTestCase {
         XCTAssertNotNil(store.read(token: "fresh"))
         XCTAssertNil(store.read(token: "old"))
     }
+
+    // MARK: - 写盘失败不得谎报成功（评审 2026-09-10）
+
+    /// 点击是重点，回执是承诺。写盘失败还广播 `ackDidRecord`，就会让轮询的发送方
+    /// 永远等不到、而 socket 订阅方以为已经记录——两个客户端对同一件事有不同认知。
+    func testAckWriteFailureIsReportedAsNotPersisted() {
+        final class Box: @unchecked Sendable { var persisted: Bool? }
+        let box = Box()
+
+        let m = NotificationManager()
+        // /dev/null 不是目录，所以这个 store 的写入必然失败。
+        m.attachActionHandler(NotificationActionHandler(
+            ackStore: NotificationAckStore(directoryURL: URL(fileURLWithPath: "/dev/null/acks"))
+        ))
+        let action = NotificationAction(
+            label: "允许",
+            url: URL(string: "notch-notify://ack?token=t1")!
+        )
+        let note = NotchNotification(title: "审批", bodyMarkdown: "", urgency: .critical,
+                                     timeout: 60, actions: [action])
+
+        let observer = NotificationCenter.default.addObserver(
+            forName: NotificationActionHandler.ackDidRecord, object: nil, queue: .main
+        ) { notification in
+            box.persisted = notification.userInfo?[NotificationActionHandler.ackPersistedKey] as? Bool
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        m.push(note)
+        m.performAction(action, for: note)
+
+        XCTAssertEqual(box.persisted, false,
+                       "回执没落盘就必须如实上报，而不是假装已经记录")
+    }
 }

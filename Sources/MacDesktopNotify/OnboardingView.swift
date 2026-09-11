@@ -81,7 +81,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 12) {
             stepHeader("第 1 步 · 看一眼效果", "发一条真实的通知，亲眼看看它长什么样。")
             Button {
-                let outcome = NotificationManager.shared.push(NotchNotification(
+                let outcome = NotificationIngress.deliver(NotchNotification(
                     title: "试一试", bodyMarkdown: "这是引导发送的测试通知", urgency: .normal, timeout: 10
                 ))
                 switch outcome {

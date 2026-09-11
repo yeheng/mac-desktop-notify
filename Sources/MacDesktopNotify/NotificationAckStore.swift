@@ -75,15 +75,26 @@ struct NotificationAckStore {
 
     /// Receipts are worthless once nobody is waiting for them, so old ones are swept.
     func pruneStale(olderThan interval: TimeInterval = 86_400) {
-        let contents = (try? FileManager.default.contentsOfDirectory(
-            at: directoryURL,
-            includingPropertiesForKeys: [.contentModificationDateKey]
-        )) ?? []
+        let contents: [URL]
+        do {
+            contents = try FileManager.default.contentsOfDirectory(
+                at: directoryURL,
+                includingPropertiesForKeys: [.contentModificationDateKey]
+            )
+        } catch {
+            // Not "no receipts yet" - receipts exist and cannot be listed.
+            Diagnostics.degrade("回执目录读取失败", error)
+            return
+        }
         let cutoff = Date().addingTimeInterval(-interval)
         for url in contents where url.pathExtension == "json" {
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             if let modified, modified < cutoff {
-                try? FileManager.default.removeItem(at: url)
+                do {
+                    try FileManager.default.removeItem(at: url)
+                } catch {
+                    Diagnostics.degrade("过期回执清理失败（\(url.lastPathComponent)）", error)
+                }
             }
         }
     }

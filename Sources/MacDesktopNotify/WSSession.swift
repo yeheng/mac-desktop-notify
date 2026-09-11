@@ -149,7 +149,11 @@ final class WSSession {
 
     /// Sends one JSON object as a text frame. Safe to call from the hub.
     func send(json: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: json) else { return }
+        guard let data = try? JSONSerialization.data(withJSONObject: json) else {
+            // A subscriber that misses an event has no other symptom.
+            Diagnostics.degrade("WS 事件序列化失败", reason: "\(json.keys.sorted())")
+            return
+        }
         send(data: WSCodec.encode(opcode: 0x1, payload: data))
     }
 

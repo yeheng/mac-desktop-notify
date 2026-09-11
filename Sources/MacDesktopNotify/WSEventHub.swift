@@ -34,6 +34,7 @@ final class WSEventHub {
                 forName: NotificationActionHandler.ackDidRecord, object: nil, queue: .main
             ) { [weak self] notification in
                 let ack = notification.userInfo?["ack"] as? NotificationAck
+                let persisted = notification.userInfo?[NotificationActionHandler.ackPersistedKey] as? Bool ?? true
                 MainActor.assumeIsolated {
                     guard let self, let ack else { return }
                     self.broadcast([
@@ -42,6 +43,9 @@ final class WSEventHub {
                         "label": ack.label,
                         "notificationID": ack.notificationID.uuidString,
                         "decidedAt": ack.decidedAt.timeIntervalSince1970,
+                        // A poller reads the file; a subscriber should not be
+                        // told "recorded" when there is no file to read.
+                        "persisted": persisted,
                     ])
                 }
             },

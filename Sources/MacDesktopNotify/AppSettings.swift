@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import ServiceManagement
 
 @MainActor
 @Observable
@@ -18,6 +19,10 @@ final class AppSettings {
     private func notifyAPIChange() {
         NotificationCenter.default.post(name: Self.apiSettingsDidChange, object: nil)
     }
+    /// Posted when the menu-bar geometry changes (the notch offset sliders).
+    /// The calibration overlay exists to verify exactly those numbers, so it
+    /// has to be redrawn when they move.
+    static let notchGeometryDidChange = Notification.Name("MacDesktopNotify.notchGeometryDidChange")
     /// Posted when where the summary is drawn changes (mini bar on notchless
     /// screens, mirroring across displays), so live windows follow the setting
     /// instead of waiting for the next presentation.
@@ -70,8 +75,20 @@ final class AppSettings {
 
     var panelWidth: Double { didSet { save(panelWidth, key: Keys.panelWidth) } }
     var panelHeight: Double { didSet { save(panelHeight, key: Keys.panelHeight) } }
-    var notchWidthOffset: Double { didSet { save(notchWidthOffset, key: Keys.notchWidthOffset) } }
-    var notchHeightOffset: Double { didSet { save(notchHeightOffset, key: Keys.notchHeightOffset) } }
+    /// Geometry escape hatches (see `debugGeometryEnabled`); the calibration
+    /// overlay is the only consumer that has to be told they moved.
+    var notchWidthOffset: Double {
+        didSet {
+            save(notchWidthOffset, key: Keys.notchWidthOffset)
+            NotificationCenter.default.post(name: Self.notchGeometryDidChange, object: nil)
+        }
+    }
+    var notchHeightOffset: Double {
+        didSet {
+            save(notchHeightOffset, key: Keys.notchHeightOffset)
+            NotificationCenter.default.post(name: Self.notchGeometryDidChange, object: nil)
+        }
+    }
     var showUrgency: Bool { didSet { save(showUrgency, key: Keys.showUrgency) } }
     var showHistoryCount: Bool { didSet { save(showHistoryCount, key: Keys.showHistoryCount) } }
     var soundEnabled: Bool { didSet { save(soundEnabled, key: Keys.soundEnabled) } }
@@ -198,6 +215,25 @@ final class AppSettings {
         panelHeight = 360
         notchWidthOffset = 0
         notchHeightOffset = 0
+    }
+
+    /// Runtime-only, deliberately not persisted and not in `Keys`: whether
+    /// Carbon refused the ⌃⌥N registration because another app already owns the
+    /// chord. Observable so the settings pane can say so, instead of showing an
+    /// ON toggle that does nothing.
+    var panelHotkeyUnavailable = false
+
+    /// Whether a login item in `status` should read as 「打开」.
+    ///
+    /// `.requiresApproval` counts as on: the item *is* registered and waiting
+    /// for the user in System Settings, so showing it as off (and thereby
+    /// unregistering it on the next tap) would fight the user's own request.
+    static func loginItemIsOn(_ status: SMAppService.Status) -> Bool {
+        switch status {
+        case .enabled, .requiresApproval: true
+        case .notRegistered, .notFound: false
+        @unknown default: false
+        }
     }
 
     /// Takes the key case, not a raw string: the case list below is the

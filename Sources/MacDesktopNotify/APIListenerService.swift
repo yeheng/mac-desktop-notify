@@ -153,10 +153,16 @@ final class APIListenerService {
                 return
             }
         }
-        try? FileManager.default.createDirectory(
-            atPath: (socketPath as NSString).deletingLastPathComponent,
-            withIntermediateDirectories: true
-        )
+        do {
+            try FileManager.default.createDirectory(
+                atPath: (socketPath as NSString).deletingLastPathComponent,
+                withIntermediateDirectories: true
+            )
+        } catch {
+            // The bind below will fail without this directory; say why once
+            // instead of reporting only "unix socket 无法监听".
+            Diagnostics.degrade("socket 目录创建失败", error)
+        }
         guard let server = HTTPServer(parameters: HTTPServerTransport.unixSocket(path: socketPath), router: { request in
             await router.handle(request)
         }) else {

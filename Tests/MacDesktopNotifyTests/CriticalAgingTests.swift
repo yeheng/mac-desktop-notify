@@ -18,8 +18,8 @@ final class CriticalAgingTests: SettingsIsolatedTestCase {
 
         m.snoozeCurrentCritical()
 
-        XCTAssertEqual(m.presentation?.remaining, NotificationManager.criticalSnoozeBudget,
-                       "snooze writes a finite budget into the same Presentation")
+        XCTAssertEqual(m.presentation?.remaining, m.presentation?.policy.ageOutBudget,
+                       "snooze writes the table's budget into the same Presentation")
         XCTAssertEqual(m.displayState, .closed, "snooze puts the pill back")
         XCTAssertNotNil(m.dwellDeadline, "the dwell countdown is running again")
     }

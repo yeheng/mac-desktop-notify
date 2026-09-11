@@ -13,7 +13,7 @@ import Observation
 ///
 /// Stored properties cannot live in extensions, so the class body below is
 /// the complete state inventory — including the per-section test seams
-/// (`undoWindow`, `notificationAutoCloseDelay`, `actionHoldIdleLimit`).
+/// (`undoWindow`, `dwellTiming`).
 /// Members drop `private` exactly where a sibling extension file needs
 /// them; the class remains the only writer.
 
@@ -52,6 +52,10 @@ struct Presentation: Equatable, Sendable {
     var item: NotchNotification
     var remaining: Duration?
     var actionsHoldReleased = false
+    /// The lifetime rules this card runs under, resolved from its fields and the
+    /// settings when it became live (`armLiveRules`) - so a card that grows
+    /// actions or turns critical is ruled by its new shape, not its old one.
+    var policy: DwellPolicy
 }
 
 /// What happened to a pushed message. Every outcome implies the message is in
@@ -140,19 +144,15 @@ final class NotificationManager {
     // Section-owned test seams (stored, so they live here rather than with
     // their section's extension file):
 
-    /// +Pointer: how long an informational card may hold the panel when
-    /// nobody engages it. A var so tests can shrink it instead of sleeping
-    /// ten seconds - the `undoWindow` precedent.
-    var notificationAutoCloseDelay: Duration = .seconds(10)
+    /// +Dwell: every duration the lifetime table is built from. One value, so a
+    /// test shortens the window it means instead of poking two `var`s, and the
+    /// production durations live next to each other rather than in three files.
+    var dwellTiming = DwellTiming.standard
     /// +Pointer: §3.1 latch - the pointer has been on the open panel during
     /// this open period. Gates only the leave-collapse rule (§3.1); v4 read
     /// state is explicit and never consults it. Set on the `.hoverBegan`
     /// edge, reset when the panel collapses.
     @ObservationIgnored var panelEntered = false
-    /// +Dwell: releases an actions hold nobody is looking at. A var so tests
-    /// can shrink the window instead of sleeping five minutes - the same
-    /// precedent as `undoWindow`.
-    var actionHoldIdleLimit: Duration = .seconds(300)
     /// +History: drives the panel's undo toast; nil while there is nothing
     /// to undo.
     var deletionNotice: DeletionNotice?

@@ -39,7 +39,7 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
     /// message's own dwell budget - it stays live and starts counting down.
     func testAbandonedActionsMessageAgesOutToNormalDwell() async throws {
         let m = NotificationManager()
-        m.actionHoldIdleLimit = .milliseconds(300)
+        m.dwellTiming.actionHoldIdle = .milliseconds(300)
         m.push(make("approve", timeout: 5, actions: [approveAction]))
 
         try await Task.sleep(for: .seconds(1))          // aging fired at 0.3 s
@@ -53,7 +53,7 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
     /// survive, matching the critical snooze semantics.
     func testAgedOutActionsMessageRetiresIntoHistory() async throws {
         let m = NotificationManager()
-        m.actionHoldIdleLimit = .milliseconds(300)
+        m.dwellTiming.actionHoldIdle = .milliseconds(300)
         m.push(make("approve", timeout: 0.3, actions: [approveAction]))
 
         try await Task.sleep(for: .seconds(2))          // 0.3 s aging + 0.3 s budget
@@ -72,7 +72,7 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
         defer { settings.autoExpandOnMessage = old }
 
         let m = NotificationManager()
-        m.actionHoldIdleLimit = .milliseconds(300)      // must be irrelevant here
+        m.dwellTiming.actionHoldIdle = .milliseconds(300)      // must be irrelevant here
         m.push(make("plain", timeout: 0.3))
 
         try await Task.sleep(for: .seconds(1))
@@ -83,7 +83,7 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
     /// hold must not break) and cancels the aging timer with the presentation.
     func testPerformingActionStillRetiresMessage() async throws {
         let m = NotificationManager()
-        m.actionHoldIdleLimit = .milliseconds(300)
+        m.dwellTiming.actionHoldIdle = .milliseconds(300)
         m.push(make("approve", timeout: 60, actions: [approveAction]))
 
         m.performAction(approveAction, for: m.current!)
@@ -100,7 +100,7 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
     /// 之后再无人调度，消息就永远挂在 pill 上。
     func testSnoozingCriticalWithActionsRearmsTheHoldTimer() async throws {
         let m = NotificationManager()
-        m.actionHoldIdleLimit = .milliseconds(60)
+        m.dwellTiming.actionHoldIdle = .milliseconds(60)
         let critical = NotchNotification(
             title: "审批", bodyMarkdown: "x", urgency: .critical, timeout: nil,
             actions: [approveAction])
@@ -118,7 +118,7 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
     /// 否则 ageOutCriticals / actions-hold 会在时间巧合下静默失效。
     func testHoldReleaseRetriesWhenTheUserIsLooking() async throws {
         let m = NotificationManager()
-        m.actionHoldIdleLimit = .milliseconds(60)
+        m.dwellTiming.actionHoldIdle = .milliseconds(60)
         m.push(make("approve", timeout: 60, actions: [approveAction]))
         m.openMessageCenter()                 // openReason == .click，首次 fire 必然 guard 失败
 

@@ -17,6 +17,14 @@ final class NotificationActionHandler {
     /// working, sockets get it instantly.
     static let ackDidRecord = Notification.Name("MacDesktopNotify.ackDidRecord")
 
+    /// userInfo key: whether the receipt also reached the disk. A `false` here
+    /// means the click happened but no poller will ever see it, which a socket
+    /// subscriber is entitled to know instead of assuming a file exists.
+    ///
+    /// `nonisolated` because the observer that reads it runs inside a `@Sendable`
+    /// NotificationCenter closure, before it hops to the main actor.
+    nonisolated static let ackPersistedKey = "persisted"
+
     /// Nil until the app hands over a store, which keeps tests off the real disk.
     /// Without one, an ack click still broadcasts `ackDidRecord` - the event is
     /// promised regardless of where (or whether) the receipt is persisted.
@@ -63,13 +71,25 @@ final class NotificationActionHandler {
                     ? nil
                     : String(trimmed.prefix(NotificationAckStore.maxCommentLength))
             )
+            // The receipt is the whole point of this click: a poller waits for
+            // the file, a socket subscriber takes the event. They must not be
+            // told different stories, so the event carries whether it reached
+            // the disk instead of assuming it did.
+            var persisted = true
             if let ackWriter {
                 ackWriter(receipt)
             } else if let ackStore {
-                try? ackStore.write(receipt)
+                do {
+                    try ackStore.write(receipt)
+                } catch {
+                    persisted = false
+                    Diagnostics.degrade("动作回执写盘失败（token=\(receipt.token)）", error)
+                }
             }
             NotificationCenter.default.post(
-                name: Self.ackDidRecord, object: nil, userInfo: ["ack": receipt]
+                name: Self.ackDidRecord,
+                object: nil,
+                userInfo: ["ack": receipt, Self.ackPersistedKey: persisted]
             )
         } else if let urlOpener {
             urlOpener(actionURL)

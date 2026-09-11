@@ -20,18 +20,27 @@ final class ShortcutTests: XCTestCase {
         XCTAssertTrue(NSEvent.ModifierFlags.deviceIndependentFlagsMask.contains(.capsLock),
                       "掩码包含 capsLock，正是旧全等比较在 Caps Lock 下失效的原因")
 
-        XCTAssertTrue(SettingsWindowController.isQuitShortcut(event(flags: [.command])))
-        XCTAssertTrue(SettingsWindowController.isQuitShortcut(event(flags: [.command, .capsLock])))
-        XCTAssertTrue(SettingsWindowController.isQuitShortcut(event(flags: [.command, .numericPad])))
+        XCTAssertTrue(WindowShortcuts.isQuitShortcut(event(flags: [.command])))
+        XCTAssertTrue(WindowShortcuts.isQuitShortcut(event(flags: [.command, .capsLock])))
+        XCTAssertTrue(WindowShortcuts.isQuitShortcut(event(flags: [.command, .numericPad])))
     }
 
     func testQuitShortcutRejectsOtherChords() {
-        XCTAssertFalse(SettingsWindowController.isQuitShortcut(event(flags: [.command, .shift])),
+        XCTAssertFalse(WindowShortcuts.isQuitShortcut(event(flags: [.command, .shift])),
                        "⌘⇧Q 是系统注销，必须放行")
-        XCTAssertFalse(SettingsWindowController.isQuitShortcut(event(flags: [.command, .option])))
-        XCTAssertFalse(SettingsWindowController.isQuitShortcut(event(flags: [.command, .control])))
-        XCTAssertFalse(SettingsWindowController.isQuitShortcut(event(flags: [])))
-        XCTAssertFalse(SettingsWindowController.isQuitShortcut(event(flags: [.command], chars: "w")),
-                       "只有 Q 是关闭窗口")
+        XCTAssertFalse(WindowShortcuts.isQuitShortcut(event(flags: [.command, .option])))
+        XCTAssertFalse(WindowShortcuts.isQuitShortcut(event(flags: [.command, .control])))
+        XCTAssertFalse(WindowShortcuts.isQuitShortcut(event(flags: [])))
+        XCTAssertFalse(WindowShortcuts.isQuitShortcut(event(flags: [.command], chars: "w")),
+                       "Q 与 W 是两个不同的键")
+    }
+
+    /// ⌘W 关闭窗口，与 ⌘Q 同一套修饰键规则：⇧⌘W 不能误判。
+    func testCloseShortcutMatchesOnlyPlainCommandW() {
+        XCTAssertTrue(WindowShortcuts.isCloseShortcut(event(flags: [.command], chars: "w")))
+        XCTAssertTrue(WindowShortcuts.isCloseShortcut(event(flags: [.command, .capsLock], chars: "w")))
+        XCTAssertFalse(WindowShortcuts.isCloseShortcut(event(flags: [.command, .shift], chars: "w")))
+        XCTAssertFalse(WindowShortcuts.isCloseShortcut(event(flags: [.command], chars: "q")))
+        XCTAssertFalse(WindowShortcuts.isCloseShortcut(event(flags: [], chars: "w")))
     }
 }

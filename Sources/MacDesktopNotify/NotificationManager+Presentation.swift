@@ -135,24 +135,29 @@ extension NotificationManager {
         settleDisplay(liveMessage: false)
     }
 
-    /// The only way a message becomes live. It publishes the message and its dwell
-    /// budget as one value, then hands the countdown to `reconcileDwell`.
+    /// The only way a message becomes live. It publishes the message and its
+    /// lifetime policy as one value, then hands the countdown to
+    /// `reconcileDwell`.
     private func beginPresenting(_ item: NotchNotification, as state: NotchDisplayState) {
-        presentation = Presentation(item: item, remaining: Self.budget(for: item))
+        presentation = Presentation(item: item, remaining: nil, policy: resolvePolicy(for: item))
         displayState = state
         armLiveRules()
     }
 
-    /// The budget a message runs on. §6/§7: peek degrades to "no auto card,
-    /// Tier 0 only" - the pill dwell is the sender timeout ?? the app's dwell
-    /// setting; no special budget. Criticals block (nil).
-    private static func budget(for item: NotchNotification) -> Duration? {
-        item.urgency == .critical
-            ? nil
-            : .seconds(max(0.1, item.timeout ?? AppSettings.shared.messageDwellSeconds))
+    /// The lifetime table, filled in from this message and the app's settings.
+    /// The single place the state machine learns how long a card lives.
+    func resolvePolicy(for item: NotchNotification) -> DwellPolicy {
+        DwellPolicy.resolve(
+            urgency: item.urgency,
+            hasActions: !item.actions.isEmpty,
+            senderTimeout: item.timeout,
+            dwellSeconds: AppSettings.shared.messageDwellSeconds,
+            ageOutCriticals: AppSettings.shared.ageOutCriticals,
+            timing: dwellTiming
+        )
     }
 
-    /// Re-derives the live message's budget and re-arms every rule from the
+    /// Re-derives the live message's policy and re-arms every rule from the
     /// current `presentation`. The single place those rules are established:
     /// `beginPresenting` (a new message) and `update(id:)` (a script backfill
     /// rewrote the live one) both end here, so a rewritten card cannot keep the
@@ -165,11 +170,10 @@ extension NotificationManager {
         guard var live = presentation else { return }
         stopDwell()
         stopAgingTimers()
-        live.remaining = Self.budget(for: live.item)
+        live.policy = resolvePolicy(for: live.item)
+        live.remaining = live.policy.budget
         presentation = live
-        if live.item.urgency == .critical {
-            armCriticalIdleDemotion()
-        }
+        armCriticalIdleDemotion()
         armActionHoldAging()
         applyDismissRules()
         reconcileDwell()

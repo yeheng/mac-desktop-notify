@@ -28,30 +28,70 @@ extension NotificationManager {
 
     // MARK: - Persistence
 
-    /// Restores history and read state from disk. Called once at launch; a missing
-    /// or unreadable store simply leaves the session empty.
+    /// Restores history and read state from disk. Called once at launch.
+    ///
+    /// A file this build cannot read is **archived**, never treated as "no
+    /// history": the session only adopts a store once the unusable bytes are
+    /// out of the way, so an empty session can never be what replaces them.
     func restoreHistory(using store: NotificationHistoryStore) {
-        historyStore = store
-        guard AppSettings.shared.persistHistory, let snapshot = store.load() else { return }
+        guard AppSettings.shared.persistHistory else {
+            // The setting can be turned back on later in this session, so the
+            // store is adopted even though nothing is read from it now.
+            historyStore = store
+            return
+        }
 
-        messages.restore(items: snapshot.items, read: Set(snapshot.readIDs))
-        // Read state from an older snapshot may name ids that were dropped by
-        // the cap; the prune inside `recomputeUnread` keeps the set honest.
-        recomputeUnread()
+        switch store.load() {
+        case .noHistory:
+            historyStore = store
+        case .loaded(let snapshot):
+            historyStore = store
+            messages.restore(items: snapshot.items, read: Set(snapshot.readIDs))
+            // Read state from an older snapshot may name ids that were dropped by
+            // the cap; the prune inside `recomputeUnread` keeps the set honest.
+            recomputeUnread()
 
-        // Unread messages are the reason to surface anything at launch; if
-        // everything was already read, stay out of the way.
-        if unreadCount > 0, !displaySuppressed {
-            displayState = .closed
-            presentCompact()
+            // Unread messages are the reason to surface anything at launch; if
+            // everything was already read, stay out of the way.
+            if unreadCount > 0, !displaySuppressed {
+                displayState = .closed
+                presentCompact()
+            }
+        case .unreadable:
+            // Adopt a store only if the file could be moved aside. With no
+            // store this session writes nothing at all, which is the only
+            // outcome that cannot cost the user the history it could not read.
+            historyStore = store.quarantine().map { _ in NotificationHistoryStore(fileURL: store.fileURL) }
         }
     }
 
     func schedulePersist() {
         guard historyStore != nil, AppSettings.shared.persistHistory else { return }
         delayed.schedule(.persist, after: Self.persistDebounce) { [weak self] in
-            guard let self, let store = self.historyStore else { return }
-            try? store.save(HistorySnapshot(items: self.messages.history, readIDs: self.messages.readIDs))
+            self?.writeSnapshot()
+        }
+    }
+
+    /// Writes the current history synchronously, before the session ends.
+    ///
+    /// The debounce is a latency optimization, never a durability promise: the
+    /// app can quit or be killed inside its 500 ms window, and losing the last
+    /// message is exactly the case this file exists to prevent. Called from
+    /// `AppDelegate.applicationWillTerminate`.
+    func flushPersist() {
+        delayed.cancel(.persist)
+        writeSnapshot()
+    }
+
+    private func writeSnapshot() {
+        guard let store = historyStore, AppSettings.shared.persistHistory else { return }
+        do {
+            try store.save(HistorySnapshot(items: messages.history, readIDs: messages.readIDs))
+        } catch {
+            // The user believes history is kept; if it is not, that has to leave
+            // a trace. (This is the failure that used to hide behind `try?` and
+            // let a single NaN kill persistence for a whole session.)
+            Diagnostics.degrade("历史写盘失败", error)
         }
     }
 

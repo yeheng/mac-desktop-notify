@@ -2,6 +2,13 @@ import Foundation
 import JavaScriptCore
 import os
 
+/// How much of one script's console output is kept: a bounded tail, never the
+/// whole transcript. `console.log` in a loop used to append without limit and
+/// hand the array straight back to the caller, which made a chatty script an
+/// OOM waiting for a caller to ask for its logs.
+private let scriptLogLineLimit = 200
+private let scriptLogLineLengthLimit = 2000
+
 // MARK: - ScriptValue：JSON 值（严格并发下不用 Any）
 
 /// 引擎层一切出入参的载体。Swift 6 严格并发下 `Any` 不可 Sendable，
@@ -194,10 +201,46 @@ final class ScriptEngine: @unchecked Sendable {
 
     // MARK: 脚本线程（无并发访问，普通 var 即可）
 
+    /// Log caps for one execution. Diagnostics, not a transcript: a script that
+    /// logs in a loop must not be able to grow the heap by gigabytes and then
+    /// have the whole thing serialized back to the caller in one response.
+    /// The tail is what explains a failure, so that is the part kept.
     private final class ThreadBox {
-        var logs: [String] = []
+        private var ring: [String] = []
+        private var nextIndex = 0
+        private(set) var logsTruncated = false
         var error: String?
         var budgetExceeded = false
+
+        /// Keeps only the newest `scriptLogLineLimit` lines, each capped at
+        /// `scriptLogLineLengthLimit` characters, in O(1) per call.
+        func appendLog(_ line: String) {
+            var text = line
+            if text.count > scriptLogLineLengthLimit {
+                text = String(text.prefix(scriptLogLineLengthLimit))
+                logsTruncated = true
+            }
+            if ring.count < scriptLogLineLimit {
+                ring.append(text)
+            } else {
+                ring[nextIndex] = text
+                nextIndex = (nextIndex + 1) % scriptLogLineLimit
+                logsTruncated = true
+            }
+        }
+
+        /// The retained lines, oldest first.
+        var logs: [String] {
+            guard ring.count == scriptLogLineLimit, nextIndex != 0 else { return ring }
+            return Array(ring[nextIndex...]) + Array(ring[..<nextIndex])
+        }
+
+        /// What the caller sees: the tail, plus one marker when anything was
+        /// dropped, so a truncated log is never mistaken for a quiet script.
+        var reportedLogs: [String] {
+            guard logsTruncated else { return logs }
+            return logs + ["…（日志已截断，仅保留最近 \(scriptLogLineLimit) 行）"]
+        }
     }
 
     private func runSync(source: String, input: ScriptValue, deadline: ContinuousClock.Instant) -> ScriptOutcome {
@@ -215,13 +258,13 @@ final class ScriptEngine: @unchecked Sendable {
 
         let wrapped = "(function(input) {\n" + source + "\n})"
         guard let fn = context.evaluateScript(wrapped), fn.isObject else {
-            return ScriptOutcome(result: nil, logs: box.logs, error: box.error ?? "脚本不是合法函数体")
+            return ScriptOutcome(result: nil, logs: box.reportedLogs, error: box.error ?? "脚本不是合法函数体")
         }
         let resultJS = fn.call(withArguments: [toJS(input, context)])
         let error = box.budgetExceeded ? "timeout" : box.error
         return ScriptOutcome(
             result: error == nil ? fromJS(resultJS) : nil,
-            logs: box.logs,
+            logs: box.reportedLogs,
             error: error
         )
     }
@@ -231,7 +274,7 @@ final class ScriptEngine: @unchecked Sendable {
         // 单 NSArray 参数（实测 TypeError）。改为：Swift 块收拼接好的单串，
         // JS 侧 wrapper 用 arguments.join 收拢变参，随即删除全局引用。
         let emit: @convention(block) (String) -> Void = { line in
-            box.logs.append(line)
+            box.appendLog(line)
         }
         context.setObject(emit, forKeyedSubscript: "__consoleLog" as NSString)
         let console = context.evaluateScript(
@@ -409,16 +452,25 @@ final class ScriptRunner {
     }
 
     /// 成功：返回对象里出现的字段覆盖消息（§1 契约），未出现保持原值。
+    ///
+    /// 归一化全部交给 `PushValidator.normalize`：回填曾经是唯一绕过它的写入
+    /// 路径，`{timeout: NaN}` 直接进模型 → `JSONEncoder` 抛错 → 被 `try?`
+    /// 吞掉 → 整个会话不再落盘。脚本门和推送门现在共用同一道闸。
     static func applySuccess(fields: [String: ScriptValue], to message: inout NotchNotification) {
-        if let title = fields["title"]?.stringValue, !title.isEmpty { message.title = String(title.prefix(200)) }
-        if let body = fields["body"]?.stringValue { message.bodyMarkdown = String(body.prefix(PushValidator.maxBodyLength)) }
-        if let urgency = fields["urgency"]?.stringValue, let parsed = UrgencyLevel(rawValue: urgency) {
-            message.urgency = parsed
+        // Only fields the script actually returned may change. Each fallback
+        // reads the model, so an absent key keeps today's value.
+        var title = message.title
+        if let candidate = fields["title"]?.stringValue,
+           !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            title = candidate
         }
-        if let timeout = fields["timeout"]?.doubleValue { message.timeout = timeout }
-        if let group = fields["group"]?.stringValue { message.group = group }
-        if case .array(let items)? = fields["actions"] {
-            let actions = items.compactMap { item -> NotificationAction? in
+        var urgencyRaw = message.urgency.rawValue
+        if let raw = fields["urgency"]?.stringValue, UrgencyLevel(rawValue: raw) != nil {
+            urgencyRaw = raw
+        }
+        let rawActions: [NotificationAction]
+        if case .array(let items) = fields["actions"] {
+            rawActions = items.compactMap { item -> NotificationAction? in
                 guard let dict = item.dictionary,
                       let label = dict["label"]?.stringValue else { return nil }
                 let url = dict["url"]?.stringValue.flatMap(URL.init(string:))
@@ -429,8 +481,24 @@ final class ScriptRunner {
                                           wantsComment: script != nil ? (dict["input"]?.boolValue ?? false) : false,
                                           args: dict["args"])
             }
-            message.actions = PushValidator.normalizedActions(actions)
+        } else {
+            rawActions = message.actions
         }
+
+        let normalized = PushValidator.normalize(
+            title: title,
+            body: fields["body"]?.stringValue ?? message.bodyMarkdown,
+            urgencyRaw: urgencyRaw,
+            timeout: fields["timeout"]?.doubleValue ?? message.timeout,
+            group: fields["group"]?.stringValue ?? message.group,
+            actions: rawActions
+        )
+        message.title = normalized.title
+        message.bodyMarkdown = normalized.body
+        message.urgency = normalized.urgency
+        message.timeout = normalized.timeout
+        message.actions = normalized.actions
+        message.group = normalized.group
     }
 
     /// 失败（决策 #4）：⚠️ 前缀 + 触发上下文 + 日志尾 3 行。Backfill 的上下文是

@@ -264,4 +264,13 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertEqual(response.status, 200, "缺 label 的 action 不得拒绝整条推送")
         XCTAssertEqual(manager.current?.actions.map(\.label), ["保留"])
     }
+
+    /// 编码失败的响应是服务端 bug，不是「空 200」。以前返回 `200 {}`，调用方
+    /// 无法把它和真正的空结果区分开（评审 2026-09-10）。
+    func testUnencodableResponseIs500NotAnEmpty200() {
+        let response = APIResponse.ok(["value": Double.nan])
+
+        XCTAssertEqual(response.status, 500)
+        XCTAssertTrue(String(decoding: response.body, as: UTF8.self).contains("响应编码失败"))
+    }
 }

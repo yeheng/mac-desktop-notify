@@ -1,12 +1,11 @@
 {
-  "originHash" : "e73f1a843b8e2ebe368d69a7f707a42f68698be50d9aca6f1a3dd754b0cf268a",
+  "originHash" : "2501fd94d903d041c47e32d3c1a57d1db689475f0909931194dfde796400f6d5",
   "pins" : [
     {
       "identity" : "dynamicnotchkit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/yeheng/DynamicNotchKit",
       "state" : {
-        "branch" : "main",
         "revision" : "46c2af215639941184b30b277c18bfc3dddba291"
       }
     }

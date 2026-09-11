@@ -136,6 +136,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// The debounced history write is only a latency optimization; quitting
+    /// inside its window would drop the newest message (or the last read-state
+    /// change), which is the one thing persistence exists to prevent.
+    func applicationWillTerminate(_ notification: Notification) {
+        NotificationManager.shared.flushPersist()
+    }
+
     // MARK: - URL ingress
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -148,13 +155,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "push":
             switch URLNotificationParser.parsePushDetailed(url) {
             case .success(let notification):
-                // Sound is the manager's call now (`soundPlayer` fires exactly
-                // when a push turns `.displayed`; withheld and queued stay
-                // silent by the same rule).
-                NotificationManager.shared.push(notification)
-                if notification.script != nil {
-                    Task { await ScriptRunner.shared.backfill(notification: notification) }
-                }
+                // One funnel: push + the script backfill the door would
+                // otherwise have to remember. Sound is the manager's own call
+                // (`soundPlayer` fires exactly when a push turns `.displayed`;
+                // withheld and queued stay silent by the same rule).
+                NotificationIngress.deliver(notification)
             case .failure(let rejection):
                 reportPushRejection(rejection, url: url)
             }
@@ -179,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// malformed URL hold the screen hostage - a self-DoS with extra steps.
     private func reportPushRejection(_ rejection: PushRejection, url: URL) {
         FileHandle.standardError.write(Data("notch-notify: push 被拒绝：\(rejection.description)（\(url.absoluteString)）\n".utf8))
-        NotificationManager.shared.push(
+        NotificationIngress.deliver(
             NotchNotification(
                 title: "推送格式错误",
                 bodyMarkdown: "**\(rejection.description)**\n\n发送方：`\(url.host() ?? "push")`\n\n请检查 URL 参数后重试。",
@@ -222,7 +227,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func syncPanelHotkey() {
         panelHotkey?.unregister()
         panelHotkey = nil
-        guard AppSettings.shared.globalPanelHotkeyEnabled else { return }
+        guard AppSettings.shared.globalPanelHotkeyEnabled else {
+            AppSettings.shared.panelHotkeyUnavailable = false
+            return
+        }
         panelHotkey = SystemHotkey.register(
             keyCode: SystemHotkey.nKeyCode,
             carbonModifiers: SystemHotkey.controlOptionModifiers,
@@ -231,6 +239,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) {
             NotificationManager.shared.togglePanel()
         }
+        // Carbon refuses a chord another app already owns, and the refusal is
+        // otherwise invisible: the toggle would read ON while nothing responds
+        // to the key. Runtime-only state, rendered by Settings → 通知.
+        AppSettings.shared.panelHotkeyUnavailable = panelHotkey == nil
     }
 
     // MARK: - Menu bar

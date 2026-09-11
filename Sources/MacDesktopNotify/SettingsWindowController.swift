@@ -31,39 +31,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         window.isReleasedWhenClosed = false
         self.window = window
-        // LSUIElement 应用没有主菜单，⌘Q 无路由来这里；本地监视器只认这个
-        // 窗口为 key 时的裸 ⌘Q——⌘⇧Q（系统注销）必须放行。
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.window === self.window, Self.isQuitShortcut(event) else { return event }
-            self.window?.performClose(nil)
-            return nil
-        }
+        // LSUIElement means no main menu, so ⌘W/⌘Q need a local monitor.
+        keyMonitor = WindowShortcuts.install(for: window)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func windowWillClose(_ notification: Notification) {
-        if let keyMonitor {
-            NSEvent.removeMonitor(keyMonitor)
-            self.keyMonitor = nil
-        }
+        WindowShortcuts.remove(keyMonitor)
+        keyMonitor = nil
         window = nil
-    }
-
-    /// ⌘Q, tolerating the modifier bits the user cannot avoid: Caps Lock and
-    /// the numeric-pad/function flags are not part of the chord. Anything that
-    /// adds option or control (or drops command) is a different shortcut.
-    /// ⌘⇧Q must fall through to the system's log-out.
-    ///
-    /// The old check compared the whole `deviceIndependentFlagsMask` for
-    /// equality with `[.command]`, which that mask's capsLock/numericPad/
-    /// function bits break — with Caps Lock on, ⌘Q silently did nothing in an
-    /// app that has no main menu to fall back on.
-    static func isQuitShortcut(_ event: NSEvent) -> Bool {
-        let flags = event.modifierFlags
-            .intersection(.deviceIndependentFlagsMask)
-            .subtracting([.capsLock, .numericPad, .function, .help])
-        guard flags == [.command] else { return false }
-        return event.charactersIgnoringModifiers?.lowercased() == "q"
     }
 }
