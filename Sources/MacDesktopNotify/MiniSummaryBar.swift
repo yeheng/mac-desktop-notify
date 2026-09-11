@@ -5,8 +5,9 @@ import SwiftUI
 enum SummaryPresentation: Equatable, Sendable {
     /// The kit's own compact pill, drawn around a physical notch.
     case notchCompact
-    /// A floating mini bar. The kit hides its compact pill on screens without a
-    /// notch, so without this those screens would show nothing at all.
+    /// A floating mini bar. The kit's pill is anchored to the notch rect, which
+    /// it invents as a 300pt-wide island when the screen has none - those
+    /// displays get a bar drawn for them instead.
     case miniBar
     /// Nothing: the summary is switched off for this screen.
     case none
@@ -14,9 +15,9 @@ enum SummaryPresentation: Equatable, Sendable {
 
 /// Decides what "compact" means on a given display.
 ///
-/// Kept free of AppKit so the rule is testable without a window server. It
-/// matters because `DynamicNotch._compact` is a silent no-op on floating
-/// screens: calling it there would look like showing the summary and do nothing.
+/// Kept free of AppKit so the rule is testable without a window server.
+/// `hasNotch` is the kit's own test (`NSScreen.hasNotch`, vendored), the same one
+/// `DynamicNotch` uses, so the app never has to guess what the kit would draw.
 enum SummaryRouting {
     static func compactPresentation(hasNotch: Bool, miniBarEnabled: Bool) -> SummaryPresentation {
         guard !hasNotch else { return .notchCompact }
@@ -34,10 +35,11 @@ private final class MiniSummaryPanel: NSPanel {
 
 /// The summary as a small floating bar, for displays that have no notch.
 ///
-/// Those screens lose the kit's compact pill entirely - `DynamicNotch` hides
-/// compact state on floating-style displays - so an unread count, an urgency
-/// colour and a status line have to be drawn some other way. Same information
-/// as the pill, one window per notchless display.
+/// The kit's pill belongs to a notch: without one it would be drawn around the
+/// 300pt-wide rect the kit invents in its place (`notchFrameWithMenubarAsBackup`).
+/// An unread count, an urgency colour and a status line need a surface those
+/// screens do not have, so they get this bar. Same information as the pill, one
+/// window per notchless display.
 private struct MiniSummaryView: View {
     /// Bounded so a long title cannot stretch the bar across the screen; the
     /// notch pill truncates too, and the panel has the full title.

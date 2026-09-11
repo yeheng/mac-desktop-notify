@@ -159,9 +159,9 @@ final class NotchPresenter: NotchPresenting {
     }
 
     /// Shows this screen's summary: the kit's pill where there is a notch, the
-    /// mini bar where there is not. Asking the kit for `compact` on a floating
-    /// screen is a no-op that looks like success, which is the whole reason this
-    /// branch exists.
+    /// mini bar where there is not. The kit would draw a pill either way - it
+    /// invents a 300pt notch rect on screens that have none - which is why the
+    /// choice is made here instead of being left to it.
     private func showSummary(_ notch: IslandNotch, on screen: NSScreen) async {
         switch SummaryRouting.compactPresentation(
             hasNotch: screen.hasNotch,
@@ -224,16 +224,11 @@ final class NotchPresenter: NotchPresenting {
             // fires on hover exit as well as entry and ignores the app's
             // setting, so the ticks live in `IslandHaptics` instead.
             hoverBehavior: [.increaseShadow],
-            // Not `.auto`. On a display without a notch, `.auto` resolves to the
-            // kit's floating style, which wraps our 720pt panel in a `Capsule`
-            // clip over a translucent `.popover` material. The panel is a
-            // rounded rectangle, so the material shows through as pale wedges
-            // at the four corners, and the capsule's half-height arcs cut the
-            // panel's own corners as well. The notch style draws the same panel
-            // on every display (the kit falls back to a menubar-height notch
-            // rect when the screen has none, which is the rect `IslandGeometry`
-            // already assumes); the compact pill is still not asked of the kit
-            // on notchless screens - `SummaryRouting` draws the mini bar there.
+            // Explicitly `.notch`, not `.auto`. The panel is a 720pt rounded
+            // rectangle laid out for the notch rect; the floating renderer adds
+            // its own padding, insets and a `.popover` material, so `.auto` would
+            // draw a visibly different panel on displays without a notch. What a
+            // screen without one shows instead is `SummaryRouting`'s decision.
             style: .notch(topCornerRadius: 15, bottomCornerRadius: 20)
         ) {
             IslandExpandedView()
