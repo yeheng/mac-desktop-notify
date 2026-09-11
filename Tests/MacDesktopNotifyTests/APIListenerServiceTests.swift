@@ -226,4 +226,51 @@ final class APIListenerServiceTests: SettingsIsolatedTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: path),
                       "存活实例的 socket 文件不得被删除")
     }
+
+    /// Quitting must not leave the socket file behind: `stop()` unlinks the file
+    /// it owns. (NWListener does not create the file in the xctest process, so
+    /// the test stands in for it with a non-live file at the owned path.)
+    func testStopRemovesOwnedSocketFile() async throws {
+        pinAPI(unixSocket: true, http: false, port: 4770)
+        let path = tempSocketPath
+        let service = APIListenerService(socketPath: path)
+        service.restart()
+        let listening = await waitUntil { service.isSocketListening }
+        XCTAssertTrue(listening)
+
+        // Some environments materialize the file when NWListener binds; others
+        // (per the note above) do not. Either way, one exists before stop().
+        if !FileManager.default.fileExists(atPath: path) {
+            try Data().write(to: URL(fileURLWithPath: path))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+
+        service.stop()
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: path),
+            "stop() 必须删除自己拥有的 socket 文件"
+        )
+    }
+
+    /// The mirror image: a file this process never bound must survive `stop()`.
+    func testStopKeepsForeignLiveSocket() async throws {
+        let path = tempSocketPath
+        let fd = makeLiveUnixSocket(at: path)
+        defer {
+            close(fd)
+            try? FileManager.default.removeItem(atPath: path)
+        }
+
+        pinAPI(unixSocket: true, http: false, port: 4770)
+        let service = APIListenerService(socketPath: path)
+        service.restart()
+        _ = await waitUntil { service.socketError != nil }
+        XCTAssertFalse(service.isSocketListening)
+
+        service.stop()
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: path),
+            "不是自己绑定的 socket 文件不能删"
+        )
+    }
 }

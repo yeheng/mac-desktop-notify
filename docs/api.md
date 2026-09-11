@@ -304,6 +304,8 @@ curl --unix-socket /tmp/mdn-api.sock http://localhost/v1/status
 
 路径里的 `http://localhost` 是必需的占位——curl 需要一个 URL 来决定请求行，实际连接走 socket。Host 头为 `localhost`，通过校验。
 
+socket 文件在 app 启动时创建，**退出时删除**（`applicationWillTerminate`）。崩溃留下的旧文件不会阻断下次启动：启动时先探测该路径，没人监听才清理并重新绑定，不会误删另一个实例正在监听的 socket。
+
 ---
 
 ## 5. WebSocket
@@ -542,7 +544,7 @@ curl -s http://127.0.0.1:4770/v1/push -d '{"title":"自检","body":"**ok**"}' | 
 | 消息历史 | `~/Library/Application Support/MacDesktopNotify/history.json` |
 | 动作回执 | `~/Library/Application Support/MacDesktopNotify/acks/<token>.json`（24 小时后自动清理） |
 | 脚本 | `~/Library/Application Support/MacDesktopNotify/scripts/<name>.js` |
-| Unix Socket | `~/Library/Application Support/MacDesktopNotify/api.sock`（0600） |
+| Unix Socket | `~/Library/Application Support/MacDesktopNotify/api.sock`（0600；退出时删除） |
 
 回执文件形状：
 

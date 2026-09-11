@@ -143,6 +143,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// inside its window would drop the newest message (or the last read-state
     /// change), which is the one thing persistence exists to prevent.
     func applicationWillTerminate(_ notification: Notification) {
+        // Stop the listeners so the unix socket file does not outlive the
+        // process. A crash still leaves one behind; the next launch probes and
+        // unlinks it rather than reporting a bogus conflict.
+        APIListenerService.shared.stop()
         NotificationManager.shared.flushPersist()
     }
 

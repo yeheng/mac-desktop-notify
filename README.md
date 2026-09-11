@@ -286,7 +286,7 @@ open 'notch-notify://clear?group=ci-build'
 
 | 传输 | 默认 | 地址 |
 |------|------|------|
-| Unix Socket | 开 | `~/Library/Application Support/MacDesktopNotify/api.sock`（权限 0600） |
+| Unix Socket | 开 | `~/Library/Application Support/MacDesktopNotify/api.sock`（权限 0600，退出时删除） |
 | HTTP | 关（设置中开启） | `http://127.0.0.1:4770` |
 | WebSocket | 随 HTTP 一同开启 | `ws://127.0.0.1:4770/v1/events` |
 

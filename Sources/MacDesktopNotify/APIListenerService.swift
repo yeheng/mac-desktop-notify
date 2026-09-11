@@ -56,10 +56,26 @@ final class APIListenerService {
         httpServer = nil
         httpError = nil
         isHttpListening = false
+        // `socketServer != nil` means this process owns the socket file, so it
+        // is ours to remove. A file we never bound — or failed to bind because
+        // another instance owns it — is not ours to touch.
+        let ownedSocketFile = socketServer != nil
         socketServer?.stop()
         socketServer = nil
         socketError = nil
         isSocketListening = false
+        if ownedSocketFile {
+            removeSocketFile()
+        }
+    }
+
+    /// Removes the unix socket file, so nothing on disk outlives the process
+    /// that owns it. Called only when this process bound the path (see `stop()`),
+    /// so no liveness probe is needed - and probing here would be wrong anyway:
+    /// a listener cancelled a moment ago can still accept a connection, which
+    /// would make the probe call our own file "live" and skip the cleanup.
+    private func removeSocketFile() {
+        try? FileManager.default.removeItem(atPath: socketPath)
     }
 
     private func installUpgrade(on server: HTTPServer, router: APIRouter) {
