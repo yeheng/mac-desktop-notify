@@ -48,6 +48,27 @@ struct NotificationAction: Sendable, Equatable, Codable {
     }
 }
 
+/// Sender-driven status line for the island's compact faces (push 的 `island`
+/// 字段). Every field optional: normalization (`PushValidator.normalizedIsland`)
+/// turns an all-empty island into nil, so a stored value always carries at
+/// least one piece of content. `progress` is guaranteed finite (NaN/Inf are
+/// dropped at the gate, before they can poison a JSONEncoder).
+struct IslandContent: Codable, Equatable, Sendable {
+    /// Status text, trimmed and capped at `PushValidator.maxIslandTextLength`.
+    var text: String?
+    /// Determinate progress, clamped to 0...1.
+    var progress: Double?
+    /// SF Symbol name replacing the urgency glyph (still urgency-tinted).
+    /// An invalid name renders as an empty image - no fallback, no failure.
+    var icon: String?
+
+    init(text: String? = nil, progress: Double? = nil, icon: String? = nil) {
+        self.text = text
+        self.progress = progress
+        self.icon = icon
+    }
+}
+
 extension Notification.Name {
     /// Ask the app delegate to run its modal clear-all confirmation. The
     /// panel's own inline confirmationDialog dies with the panel window when
@@ -86,6 +107,11 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
     /// messages ignore this - they always take the screen. Optional so history
     /// written before this field existed still decodes.
     var displayPeek: Bool?
+    /// Sender-driven island status line (push 的 `island` 字段，仅 HTTP/WS
+    /// 入口；URL Scheme 不载结构化字段）。Optional so history written before
+    /// this field existed still decodes（`displayPeek` 先例，零迁移）.
+    /// 脚本回填不碰它（YAGNI：回填的是报告，进度推送来自推送方）。
+    var island: IslandContent?
 
     init(
         id: UUID = UUID(),
@@ -97,7 +123,8 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         actions: [NotificationAction] = [],
         group: String? = nil,
         script: String? = nil,
-        displayPeek: Bool? = nil
+        displayPeek: Bool? = nil,
+        island: IslandContent? = nil
     ) {
         self.id = id
         self.title = title
@@ -109,6 +136,7 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         self.group = group
         self.script = script
         self.displayPeek = displayPeek
+        self.island = island
     }
 
     /// A non-empty trimmed group, or `nil`. Blank groups never collapse anything.

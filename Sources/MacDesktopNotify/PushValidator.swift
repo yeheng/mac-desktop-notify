@@ -25,6 +25,9 @@ enum PushValidator {
     static let maxActions = 3
     static let maxActionLabelLength = 24
     static let maxGroupLength = 64
+    /// Island status text cap: the mini bar's 240pt @11pt ceiling fits roughly
+    /// this, and the pill measures whatever it gets (`maxGroupLength` precedent).
+    static let maxIslandTextLength = 64
 
     /// Every sender-controlled field of a message, after normalization.
     ///
@@ -135,6 +138,126 @@ enum PushValidator {
         }
     }
 
+    /// A body block as the JSON ingresses decode it (HTTP body, WS frame).
+    /// The `blocks` array is ingress sugar only: it is de-sugared into the
+    /// canonical Markdown string the model already stores, so `bodyMarkdown`
+    /// stays the one body representation — history, search, and the script
+    /// bridge never learn that blocks existed.
+    struct BlockDTO: Decodable {
+        let type: String?
+        let text: String?
+        let level: Int?
+        let items: [String]?
+        let ordered: Bool?
+
+        private enum CodingKeys: String, CodingKey { case type, text, level, items, ordered }
+
+        /// Same tolerance as `ActionDTO`: a missing or wrongly-typed field
+        /// decodes as nil and the entry is dropped later — one bad block
+        /// must not kill the whole push.
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            type = try container.decodeIfPresent(String.self, forKey: .type)
+            text = try container.decodeIfPresent(String.self, forKey: .text)
+            level = try container.decodeIfPresent(Int.self, forKey: .level)
+            items = try container.decodeIfPresent([String].self, forKey: .items)
+            ordered = try container.decodeIfPresent(Bool.self, forKey: .ordered)
+        }
+    }
+
+    /// De-sugar the `blocks` array into the canonical Markdown body. A
+    /// non-empty result wins over the plain `body` field — the sender chose
+    /// structure explicitly. Entries with an unknown type or no content are
+    /// dropped (the actions precedent: a push never fails because of its
+    /// blocks), and the result still flows through `normalize`'s body cap.
+    static func body(fromBlocks blocks: [BlockDTO]?) -> String? {
+        guard let blocks else { return nil }
+        var parts: [String] = []
+        for block in blocks {
+            switch block.type?.trimmingCharacters(in: .whitespaces).lowercased() {
+            case "text":
+                if let text = block.text,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    parts.append(text)
+                }
+            case "code":
+                if var text = block.text,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // JSON multi-line strings often carry a trailing newline;
+                    // in a code fence that would render a blank last line.
+                    while text.hasSuffix("\n") { text.removeLast() }
+                    parts.append("```\n\(text)\n```")
+                }
+            case "heading":
+                if let text = block.text,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let level = min(max(block.level ?? 1, 1), 6)
+                    parts.append(String(repeating: "#", count: level) + " " + text)
+                }
+            case "list":
+                let items = (block.items ?? [])
+                    .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                if !items.isEmpty {
+                    let ordered = block.ordered ?? false
+                    parts.append(items.enumerated().map { index, item in
+                        (ordered ? "\(index + 1). " : "- ") + item
+                    }.joined(separator: "\n"))
+                }
+            default:
+                continue   // Unknown type: dropped, never a rejection.
+            }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
+    }
+
+    /// The `island` object as the JSON ingresses decode it (HTTP body, WS
+    /// frame). Same tolerance as `ActionDTO`/`BlockDTO`, one notch stricter:
+    /// a wrongly-typed field decodes as nil (dropped), never as a decode
+    /// failure of the whole push - truncate, never reject.
+    struct IslandDTO: Decodable {
+        let text: String?
+        let progress: Double?
+        let icon: String?
+
+        private enum CodingKeys: String, CodingKey { case text, progress, icon }
+
+        init(text: String? = nil, progress: Double? = nil, icon: String? = nil) {
+            self.text = text
+            self.progress = progress
+            self.icon = icon
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            // `try? decode` (not decodeIfPresent): missing, null, AND
+            // wrongly-typed all become nil, so one bad field costs only itself.
+            text = try? container.decode(String.self, forKey: .text)
+            progress = try? container.decode(Double.self, forKey: .progress)
+            icon = try? container.decode(String.self, forKey: .icon)
+        }
+    }
+
+    /// DTO → model, the one normalization gate for island content. Text is
+    /// trimmed and capped; progress is clamped to 0...1 with NaN/Inf treated
+    /// as "not provided" (the `clampedTimeout` precedent: a non-finite Double
+    /// poisons every JSONEncoder on the way out); a blank icon is dropped.
+    /// An island whose fields all normalize away becomes nil, so the sender
+    /// cannot blank out the status line with `{}` - nil means "no island",
+    /// and the renderers keep their pre-island behavior for it.
+    static func normalizedIsland(_ dto: IslandDTO?) -> IslandContent? {
+        guard let dto else { return nil }
+        var text = dto.text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let t = text, t.count > maxIslandTextLength {
+            text = String(t.prefix(maxIslandTextLength))
+        }
+        if text?.isEmpty == true { text = nil }
+        let progress = dto.progress.flatMap { $0.isFinite ? min(max($0, 0), 1) : nil }
+        var icon = dto.icon?.trimmingCharacters(in: .whitespaces)
+        if icon?.isEmpty == true { icon = nil }
+        guard text != nil || progress != nil || icon != nil else { return nil }
+        return IslandContent(text: text, progress: progress, icon: icon)
+    }
+
     static func makeNotification(
         title: String,
         body: String?,
@@ -142,7 +265,8 @@ enum PushValidator {
         timeout: Double?,
         group: String?,
         actions: [NotificationAction],
-        script: String? = nil
+        script: String? = nil,
+        island: IslandContent? = nil
     ) -> Result<NotchNotification, PushRejection> {
         var rawTitle = title
         if let script {
@@ -167,7 +291,8 @@ enum PushValidator {
             timeout: fields.timeout,
             actions: fields.actions,
             group: fields.group,
-            script: script
+            script: script,
+            island: island
         ))
     }
 

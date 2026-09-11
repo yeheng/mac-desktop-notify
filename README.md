@@ -79,6 +79,8 @@ swift build -c release
 | `timeout` | `number` | ❌ | 设置值（默认 `5` 秒） | 自动收起秒数，范围 1-60；未传时使用「设置 → 通知」中的停留时长 |
 | `group` | `string` | ❌ | _(无)_ | 分组键，最长 64 字符。同组新消息**顶掉**旧消息（含历史与屏上），适合 CI 等重复任务；空白串视为无分组 |
 | `actions` | `string` | ❌ | _(空)_ | 操作按钮，JSON 数组 `[{"label":"允许","url":"http://..."}]`，最多 3 个。`url` 若为 `notch-notify://ack` 则记录回执而非打开浏览器（见下文） |
+| `blocks` | `array` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：结构化正文块数组，JSON 原生免转义；非空时优先于 `body`（见「本地 API → 推送通知」） |
+| `island` | `object` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：灵动岛状态行 `{"text","progress","icon"}`，驱动刘海 pill / 迷你条 / peek 停留态的紧凑面（见「本地 API → 推送通知」） |
 | `display` | `string` | ❌ | 设置值 | 展示档位：`"peek"` 轻提醒（只在摘要栏停留，不展开面板）/ `"expand"` 正常展开；未传时由「设置 → 通知 → 普通消息使用轻提醒」决定；critical 恒为展开，忽略此参数 |
 
 #### 编码与转义（重要）
@@ -135,7 +137,7 @@ Low 紧急度不播放提示音，适合高频、无需打扰的后台消息。
 
 #### 轻提醒（display=peek）
 
-低价值但需要瞥一眼的消息，可指定 `display=peek`：不展开面板、不抢焦点，只在摘要栏停留。停留时长与普通消息同源——消息自带 `timeout`，未传则用「设置 → 通知」的停留时长（默认 5 秒）。摘要栏本身仍只显示紧急度 glyph 与未读数，标题只出现在通知卡与消息中心：
+低价值但需要瞥一眼的消息，可指定 `display=peek`：不展开面板、不抢焦点，只在摘要栏停留。停留时长与普通消息同源——消息自带 `timeout`，未传则用「设置 → 通知」的停留时长（默认 5 秒）。摘要栏本身只显示紧急度 glyph 与未读数（推送带 `island` 时另显示一行状态文本），标题只出现在通知卡与消息中心：
 
 ```bash
 open 'notch-notify://push?title=Lint 通过&display=peek'
@@ -332,6 +334,63 @@ curl http://127.0.0.1:4770/v1/push \
   -d '{"title":"部署审批","urgency":"critical","actions":[{"label":"允许","url":"notch-notify://ack?token=deploy-42&label=approve"}]}'
 ```
 
+#### 结构化正文（`blocks`）
+
+多行 Markdown 塞进 JSON 字符串是转义地狱：每个换行都是一次 `\n`，人类根本没法维护。本地 API 的 push 支持结构化块数组，JSON 原生表达，入口反糖成规范 Markdown 后与 `body` 走同一条渲染管线——历史、搜索、脚本桥看到的仍是同一个字符串：
+
+```bash
+curl http://127.0.0.1:4770/v1/push -d '{
+  "title": "部署报告",
+  "blocks": [
+    {"type": "heading", "text": "摘要", "level": 2},
+    {"type": "text", "text": "全部通过，无回归"},
+    {"type": "list", "items": ["单测 353/353", "集成 12/12"], "ordered": true},
+    {"type": "code", "text": "exit 0"}
+  ],
+  "timeout": 10
+}'
+```
+
+| 块类型 | 字段 | 反糖结果 |
+|--------|------|----------|
+| `heading` | `text` + `level`（1-6，越界钳制） | `## text` |
+| `text` | `text` | 原样文本 |
+| `list` | `items` + `ordered`（默认 `false`） | `- item` / `1. item` 逐行 |
+| `code` | `text` | ` ```\ncode\n``` ` 围栏 |
+
+规则：
+
+- `blocks` 非空时**优先于** `body`——发送方显式选择了结构化。
+- 未知 `type` 或空内容的条目**静默丢弃**，不拒绝整条推送（与 `actions` 同一哲学：truncate, never reject）。
+- 反糖总量仍受 5000 字符上限约束。
+- URL Scheme 不支持 `blocks`（query 参数不是结构化 JSON 的载体）；WebSocket push 帧与 HTTP body 规则相同。
+
+#### 灵动岛状态行（`island`）
+
+推送可携带结构化 `island` 字段，让摘要面（刘海 pill / 无刘海屏迷你条 / `display=peek` 停留态）直接显示一行发送方驱动的状态，而不只是「新消息」：
+
+```bash
+curl http://127.0.0.1:4770/v1/push -d '{
+  "title": "部署",
+  "blocks": [{"type": "code", "text": "exit 0"}],
+  "island": {"text": "构建中 42%", "progress": 0.42, "icon": "hammer.fill"},
+  "group": "ci"
+}'
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `text` | `string` | 状态行文本，trim、最长 64 字符。刘海 pill 在 glyph 旁显示（单行）；迷你条与展开面板头部的状态行直接采用 |
+| `progress` | `number` | 0-1 的确定进度，越界钳制、NaN/Inf 丢弃；迷你条在胶囊底边画一条 2pt 进度细条 |
+| `icon` | `string` | SF Symbol 名，替换紧急度 glyph（仍染紧急度色）；无效名渲染为空 |
+
+规则：
+
+- 整体缺失或全部字段为空 → 视为无 `island`，三个摘要面的渲染与接入前完全一致。
+- 未知字段忽略；单字段类型错误只丢弃该字段，不拒绝整条推送（与 `actions`/`blocks` 同一哲学）。
+- 配合 `group` 顶替即是进度刷新：CI 周期推同一 `group=ci`，岛上 42% → 60%，消息不堆叠。
+- URL Scheme 不支持 `island`（同 `blocks`：query 不是结构化 JSON 的载体）；脚本桥 `notify.push` 与脚本回填不合并 `island`。
+
 ### 历史与状态
 
 ```bash
@@ -393,10 +452,10 @@ curl http://127.0.0.1:4770/v1/status
 | 行内代码 | `` `code` `` |
 | 代码块 | ` ```\ncode\n``` ` |
 | 链接 | `[text](url)` |
-| 标题 | `## Heading` |
-| 列表 | `- item` / `1. item` |
+| 标题 | `## Heading`（1-6 级，独立槽位渲染） |
+| 列表 | `- item` / `1. item`（独立槽位渲染） |
 
-代码块以独立卡片样式渲染，其余内容作行内 Markdown 渲染。
+代码块以独立卡片样式渲染，标题与列表各占一个原生槽位（加粗加大 / bullet 编号行），其余内容作行内 Markdown 渲染。
 
 ---
 
@@ -514,7 +573,7 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 | 点击历史行 | 就地展开/收起正文与操作按钮（手风琴，开合间保留）；展开即标为已读 |
 | 面板内管理 | 面板只读：删除/标读/撤销/搜索请用右键「历史信息…」独立历史窗口 |
 | 面板头部 | 「全部已读」「更多操作」菜单、关闭按钮、触感反馈保留 |
-| 刘海 pill | 环境态：紧急度色 glyph + `×N` 未读徽章（N>1）；标题只出现在通知卡与消息中心 |
+| 刘海 pill | 环境态：紧急度色 glyph + `×N` 未读徽章（N>1）；推送带 `island` 时 glyph（或发送方 icon）旁显示一行状态文本；标题只出现在通知卡与消息中心 |
 | 设置 / 历史信息 / 引导窗口 | `⌘W` 关闭该窗口，`⌘Q` 退出应用。本应用是无主菜单的 accessory，这两个键由窗口自己的本地监视器提供 |
 
 **未读语义：** 消息只有两种归宿——未读 或 历史（已读）。没点开就是没点开：超时退下、被新推送顶替、悬停看过、自动弹出，都不会把消息变成历史；只有用户点开（点击打开面板读当前消息、展开某一行、点击消息上的操作按钮）才算历史。历史窗口徽章与之一致：正在显示 / 未读 / 历史。
@@ -535,7 +594,7 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 - Swift 6.0+（使用严格并发检查）
 - Xcode 16.0+（用于构建）
 
-> **注意：** 无物理刘海的 Mac（如 iMac、Mac mini）会自动降级为浮动窗口样式；摘要态以屏幕顶部居中的迷你摘要条呈现（紧急度、标题、未读数，可在「设置 → 通用 → 显示器」关闭）。
+> **注意：** 无物理刘海的 Mac（如 iMac、Mac mini）会自动降级为浮动窗口样式；摘要态以屏幕顶部居中的迷你摘要条呈现（紧急度、状态行——`island` 文本优先——与未读数，`island.progress` 另加一条底边进度细条，可在「设置 → 通用 → 显示器」关闭）。
 
 ---
 

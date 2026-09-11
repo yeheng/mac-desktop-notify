@@ -65,6 +65,8 @@ final class APIRouter: Sendable {
         let timeout: Double?
         let group: String?
         let actions: [PushValidator.ActionDTO]?
+        let blocks: [PushValidator.BlockDTO]?
+        let island: PushValidator.IslandDTO?
         let script: String?
     }
 
@@ -84,10 +86,12 @@ final class APIRouter: Sendable {
             return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
         }
         let actions = PushValidator.actions(from: dto.actions ?? [])
+        // blocks wins when non-empty: the sender chose structure explicitly.
+        let bodyText = PushValidator.body(fromBlocks: dto.blocks) ?? dto.body
         switch PushValidator.makeNotification(
-            title: dto.title ?? "", body: dto.body, urgencyRaw: dto.urgency,
+            title: dto.title ?? "", body: bodyText, urgencyRaw: dto.urgency,
             timeout: dto.timeout, group: dto.group, actions: actions,
-            script: dto.script
+            script: dto.script, island: PushValidator.normalizedIsland(dto.island)
         ) {
         case .success(let notification):
             // Only jump to MainActor when calling manager. The funnel owns the
@@ -203,9 +207,6 @@ final class APIRouter: Sendable {
 
     // MARK: - WebSocket command frames
 
-    /// One DTO for every op: `op`/`ref` are the WS envelope, the rest is the
-    /// push/clear payload. Decodable ignores unknown keys, so push fields
-    /// ride along in the same decode — no strip-and-reencode pass needed.
     private struct WSCommandDTO: Decodable {
         let op: String
         let ref: String?
@@ -215,6 +216,8 @@ final class APIRouter: Sendable {
         let timeout: Double?
         let group: String?
         let actions: [PushValidator.ActionDTO]?
+        let blocks: [PushValidator.BlockDTO]?
+        let island: PushValidator.IslandDTO?
         let script: String?
         let input: ScriptValue?
         let timeoutMs: Int?
@@ -256,12 +259,13 @@ final class APIRouter: Sendable {
             // is the same validation the HTTP endpoint runs — one decode,
             // where the old path decoded (WSCommandDTO), re-parsed
             // (JSONSerialization), re-encoded, and decoded again (PushDTO):
-            // four JSON passes per frame for a problem Decodable never had.
             let actions = PushValidator.actions(from: dto.actions ?? [])
+            // blocks wins when non-empty: the sender chose structure explicitly.
+            let bodyText = PushValidator.body(fromBlocks: dto.blocks) ?? dto.body
             switch PushValidator.makeNotification(
-                title: dto.title ?? "", body: dto.body, urgencyRaw: dto.urgency,
+                title: dto.title ?? "", body: bodyText, urgencyRaw: dto.urgency,
                 timeout: dto.timeout, group: dto.group, actions: actions,
-                script: dto.script
+                script: dto.script, island: PushValidator.normalizedIsland(dto.island)
             ) {
             case .success(let notification):
                 let outcome = await MainActor.run { NotificationIngress.deliver(notification, to: manager) }

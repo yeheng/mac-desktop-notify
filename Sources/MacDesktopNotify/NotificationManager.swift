@@ -88,6 +88,12 @@ final class NotificationManager {
     /// views (the status item icon redraws from this).
     static let unreadCountDidChange = Notification.Name("MacDesktopNotify.unreadCountDidChange")
 
+    /// Posted by the mini bar's view when its status line changes without an
+    /// unread-count change alongside (an island text update via group
+    /// replacement) - the bar's window frame is derived from the content's
+    /// fitting size, so it must relayout or the new text clips.
+    static let compactStatusDidChange = Notification.Name("MacDesktopNotify.compactStatusDidChange")
+
     /// Writes are debounced so a burst of pushes costs one save, not one per message.
     static let persistDebounce: Duration = .milliseconds(500)
 
@@ -195,8 +201,13 @@ final class NotificationManager {
         messages.pastHistory(current: current)
     }
 
+    /// The one island-aware status accessor: a live message carrying island
+    /// text shows it verbatim; everything else keeps the pre-island wording.
+    /// The mini bar and the panel header both read this, so they follow
+    /// automatically (`display=peek` included - that is island's main stage).
     var compactStatus: String {
         if let current {
+            if let text = current.island?.text { return text }
             return current.urgency == .critical ? "需要注意" : "新消息"
         }
         return unreadCount > 0 ? "\(unreadCount) 条未读" : ""

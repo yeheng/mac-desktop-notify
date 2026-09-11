@@ -250,4 +250,27 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
         XCTAssertEqual(action.label, "")
         XCTAssertEqual(action.url?.host, "x.test")
     }
+
+    /// island 是可选键：老版本写出的快照没有它，解码必须照常成功、
+    /// 字段为 nil（displayPeek 先例，零迁移）。
+    func testSnapshotWithoutIslandKeyStillDecodes() throws {
+        let json = Data(#"{"schemaVersion":1,"items":[{"id":"00000000-0000-0000-0000-000000000001","title":"旧消息","bodyMarkdown":"正文","urgency":"normal","timestamp":750000000,"actions":[]}],"readIDs":[]}"#.utf8)
+        let snapshot = try JSONDecoder().decode(HistorySnapshot.self, from: json)
+        XCTAssertEqual(snapshot.items.count, 1)
+        XCTAssertEqual(snapshot.items[0].title, "旧消息")
+        XCTAssertNil(snapshot.items[0].island)
+    }
+
+    /// island 随快照落盘并原样读回——进度推进到 100% 的消息重启后不应失忆。
+    func testIslandRoundTripsThroughDisk() throws {
+        let store = makeStore()
+        let item = NotchNotification(
+            title: "构建完成", bodyMarkdown: "", urgency: .normal, timeout: nil,
+            island: IslandContent(text: "构建中 100%", progress: 1, icon: "hammer.fill"))
+
+        try store.save(HistorySnapshot(items: [item], readIDs: []))
+        let loaded = try XCTUnwrap(snapshot(from: store))
+
+        XCTAssertEqual(loaded.items.first?.island, item.island)
+    }
 }

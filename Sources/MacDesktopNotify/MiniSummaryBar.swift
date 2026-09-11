@@ -51,10 +51,19 @@ private struct MiniSummaryView: View {
     var body: some View {
         HStack(spacing: 6) {
             if settings.showUrgency {
-                Circle()
-                    .fill(manager.displayUrgency?.color ?? .blue)
-                    .frame(width: 6, height: 6)
-                    .accessibilityHidden(true)
+                // An island icon replaces the urgency dot but keeps its tint;
+                // an invalid SF Symbol name renders empty, by design.
+                if let icon = manager.current?.island?.icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(manager.displayUrgency?.color ?? .blue)
+                        .accessibilityHidden(true)
+                } else {
+                    Circle()
+                        .fill(manager.displayUrgency?.color ?? .blue)
+                        .frame(width: 6, height: 6)
+                        .accessibilityHidden(true)
+                }
             }
             Text(summary)
                 .lineLimit(1)
@@ -73,12 +82,35 @@ private struct MiniSummaryView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(.black.opacity(0.72), in: Capsule())
+        .overlay(alignment: .bottom) {
+            // Determinate progress as a 2pt strip along the capsule's bottom
+            // edge (already clamped to 0...1 at the ingress gate).
+            if let progress = manager.current?.island?.progress {
+                GeometryReader { geo in
+                    Capsule()
+                        .fill(manager.displayUrgency?.color ?? .blue)
+                        .frame(width: geo.size.width * progress, height: 2)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                }
+                .frame(height: 2)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 1)
+                .accessibilityHidden(true)
+            }
+        }
         .fixedSize()
         .contentShape(Capsule())
         // Clicking opens the panel, exactly as clicking the pill does. Hovering
         // needs no handling here: the bar sits inside the activation zone the
         // pointer monitor already watches, so hover-expand works unchanged.
         .onTapGesture { manager.islandClicked() }
+        // Island text changes arrive with a group replacement, which can leave
+        // the unread count untouched - and the window frame only re-derives on
+        // unreadCountDidChange. Announce the text change so the bar relayouts
+        // instead of clipping the new status line.
+        .onChange(of: manager.compactStatus) { _, _ in
+            NotificationCenter.default.post(name: NotificationManager.compactStatusDidChange, object: nil)
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("通知：\(summary)")
         .modifier(IslandContextMenu(expanded: false))
@@ -97,6 +129,7 @@ private struct MiniSummaryView: View {
 final class MiniSummaryBars {
     private var windows: [CGDirectDisplayID: NSWindow] = [:]
     private var unreadObserver: NSObjectProtocol?
+    private var statusObserver: NSObjectProtocol?
 
     /// Which displays currently show a bar. Exposed so the routing rule can be
     /// asserted without a window server standing behind it.
@@ -105,11 +138,19 @@ final class MiniSummaryBars {
     init() {
         // The window frame is derived from the SwiftUI content's fitting size,
         // so anything that changes the content — an unread badge appearing,
-        // the count growing — has to re-run layout. Nothing else does: unread
-        // changes trigger no presentation transition, so without this observer
-        // the bar keeps its old width and clips the badge.
+        // the count growing, the island status text changing — has to re-run
+        // layout. Nothing else does: unread changes trigger no presentation
+        // transition, so without this observer the bar keeps its old width
+        // and clips the badge.
         unreadObserver = NotificationCenter.default.addObserver(
             forName: NotificationManager.unreadCountDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.relayoutVisible() }
+        }
+        statusObserver = NotificationCenter.default.addObserver(
+            forName: NotificationManager.compactStatusDidChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in

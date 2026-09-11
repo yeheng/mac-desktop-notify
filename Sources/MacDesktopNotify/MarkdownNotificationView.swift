@@ -146,12 +146,23 @@ struct CompactIslandView: View {
         Group {
             switch side {
             case .leading:
-                // Tier 0 ambient: urgency glyph only - titles live on the card
-                // and in the message center, never in the pill (§6).
-                Image(systemName: manager.displayUrgency?.symbolName ?? "sparkles")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(settings.showUrgency ? (manager.displayUrgency?.color ?? .blue) : Color.secondary)
-                    .accessibilityHidden(true)
+                // Tier 1 when the live message carries island content: the
+                // sender's icon (replacing the urgency glyph, still tinted)
+                // plus one line of status text. No island → Tier 0 ambient:
+                // urgency glyph only - titles live on the card and in the
+                // message center, never in the pill (§6).
+                HStack(spacing: 4) {
+                    Image(systemName: manager.current?.island?.icon
+                          ?? manager.displayUrgency?.symbolName ?? "sparkles")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(settings.showUrgency ? (manager.displayUrgency?.color ?? .blue) : Color.secondary)
+                        .accessibilityHidden(true)
+                    if let text = manager.current?.island?.text {
+                        Text(text)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                }
             case .trailing:
                 // ×N unread badge, N > 1 (Open Island style); the glyph alone
                 // already says "something" when there is exactly one.
@@ -633,15 +644,23 @@ private struct HistoryRow: View {
     /// Collapsed preview renders inline Markdown instead of showing raw source
     /// asterisks. Fenced code blocks are skipped entirely: log dumps read as
     /// noise two lines at a time, and their ``` markers would leak into the
-    /// preview as literal backticks. A message with no prose (or no body at
-    /// all) shows no preview rather than a placeholder like "无正文".
+    /// preview as literal backticks. Headings and list items are kept — they
+    /// are content like any prose, only code is noise. A message with no
+    /// extractable text (or no body at all) shows no preview rather than a
+    /// placeholder like "无正文".
     private var previewText: AttributedString? {
         guard !notification.bodyMarkdown.isEmpty else { return nil }
         // The same fence definition `parse` splits on (MarkdownRenderer.segments):
         // a block skipped here is exactly a block rendered as a code card there.
         let flat = MarkdownRenderer.segments(in: notification.bodyMarkdown)
-            .compactMap { if case .prose(let lines) = $0 { return lines } else { return nil } }
-            .flatMap { $0 }
+            .flatMap { segment -> [String] in
+                switch segment {
+                case .prose(let lines): return lines
+                case .heading(let text, level: _): return [text]
+                case .list(let items, ordered: _): return items
+                case .code: return []
+                }
+            }
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
@@ -691,6 +710,7 @@ private struct NotificationBodyView: View {
             style: MarkdownBlocksStyle(
                 proseFont: .system(size: settings.contentFontSize, design: .rounded),
                 codeFont: .system(size: settings.contentFontSize, design: .monospaced),
+                headingFont: .system(size: settings.contentFontSize + 2, weight: .semibold, design: .rounded),
                 proseColor: .white.opacity(0.9),
                 codeColor: .white.opacity(0.88),
                 codeBackground: .white.opacity(0.07)

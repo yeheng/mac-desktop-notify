@@ -325,6 +325,7 @@ private struct HistoryWindowBody: View {
             style: MarkdownBlocksStyle(
                 proseFont: .system(size: 12),
                 codeFont: .system(size: 11, design: .monospaced),
+                headingFont: .system(size: 14, weight: .semibold),
                 proseColor: .primary,
                 codeColor: .primary,
                 codeBackground: Color.primary.opacity(0.06)
