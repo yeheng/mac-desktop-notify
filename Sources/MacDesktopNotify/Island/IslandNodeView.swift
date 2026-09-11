@@ -38,13 +38,14 @@ struct IslandNodeView: View {
         case .zstack(let alignment):
             ZStack(alignment: (alignment ?? .center).alignment) { children }
 
-        case .text(let value, let size, let weight, let design, let tint, let lineLimit):
+        case .text(let value, let size, let weight, let design, let tint, let lineLimit, let fontFamily):
             if let string = bindings.text(value) {
                 Text(string)
                     .font(theme.font(
                         size: size ?? 11,
                         weight: (weight ?? .regular).weight,
-                        design: (design ?? theme.fontDesign).design
+                        design: (design ?? theme.fontDesign).design,
+                        family: fontFamily
                     ))
                     .foregroundStyle(tint.flatMap { bindings.color($0, tokens: theme, scheme: scheme) } ?? theme.textPrimary)
                     .lineLimit(lineLimit)

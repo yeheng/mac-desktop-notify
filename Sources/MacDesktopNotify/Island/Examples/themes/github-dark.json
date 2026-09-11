@@ -1,0 +1,29 @@
+{
+  "name": "github-dark",
+  "tokens": {
+    "panelFill": "#0D1117",
+    "panelBorder": "#30363D",
+    "divider": "#21262D",
+    "textPrimary": "#E6EDF3",
+    "textSubtle": "#8B949E",
+    "textTimestamp": "#6E7681",
+    "cardFill": "#161B22",
+    "cardFillHover": "#1C2128",
+    "historyRowFill": "#00000000",
+    "historyRowFillHover": "#B1BAC41F",
+    "miniBarFill": "#0D1117F2",
+    "badgeFill": "#30363D",
+    "accent": "#58A6FF",
+    "critical": "#F85149",
+    "panelRadius": 12,
+    "cardRadius": 6,
+    "historyRowRadius": 6,
+    "paddingPanel": 16,
+    "paddingCard": 12,
+    "fontDesign": "default",
+    "fontScale": 1.0,
+    "monoDigits": true,
+    "panelMaterial": "solid",
+    "motionScale": 1.0
+  }
+}

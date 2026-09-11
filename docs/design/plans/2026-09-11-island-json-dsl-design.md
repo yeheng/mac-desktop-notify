@@ -74,11 +74,15 @@ Linus 三问：
 
 ```
 ~/Library/Application Support/MacDesktopNotify/
-  island.json            # 布局文档；存在且可解析即生效
+  island.json            # 布局（旧位置，「自动」时使用）
+  layouts/
+    classic.json         # 具名布局；文件名即布局 ID
   themes/
     default.json         # 缺失 = 内置默认（等于今天的字面量）
     midnight.json
 ```
+
+布局与主题都在「设置 → 外观」的下拉里选，选择持久化在 `AppSettings`。
 
 路径复用既有约定（`ScriptStore` / `NotificationHistoryStore` / `NotificationAckStore`
 均用 `applicationSupportDirectory/MacDesktopNotify`）。
@@ -137,7 +141,7 @@ Linus 三问：
 | `type` | 键 | 说明 |
 |---|---|---|
 | `vstack` / `hstack` / `zstack` | `spacing`, `alignment`, `children` | 容器 |
-| `text` | `value`(绑定/字面串), `size`, `weight`, `design`, `tint`, `lineLimit` | 文本 |
+| `text` | `value`(绑定/字面串), `size`, `weight`, `design`, `tint`, `lineLimit`, `fontFamily` | 文本；`fontFamily` 是节点级字体覆盖（Nerd Font 图标用这里） |
 | `image` | `system`(SF Symbol，可为绑定), `size`, `weight`, `tint` | 图标；默认 `accessibilityHidden(true)` |
 | `dot` | `size`, `fill` | 紧急度圆点 |
 | `badge` | `value`(Int 绑定), **`format` 必填**（`"timesN"` = `×N`；`"count"` = 裸数字）, `fill`, `clip` | `×N` / 计数胶囊；compact 面用 `timesN`（`:170`），miniBar 用 `count`（`:72`） |
@@ -256,6 +260,8 @@ a11y:       { label, hidden }
 | `paddingPanel` | 16 | `:238` / `:408` |
 | `paddingCard` | 12 | `:493` |
 | `fontDesign` | `rounded` | **仅**作用于今天已显式 `.rounded` 的壳层字体（`:177` / `:296` 等）；今天未写 design 的站点（`:477` / `:619` / `:769`）保持 `.default`，不受该 token 影响 |
+| `fontFamily` | 无 | 自定义字体族（家族名或 PostScript 名），如 `"JetBrainsMono Nerd Font"`；未安装则回退系统字体并给诊断。优先于 `fontDesign` |
+| `monoFontFamily` | 无 | 等宽文本（代码块）的字体族；不写则系统等宽 |
 | `fontScale` | 1.0 | 新增乘数；经唯一入口 `theme.font(size:weight:design:)` 作用于**全部**壳层字号（唯一乘法，不散落） |
 | `monoDigits` | `true` | `monospacedDigit()` 判例 `:172` |
 | `panelMaterial` | `solid` | `solid` = 刘海面板纯黑（`:260`）；`popover` 仅历史窗口场景可用，且需 app 侧自写 `NSVisualEffectView` 包装（kit 的 `VisualEffectView` 是 internal，app 拿不到）。`NotchlessView.swift:30` 是死路径：`makeNotch()` 强制 `.notch`（`NotchPresenter.swift:232`），无刘海屏走 miniBar，不经过它 |
@@ -346,7 +352,7 @@ ScrollView 吃剩余空间；内置路径保留常量 75，像素零差异（T5�
   在「设置 → 外观」显示，附"打开配置文件夹"按钮。
 - 重载：`DispatchSource` watch `themes/` 与 `island.json`（仓库当前无任何 watcher，
   这是新增的 ~40 行）。没有它，作者循环 = 改文件 → 退出 app → 重开，LSUIElement 应用下不可接受。
-- 新增 `AppSettings.Keys`：`island.themeID`（默认 `"default"`）。`resetAllForTesting`
+- 新增 `AppSettings.Keys`：`island.themeID`（默认 `"default"`）、`island.layoutID`（默认 `"auto"` = 旧位置的 `island.json`，`"default"` = 内置，其余 = `layouts/<id>.json`）。`resetAllForTesting`
   走 `Keys.allCases`，自动覆盖。
 
 ---

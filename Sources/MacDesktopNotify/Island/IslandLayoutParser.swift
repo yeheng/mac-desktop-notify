@@ -162,7 +162,8 @@ private struct Walker {
                 weight: fontWeight(dict["weight"], path: "\(path).weight"),
                 design: fontDesign(dict["design"], path: "\(path).design"),
                 tint: color(dict["tint"], path: "\(path).tint"),
-                lineLimit: integer(dict["lineLimit"], path: "\(path).lineLimit", range: 1...50)
+                lineLimit: integer(dict["lineLimit"], path: "\(path).lineLimit", range: 1...50),
+                fontFamily: string(dict["fontFamily"], path: "\(path).fontFamily")
             ), modifiers: modifiers, children: [])
 
         case "image":
@@ -439,6 +440,16 @@ private struct Walker {
             return nil
         }
         return design
+    }
+
+    /// A plain bounded string, used for font family names.
+    private mutating func string(_ raw: Any?, path: String) -> String? {
+        guard let raw else { return nil }
+        guard let value = raw as? String else {
+            report(path, "必须是字符串")
+            return nil
+        }
+        return Self.bounded(value)
     }
 
     private mutating func alignment(_ raw: Any?, path: String) -> IslandAlignment? {

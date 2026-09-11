@@ -43,25 +43,28 @@ NotchNotify 的灵动岛**外壳**（刘海 pill 两面、展开面板、无刘�
 
 ```
 ~/Library/Application Support/MacDesktopNotify/
-├── island.json              # 布局；存在且可解析即按 surface 生效
+├── island.json              # 旧位置的布局（「自动」时使用）
+├── layouts/
+│   ├── classic.json         # 具名布局；文件名即布局 ID
+│   └── github.json
 └── themes/
-    ├── midnight.json        # 主题；文件名即主题 ID
+    ├── midnight.json        # 具名主题；文件名即主题 ID
     └── solar.json
 ```
 
-这两个路径与脚本、历史、回执同目录（`ScriptStore` / `NotificationHistoryStore` / `NotificationAckStore` 用的同一个 Application Support 目录）。`themes/` 会在 app 启动时自动创建。
+这两个目录与脚本、历史、回执同目录（`ScriptStore` / `NotificationHistoryStore` / `NotificationAckStore` 用的同一个 Application Support 目录）。`themes/` 与 `layouts/` 会在 app 启动时自动创建。
 
-「设置 → 外观」里有 **「打开配置文件夹」** 按钮直达；同页还有主题选择器、`expanded` 布局预览和解析诊断。
+「设置 → 外观」里有 **「打开配置文件夹」** 按钮直达；同页还有主题选择器、布局选择器、`expanded` 布局预览和解析诊断。
 
 ### 三条不变量
 
-1. **无文件 = 内置**。没有 `island.json`、没有主题文件时，渲染的就是编译期同一段 Swift 视图代码，像素与没有这个功能时一致。
+1. **无文件 = 内置**。没有选中任何自定义布局/主题时，渲染的就是编译期同一段 Swift 视图代码，像素与没有这个功能时一致。
 2. **逐面回退**。布局的四个面彼此独立：`expanded` 写坏了，pill 和 miniBar 不受影响。某个面回退时用内置视图，**绝不出现空白岛**。
-3. **删除即回退**。删掉 `island.json` 四个面一起回内置；主题选中项被删掉时立即回默认。
+3. **删除即回退**。删掉当前选中的布局文件（或选「内置」）四个面一起回内置；主题选中项被删掉时立即回默认。
 
 ### 热重载
 
-app 监听 `themes/` 目录和 Application Support 目录，文件变化后约 **200ms**（去抖）自动重新解析。改文件不需要退出重开 —— 这是刻意做的，LSUIElement 应用没有"退出重开"这种作者循环。
+app 监听 `themes/`、`layouts/` 与 Application Support 目录，文件变化后约 **200ms**（去抖）自动重新解析。改文件不需要退出重开 —— 这是刻意做的，LSUIElement 应用没有"退出重开"这种作者循环。下拉选项也会随文件的增删即时更新。
 
 编辑器原子保存（先写临时文件再 rename）也能被捕获：监听的是**目录**而不是文件描述符，rename 不会让监听失效。
 
@@ -106,6 +109,39 @@ app 监听 `themes/` 目录和 Application Support 目录，文件变化后约 *
 > 不建议用 `defaults write com.yeheng.macdesktopnotify island.themeID midnight` 切：运行中的进程缓存了这个值，不会热更新，要重启才读到。用设置里的下拉即可。
 >
 > 主题是**全局**的：四个面 + 刘海 pill + 迷你条共用一份。布局才是 per-surface。
+
+### 2.4 自定义字体与 Nerd Font
+
+`fontDesign` 只能在 4 个系统 design 里选。要换**字体族**（比如 Nerd Font），用两个 token：
+
+| token | 说明 |
+|---|---|
+| `fontFamily` | 外壳比例文本的字体族（不写 = 系统字体）。例：`"JetBrainsMono Nerd Font"` |
+| `monoFontFamily` | 等宽文本（代码块）的字体族。不写则用系统等宽 |
+
+```json
+{ "name": "nerd-font", "tokens": {
+  "fontFamily": "JetBrainsMono Nerd Font",
+  "monoFontFamily": "JetBrainsMono Nerd Font Mono"
+}}
+```
+
+- 自定义字体族**优先于 `fontDesign`**（自带字体没有 `Font.Design` 可选）。`design: "monospaced"` 的站点优先用 `monoFontFamily`，所以设了 `fontFamily` 不会让代码块偷偷变成比例字体。
+- 字体名可以是**家族名**或 **PostScript 名**（两者都会查）。
+- **未安装的字体**会在主题加载时被剔除并回退系统字体，同时在「设置 → 外观」给出诊断 —— 不会静默变成别的字形。
+
+**Nerd Font 图标怎么用**：Nerd Font 的图标是字体里的字形（PUA），不是 SF Symbol，所以用 `text` 节点 + 字形，而不是 `image` 节点：
+
+```json
+{ "type": "text", "value": "\uf09b", "size": 12, "weight": "bold",
+  "tint": "$urgency", "fontFamily": "JetBrainsMono Nerd Font" }
+```
+
+- `\uf09b` 是 GitHub 图标的码位（JSON 的 `\uXXXX` 转义，解析后就是那个字形）。
+- `text` 上的 `fontFamily` 是**节点级覆盖**：主题用系统字体、只有图标用 Nerd Font 时这样写；若主题已设 `fontFamily`，节点上可省略。
+- 推送侧也能用：把字形放进 `island.text`，它会渲染在外壳字体里。但 `island.icon` 走的是 SF Symbol（`image` 节点），Nerd Font 不参与。
+
+> 节点级 `fontFamily` 不做“是否安装”校验（解析器保持纯函数），字体缺失时由系统静默回退；主题级 `fontFamily` 有诊断。
 
 ---
 
@@ -154,6 +190,21 @@ app 监听 `themes/` 目录和 Application Support 目录，文件变化后约 *
 
 自定义 `expanded` 里 `messageBody` 会**吃掉剩余高度**：外层用 `minHeight 190 / maxHeight 面板高度上限` 钳制总高（这也意味着自定义布局不再受内置"头部固定 75pt"的假设约束）。自定义 `miniBar` 里内置的底部进度条不会叠加，需要自己放 `progress` 节点。
 
+### 3.4 选择布局
+
+布局是**具名多个文件**，在「设置 → 外观 → 布局」里选：
+
+| 选项 | 含义 |
+|---|---|
+| `自动（island.json）` | 默认。用根目录的 `island.json`；没有它就用 `layouts/` 里名字排序的第一个；都没有就用内置 |
+| `内置` | 不用任何自定义布局，四个面全用 Swift 内置视图 |
+| `<名>` | `layouts/<名>.json` |
+
+- 选择持久化在 `island.layoutID`，重启后仍是它（保存/加载不需要额外操作）。
+- **按名字选中的**布局文件缺失 → 回退内置并在诊断里说明；`自动` 下“没有文件”是正常状态，不报警。
+- `island.json` 是旧位置，仍然支持；新布局建议放 `layouts/`。
+- 目录里增删文件，下拉选项即时更新。
+
 ---
 
 ## 4. 节点参考
@@ -189,6 +240,7 @@ app 监听 `themes/` 目录和 Application Support 目录，文件变化后约 *
 | `design` | 字符串 | 主题 `fontDesign` | `default` / `rounded` / `serif` / `monospaced` |
 | `tint` | 颜色 | 主题 `textPrimary` | 颜色来源（见第 6 节） |
 | `lineLimit` | 整数 | 不限 | clamp 1…50 |
+| `fontFamily` | 字符串 | 主题 `fontFamily` | 节点级字体族覆盖，用于 Nerd Font 图标 |
 
 `value` 的绑定为 `nil` 时（例如 `$islandText` 且当前消息没有 island 文本），整个文本节点**不渲染**。通常配合 `"if": "hasIslandText"` 写明意图。
 
@@ -393,12 +445,13 @@ if → frame → padding → background → clip → opacity → a11y
 
 ```bash
 CFG=~/Library/Application\ Support/MacDesktopNotify
-mkdir -p "$CFG/themes"
+mkdir -p "$CFG/themes" "$CFG/layouts"
 cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/themes/*.json "$CFG/themes/"
-cp "$(pwd)/Sources/MacDesktopNotify/Island/Examples/island-classic.json" "$CFG/island.json"
+cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/layouts/*.json "$CFG/layouts/"
+# 然后在「设置 → 外观」里选主题和布局
 ```
 
-### 8.1 `island-classic.json`（四个面，等价于内置布局）
+### 8.1 `layouts/classic.json`（四个面，等价于内置布局）
 
 ```json
 {
@@ -445,7 +498,7 @@ cp "$(pwd)/Sources/MacDesktopNotify/Island/Examples/island-classic.json" "$CFG/i
 }
 ```
 
-### 8.2 `island-progress.json`（紧凑面 + 迷你条进度）
+### 8.2 `layouts/progress.json`（紧凑面 + 迷你条进度）
 
 只覆盖两个面，其余两个面继续用内置：
 
@@ -500,17 +553,177 @@ cp "$(pwd)/Sources/MacDesktopNotify/Island/Examples/island-classic.json" "$CFG/i
 }}
 ```
 
-### 8.4 在多个布局之间切换
+`themes/github-dark.json`（GitHub Dark / Primer 配色）：
 
-布局只有一个 `island.json`，所以"切换"就是换这个文件的内容。想留多套可以放别处再拷贝，或用软链：
+```json
+{ "name": "github-dark", "tokens": {
+  "panelFill": "#0D1117", "panelBorder": "#30363D", "divider": "#21262D",
+  "textPrimary": "#E6EDF3", "textSubtle": "#8B949E", "textTimestamp": "#6E7681",
+  "cardFill": "#161B22", "cardFillHover": "#1C2128",
+  "historyRowFill": "#00000000", "historyRowFillHover": "#B1BAC41F",
+  "miniBarFill": "#0D1117F2", "badgeFill": "#30363D",
+  "accent": "#58A6FF", "critical": "#F85149",
+  "panelRadius": 12, "cardRadius": 6, "historyRowRadius": 6,
+  "fontDesign": "default", "monoDigits": true
+}}
+```
+
+> GitHub Dark 是**固定深色**（不随系统浅色切换）。这是刻意的：紧凑 pill 画在黑色刘海区域上，浅色主题会把 `textPrimary` 变成深色，pill 就看不见了——“一个 `textPrimary` 同时服务黑底 pill 与可浅色的面板”是当前 token 集的边界。
+
+`themes/nerd-font.json`（只换字体族，其余用内置默认）：
+
+```json
+{ "name": "nerd-font", "tokens": {
+  "fontFamily": "JetBrainsMono Nerd Font",
+  "monoFontFamily": "JetBrainsMono Nerd Font Mono"
+}}
+```
+
+### 8.4 GitHub Dark 布局（`layouts/github.json`）
+
+与上面的主题配套：状态圆点 + **全宽分隔线** + **计数胶囊**（而不是内置的裸 `×N`），迷你条带一根固定宽度的进度条。四个面都写了，可直接当模板改：
+
+```json
+{
+  "version": 1,
+  "surfaces": {
+    "compactLeading": {
+      "type": "hstack", "spacing": 5, "children": [
+        { "type": "image", "system": "$icon", "size": 11, "weight": "bold", "tint": "$urgency" },
+        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "tint": "textPrimary", "if": "hasIslandText" }
+      ]
+    },
+    "compactTrailing": {
+      "type": "badge", "value": "$unread", "format": "count",
+      "fill": "badgeFill", "clip": "capsule", "if": "showsPillBadge"
+    },
+    "expanded": {
+      "type": "vstack", "alignment": "leading", "spacing": 0, "children": [
+        { "type": "hstack", "spacing": 8,
+          "padding": { "top": 12, "bottom": 12, "leading": 16, "trailing": 16 },
+          "children": [
+            { "type": "dot", "size": 8, "fill": "$urgency", "if": "showUrgency" },
+            { "type": "vstack", "spacing": 2, "children": [
+              { "type": "text", "value": "$panelTitle", "size": 13, "weight": "semibold", "tint": "textPrimary" },
+              { "type": "text", "value": "$panelSubtitle", "size": 11, "tint": "textSubtle" }
+            ]},
+            { "type": "spacer", "minLength": 8 },
+            { "type": "slot", "name": "headerActions" }
+          ]
+        },
+        { "type": "divider" },
+        { "type": "slot", "name": "messageBody" },
+        { "type": "slot", "name": "footerActions", "if": "showsCurrentCard" }
+      ]
+    },
+    "miniBar": {
+      "type": "hstack", "spacing": 6,
+      "padding": { "horizontal": 10, "vertical": 5 },
+      "children": [
+        { "type": "image", "system": "$icon", "size": 11, "weight": "bold", "tint": "$urgency", "if": "showUrgency" },
+        { "type": "text", "value": "$status", "size": 11, "weight": "semibold", "tint": "textPrimary" },
+        { "type": "spacer", "minLength": 4 },
+        { "type": "progress", "value": "$progress", "height": 3, "fill": "$urgency",
+          "frame": { "width": 56 }, "if": "hasProgress" },
+        { "type": "badge", "value": "$unread", "format": "count",
+          "fill": "badgeFill", "clip": "capsule", "if": "showsMiniBarBadge" }
+      ]
+    }
+  }
+}
+```
+
+启用：
+
+```bash
+CFG=~/Library/Application\ Support/MacDesktopNotify
+mkdir -p "$CFG/themes" "$CFG/layouts"
+cp "$(pwd)/Sources/MacDesktopNotify/Island/Examples/themes/github-dark.json" "$CFG/themes/"
+cp "$(pwd)/Sources/MacDesktopNotify/Island/Examples/layouts/github.json" "$CFG/layouts/"
+# 然后在「设置 → 外观」里选主题 github-dark与布局 github
+```
+
+设计对照（Primer → token）：
+
+| GitHub 元素 | 落点 |
+|---|---|
+| canvas default `#0d1117` | `panelFill` |
+| canvas subtle `#161b22` | `cardFill` |
+| border default `#30363d` / muted `#21262d` | `panelBorder` / `divider` |
+| fg default `#e6edf3` / muted `#8b949e` / subtle `#6e7681` | `textPrimary` / `textSubtle` / `textTimestamp` |
+| accent fg `#58a6ff` / danger fg `#f85149` | `accent` / `critical` |
+| counter `#30363d` | `badgeFill` |
+| 6px 圆角 | `cardRadius` / `historyRowRadius` |
+| 列表行扁平、仅 hover 高亮 | `historyRowFill` 透明 + `historyRowFillHover` |
+
+**已知边界**：头部按钮（全部已读 / 更多 / 收起）用的是 `ActionCapsuleStyle` / `PanelIconButtonStyle`，这两个样式**不在 token 集内**，所以它们的底色仍是内置的白色半透明，不会变成 GitHub 的 `#21262d`。
+
+### 8.5 Nerd Font 图标布局（`layouts/nerd.json`）
+
+用 `text` + 节点级 `fontFamily` 把 Nerd Font 字形当图标用（以 GitHub 图标 `\uf09b` 为例），四个面都写：
+
+```json
+{
+  "version": 1,
+  "surfaces": {
+    "compactLeading": {
+      "type": "hstack", "spacing": 5, "children": [
+        { "type": "text", "value": "\uf09b", "size": 12, "weight": "bold",
+          "tint": "$urgency", "fontFamily": "JetBrainsMono Nerd Font" },
+        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "if": "hasIslandText" }
+      ]
+    },
+    "compactTrailing": {
+      "type": "badge", "value": "$unread", "format": "timesN", "if": "showsPillBadge"
+    },
+    "expanded": {
+      "type": "vstack", "alignment": "leading", "spacing": 0, "children": [
+        { "type": "hstack", "spacing": 8,
+          "padding": { "top": 14, "bottom": 12, "leading": 16, "trailing": 16 },
+          "children": [
+            { "type": "text", "value": "\uf09b", "size": 13, "weight": "bold",
+              "tint": "$urgency", "fontFamily": "JetBrainsMono Nerd Font" },
+            { "type": "vstack", "spacing": 2, "children": [
+              { "type": "text", "value": "$panelTitle", "size": 13, "weight": "semibold" },
+              { "type": "text", "value": "$panelSubtitle", "size": 10, "tint": "textSubtle" }
+            ]},
+            { "type": "spacer" },
+            { "type": "slot", "name": "headerActions" }
+          ]
+        },
+        { "type": "divider", "padding": { "horizontal": 16 } },
+        { "type": "slot", "name": "messageBody" },
+        { "type": "slot", "name": "footerActions", "if": "showsCurrentCard" }
+      ]
+    },
+    "miniBar": {
+      "type": "hstack", "spacing": 6,
+      "padding": { "horizontal": 10, "vertical": 5 },
+      "children": [
+        { "type": "text", "value": "\uf09b", "size": 12, "weight": "bold",
+          "tint": "$urgency", "fontFamily": "JetBrainsMono Nerd Font" },
+        { "type": "text", "value": "$status" },
+        { "type": "badge", "value": "$unread", "format": "count", "if": "showsMiniBarBadge" }
+      ]
+    }
+  }
+}
+```
+
+想全部文本都走 Nerd Font，就把 `themes/nerd-font.json` 也选上（主题级 `fontFamily`），节点上可省略 `fontFamily`。
+
+### 8.6 在多个布局之间切换
+
+把多套布局都放进 `layouts/`，再到「设置 → 外观 → 布局」下拉里选即可；选择会记住，重启后仍是它：
 
 ```bash
 CFG=~/Library/Application\ Support/MacDesktopNotify
 mkdir -p "$CFG/layouts"
-cp .../island-classic.json "$CFG/layouts/classic.json"
-cp .../island-progress.json "$CFG/layouts/progress.json"
-ln -sfn "$CFG/layouts/classic.json" "$CFG/island.json"   # 切换 = 重新 ln -sfn
+cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/layouts/*.json "$CFG/layouts/"
+# 下拉里会出现 classic / progress / github / nerd 四个选项
 ```
+
+不需要软链或拷贝覆盖；想临时回到旧位置的单文件行为，选「自动」即可（它读根目录的 `island.json`）。
 
 ---
 
@@ -561,7 +774,7 @@ surfaces.expanded.children[2].background.fill: 颜色解析失败 #GGGGGG
 
 ### 9.5 不可被 DSL 移除的路径
 
-无论布局怎么写，以下始终可用：`Esc` 收起、`⌃⌥N` 系统热键、右键菜单（打开/收起面板、历史、管理消息、静默、设置）。删除 `island.json` 立即回退。
+无论布局怎么写，以下始终可用：`Esc` 收起、`⌃⌥N` 系统热键、右键菜单（打开/收起面板、历史、管理消息、静默、设置）。删除当前选中的布局文件、或在下拉里选「内置」即回退。
 
 ---
 
@@ -625,6 +838,8 @@ surfaces.expanded.children[2].background.fill: 颜色解析失败 #GGGGGG
 | `fontDesign` | 枚举 | `rounded` | `default\|rounded\|serif\|monospaced` | 只作用于壳层中今天就用 `.rounded` 的字体 |
 | `fontScale` | 数字 | `1.0` | 0.8…1.6 | 壳层字号乘数（含正文 `contentFontSize`） |
 | `monoDigits` | 布尔 | `true` | | 数字等宽（pill 的 `×N`） |
+| `fontFamily` | 字符串 | 无（系统字体） | 家族名或 PostScript 名 | 外壳比例文本的字体族 |
+| `monoFontFamily` | 字符串 | 无（系统等宽） | 家族名或 PostScript 名 | 等宽文本（代码块）的字体族 |
 | `panelMaterial` | 枚举 | `solid` | `solid\|popover` | 目前只实现 `solid`（面板纯色底）；`popover` 被接受但暂无消费者 |
 | `motionScale` | 数字 | `1.0` | 0…2 | 壳层动画时长乘数 |
 

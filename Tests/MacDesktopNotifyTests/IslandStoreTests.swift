@@ -21,8 +21,25 @@ final class IslandStoreTests: SettingsIsolatedTestCase {
         try await super.tearDown()
     }
 
+    private var layoutsDirectory: URL {
+        directory.appendingPathComponent("layouts", isDirectory: true)
+    }
+
     private func writeTheme(_ name: String, _ json: String) throws {
         try Data(json.utf8).write(to: directory.appendingPathComponent(name))
+    }
+
+    private func writeLayout(_ name: String, _ json: String) throws {
+        try FileManager.default.createDirectory(at: layoutsDirectory, withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: layoutsDirectory.appendingPathComponent(name))
+    }
+
+    private func writeLegacyLayout(_ json: String) throws {
+        try Data(json.utf8).write(to: directory.appendingPathComponent("island.json"))
+    }
+
+    private func makeLayoutStore() -> IslandLayoutStore {
+        IslandLayoutStore(directory: directory, layoutsDirectory: layoutsDirectory)
     }
 
     // MARK: - Theme store
@@ -94,31 +111,101 @@ final class IslandStoreTests: SettingsIsolatedTestCase {
         XCTAssertEqual(store.resolved(for: .dark).accent, IslandColor(hex: "#123456")!.color)
     }
 
-    // MARK: - Layout store
+    // MARK: - Fonts
 
-    func testMissingIslandJSONMeansNoCustomLayout() {
-        AppSettings.shared.islandThemeID = "default"
-        let store = IslandLayoutStore(directory: directory)
+    func testUnavailableFontIsStrippedWithDiagnostic() throws {
+        try writeTheme("f.json", ##"{"tokens":{"fontFamily":"NoSuchFontXYZ","accent":"#123456"}}"##)
+        AppSettings.shared.islandThemeID = "f"
+        let store = IslandThemeStore(directory: directory)
+        store.reload()
+        XCTAssertNil(store.resolved(for: .dark).fontFamily, "an uninstalled font must really fall back")
+        XCTAssertEqual(store.resolved(for: .dark).accent, IslandColor(hex: "#123456")!.color)
+        XCTAssertTrue(store.diagnostics.contains { $0.contains("NoSuchFontXYZ") })
+    }
+
+    func testAvailableFontIsKept() throws {
+        // Menlo ships with macOS, so this is deterministic across machines.
+        try writeTheme("f.json", ##"{"tokens":{"fontFamily":"Menlo"}}"##)
+        AppSettings.shared.islandThemeID = "f"
+        let store = IslandThemeStore(directory: directory)
+        store.reload()
+        XCTAssertEqual(store.resolved(for: .dark).fontFamily, "Menlo")
+        XCTAssertEqual(store.diagnostics, [])
+    }
+
+    func testFontCatalogKnowsSystemFonts() {
+        XCTAssertTrue(IslandFontCatalog.isAvailable("Menlo"))
+        XCTAssertFalse(IslandFontCatalog.isAvailable("NoSuchFontXYZ"))
+        XCTAssertFalse(IslandFontCatalog.isAvailable(""))
+    }
+
+    // MARK: - Layout store: selection
+
+    func testAutoUsesLegacyIslandJSON() throws {
+        AppSettings.shared.islandLayoutID = IslandLayoutStore.autoID
+        try writeLegacyLayout(#"{"surfaces":{"miniBar":{"type":"spacer"}}}"#)
+        let store = makeLayoutStore()
+        store.reload()
+        XCTAssertNotNil(store.node(for: .miniBar))
+        XCTAssertNil(store.node(for: .expanded), "a surface not in the file stays builtin")
+    }
+
+    func testAutoFallsBackToFirstNamedLayout() throws {
+        AppSettings.shared.islandLayoutID = IslandLayoutStore.autoID
+        try writeLayout("alpha.json", #"{"surfaces":{"expanded":{"type":"spacer"}}}"#)
+        try writeLayout("beta.json", #"{"surfaces":{"miniBar":{"type":"spacer"}}}"#)
+        let store = makeLayoutStore()
+        store.reload()
+        XCTAssertEqual(store.layoutIDs, ["alpha", "beta"])
+        XCTAssertNotNil(store.node(for: .expanded), "auto picks the first named layout")
+        XCTAssertNil(store.node(for: .miniBar))
+    }
+
+    func testNamedSelectionWins() throws {
+        AppSettings.shared.islandLayoutID = "beta"
+        try writeLayout("alpha.json", #"{"surfaces":{"expanded":{"type":"spacer"}}}"#)
+        try writeLayout("beta.json", #"{"surfaces":{"miniBar":{"type":"spacer"}}}"#)
+        try writeLegacyLayout(#"{"surfaces":{"compactLeading":{"type":"spacer"}}}"#)
+        let store = makeLayoutStore()
+        store.reload()
+        XCTAssertNotNil(store.node(for: .miniBar))
+        XCTAssertNil(store.node(for: .expanded))
+        XCTAssertNil(store.node(for: .compactLeading), "the legacy file must not shadow a named pick")
+    }
+
+    func testBuiltinSelectionIgnoresEveryFile() throws {
+        AppSettings.shared.islandLayoutID = IslandLayoutStore.builtinID
+        try writeLegacyLayout(#"{"surfaces":{"expanded":{"type":"spacer"}}}"#)
+        try writeLayout("alpha.json", #"{"surfaces":{"miniBar":{"type":"spacer"}}}"#)
+        let store = makeLayoutStore()
+        store.reload()
+        XCTAssertFalse(store.hasCustomLayout)
+        XCTAssertEqual(store.diagnostics, [])
+    }
+
+    func testMissingNamedLayoutFallsBackWithDiagnostic() {
+        AppSettings.shared.islandLayoutID = "ghost"
+        let store = makeLayoutStore()
+        store.reload()
+        XCTAssertFalse(store.hasCustomLayout)
+        XCTAssertTrue(store.diagnostics.contains { $0.contains("ghost") })
+    }
+
+    func testMissingEverythingIsEmptyAndQuiet() {
+        AppSettings.shared.islandLayoutID = IslandLayoutStore.autoID
+        let store = makeLayoutStore()
         store.reload()
         XCTAssertFalse(store.hasCustomLayout)
         XCTAssertNil(store.node(for: .expanded))
         XCTAssertEqual(store.diagnostics, [])
     }
 
-    func testIslandJSONOptsInPerSurface() throws {
-        try Data(#"{"surfaces":{"miniBar":{"type":"spacer"}}}"#.utf8)
-            .write(to: directory.appendingPathComponent("island.json"))
-        let store = IslandLayoutStore(directory: directory)
-        store.reload()
-        XCTAssertTrue(store.hasCustomLayout)
-        XCTAssertNotNil(store.node(for: .miniBar))
-        XCTAssertNil(store.node(for: .expanded), "a surface not in the file stays builtin")
-    }
+    // MARK: - Layout store: parsing / fallback
 
     func testBrokenSurfaceFallsBackThatSurfaceOnly() throws {
-        try Data(#"{"surfaces":{"expanded":{"type":"wat"},"miniBar":{"type":"spacer"}}}"#.utf8)
-            .write(to: directory.appendingPathComponent("island.json"))
-        let store = IslandLayoutStore(directory: directory)
+        AppSettings.shared.islandLayoutID = IslandLayoutStore.autoID
+        try writeLegacyLayout(#"{"surfaces":{"expanded":{"type":"wat"},"miniBar":{"type":"spacer"}}}"#)
+        let store = makeLayoutStore()
         store.reload()
         XCTAssertNil(store.node(for: .expanded))
         XCTAssertNotNil(store.node(for: .miniBar))
@@ -126,9 +213,9 @@ final class IslandStoreTests: SettingsIsolatedTestCase {
     }
 
     func testEmptyLayoutFileFallsBack() throws {
-        try Data(#"{"surfaces":{"expanded":{"type":"vstack","children":[]}}}"#.utf8)
-            .write(to: directory.appendingPathComponent("island.json"))
-        let store = IslandLayoutStore(directory: directory)
+        AppSettings.shared.islandLayoutID = IslandLayoutStore.autoID
+        try writeLegacyLayout(#"{"surfaces":{"expanded":{"type":"vstack","children":[]}}}"#)
+        let store = makeLayoutStore()
         store.reload()
         XCTAssertFalse(store.hasCustomLayout, "a valid but blank layout must not opt in")
     }

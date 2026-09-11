@@ -484,13 +484,20 @@ private struct AppearanceSettingsContent: View {
                     Text(id == IslandThemeStore.defaultThemeID ? "默认" : id).tag(id)
                 }
             }
+            Picker("布局", selection: $settings.islandLayoutID) {
+                Text("自动（island.json）").tag(IslandLayoutStore.autoID)
+                Text("内置").tag(IslandLayoutStore.builtinID)
+                ForEach(IslandLayoutStore.shared.layoutIDs, id: \.self) { id in
+                    Text(id).tag(id)
+                }
+            }
             Button("打开配置文件夹") {
                 NSWorkspace.shared.open(IslandPaths.supportDirectory)
             }
         } header: {
-            Text("主题")
+            Text("主题与布局")
         } footer: {
-            SectionFooter("把主题 JSON 放进 themes/ 文件夹即可在此选择；没有文件或解析失败时使用内置默认。")
+            SectionFooter("主题放 themes/<名>.json，布局放 layouts/<名>.json；「自动」沿用根目录的 island.json。没有文件或解析失败时使用内置默认。")
         }
 
         themeDiagnostics

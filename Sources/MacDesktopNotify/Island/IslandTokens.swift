@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - Colors
@@ -114,6 +115,19 @@ enum IslandFontDesign: String, CaseIterable, Sendable {
     }
 }
 
+/// Whether a named font actually exists on this machine. A theme that names a
+/// font the user has not installed falls back to the system font and says so,
+/// instead of rendering in a silent fallback face.
+enum IslandFontCatalog {
+    static func isAvailable(_ name: String) -> Bool {
+        guard !name.isEmpty else { return false }
+        if NSFont(name: name, size: 12) != nil { return true }
+        // Nerd Fonts are commonly referenced by family name; `NSFont(name:)`
+        // sometimes only resolves the PostScript name.
+        return NSFontManager.shared.availableFontFamilies.contains(name)
+    }
+}
+
 // MARK: - Token keys
 
 /// The closed set of configurable tokens. Every key has exactly one case; the
@@ -142,6 +156,8 @@ enum TokenKey: String, CaseIterable, Sendable {
     case fontScale
     case motionScale
     case fontDesign
+    case fontFamily
+    case monoFontFamily
     case panelMaterial
     case monoDigits
 }
@@ -151,6 +167,10 @@ enum IslandTokenLimits {
     static let padding: ClosedRange<Double> = 0...64
     static let fontScale: ClosedRange<Double> = 0.8...1.6
     static let motionScale: ClosedRange<Double> = 0...2
+}
+
+enum IslandTokens {
+    static let maxFontNameLength = 128
 }
 
 // MARK: - Resolved tokens
@@ -187,6 +207,13 @@ struct ResolvedIslandTokens: Equatable, Sendable {
     var motionScale: Double
     var monoDigits: Bool
 
+    /// Custom font families. `fontFamily` replaces the system font for the
+    /// shell's proportional text; `monoFontFamily` replaces it for monospaced
+    /// text (code blocks). `nil` means the system font. This is what makes a
+    /// Nerd Font usable: its glyphs live in the text, not in SF Symbols.
+    var fontFamily: String?
+    var monoFontFamily: String?
+
     var panelMaterial: IslandPanelMaterial
     var fontDesign: IslandFontDesign
 
@@ -219,6 +246,9 @@ struct ResolvedIslandTokens: Equatable, Sendable {
         fontScale = 1.0
         motionScale = 1.0
         monoDigits = true
+
+        fontFamily = nil
+        monoFontFamily = nil
 
         panelMaterial = .solid
         fontDesign = .rounded
@@ -262,6 +292,14 @@ extension ResolvedIslandTokens {
             case .fontScale: if let n = Self.number(value) { tokens.fontScale = Self.clamp(n, to: IslandTokenLimits.fontScale) }
             case .motionScale: if let n = Self.number(value) { tokens.motionScale = Self.clamp(n, to: IslandTokenLimits.motionScale) }
             case .monoDigits: if let b = value as? Bool { tokens.monoDigits = b }
+            case .fontFamily:
+                if let name = value as? String, !name.isEmpty {
+                    tokens.fontFamily = String(name.prefix(IslandTokens.maxFontNameLength))
+                }
+            case .monoFontFamily:
+                if let name = value as? String, !name.isEmpty {
+                    tokens.monoFontFamily = String(name.prefix(IslandTokens.maxFontNameLength))
+                }
             case .fontDesign:
                 if let raw = value as? String, let design = IslandFontDesign(rawValue: raw) { tokens.fontDesign = design }
             case .panelMaterial:
@@ -290,8 +328,35 @@ extension ResolvedIslandTokens {
     /// so a scale change cannot miss a label. Call sites that were
     /// `.rounded` pass `fontDesign.design` explicitly; sites that were plain
     /// `.system(size:)` keep the default design (see §3).
+    ///
+    /// When a custom family is configured it wins over `design`, because a
+    /// bundled face has no `Font.Design` to select. `design == .monospaced`
+    /// prefers `monoFontFamily` so code blocks do not silently become a
+    /// proportional face.
     func font(size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
-        .system(size: size * CGFloat(fontScale), weight: weight, design: design)
+        font(size: size, weight: weight, design: design, family: nil)
+    }
+
+    func font(
+        size: CGFloat,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default,
+        family: String?
+    ) -> Font {
+        let scaled = size * CGFloat(fontScale)
+        if let family, !family.isEmpty {
+            return .custom(family, size: scaled).weight(weight)
+        }
+        if design == .monospaced {
+            if let monoFontFamily, !monoFontFamily.isEmpty {
+                return .custom(monoFontFamily, size: scaled).weight(weight)
+            }
+            return .system(size: scaled, weight: weight, design: .monospaced)
+        }
+        if let fontFamily, !fontFamily.isEmpty {
+            return .custom(fontFamily, size: scaled).weight(weight)
+        }
+        return .system(size: scaled, weight: weight, design: design)
     }
 
     /// The single place `motionScale` is applied to app-side durations, so a
@@ -331,7 +396,8 @@ extension ResolvedIslandTokens {
         case .accent: accent
         case .critical: critical
         case .panelRadius, .cardRadius, .historyRowRadius, .paddingPanel, .paddingCard,
-             .fontScale, .motionScale, .fontDesign, .panelMaterial, .monoDigits:
+             .fontScale, .motionScale, .fontDesign, .fontFamily, .monoFontFamily,
+             .panelMaterial, .monoDigits:
             nil
         }
     }

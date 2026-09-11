@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "surfaces": {
+    "compactLeading": {
+      "type": "hstack", "spacing": 5, "children": [
+        { "type": "text", "value": "\uf09b", "size": 12, "weight": "bold",
+          "tint": "$urgency", "fontFamily": "JetBrainsMono Nerd Font" },
+        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "if": "hasIslandText" }
+      ]
+    },
+    "compactTrailing": {
+      "type": "badge", "value": "$unread", "format": "timesN", "if": "showsPillBadge"
+    },
+    "expanded": {
+      "type": "vstack", "alignment": "leading", "spacing": 0, "children": [
+        { "type": "hstack", "spacing": 8,
+          "padding": { "top": 14, "bottom": 12, "leading": 16, "trailing": 16 },
+          "children": [
+            { "type": "text", "value": "\uf09b", "size": 13, "weight": "bold",
+              "tint": "$urgency", "fontFamily": "JetBrainsMono Nerd Font" },
+            { "type": "vstack", "spacing": 2, "children": [
+              { "type": "text", "value": "$panelTitle", "size": 13, "weight": "semibold" },
+              { "type": "text", "value": "$panelSubtitle", "size": 10, "tint": "textSubtle" }
+            ]},
+            { "type": "spacer" },
+            { "type": "slot", "name": "headerActions" }
+          ]
+        },
+        { "type": "divider", "padding": { "horizontal": 16 } },
+        { "type": "slot", "name": "messageBody" },
+        { "type": "slot", "name": "footerActions", "if": "showsCurrentCard" }
+      ]
+    },
+    "miniBar": {
+      "type": "hstack", "spacing": 6,
+      "padding": { "horizontal": 10, "vertical": 5 },
+      "children": [
+        { "type": "text", "value": "\uf09b", "size": 12, "weight": "bold",
+          "tint": "$urgency", "fontFamily": "JetBrainsMono Nerd Font" },
+        { "type": "text", "value": "$status" },
+        { "type": "badge", "value": "$unread", "format": "count", "if": "showsMiniBarBadge" }
+      ]
+    }
+  }
+}

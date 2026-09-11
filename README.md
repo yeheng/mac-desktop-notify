@@ -499,7 +499,7 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 
 ## 自定义灵动岛外观
 
-灵动岛的**外壳**（刘海 pill 两面、展开面板、无刘海迷你条）可以按主题和 JSON 布局定制。文件存在即生效，没有开关设置项：删文件即回退，无需重启。定制的是外壳，不是消息正文，也不是行为（点击 / URL / 脚本 / 窗口几何留在 Swift）。
+灵动岛的**外壳**（刘海 pill 两面、展开面板、无刘海迷你条）可以按主题和 JSON 布局定制。在「设置 → 外观」里选主题与布局；文件存在即生效，删文件即回退，无需重启。定制的是外壳，不是消息正文，也不是行为（点击 / URL / 脚本 / 窗口几何留在 Swift）。
 
 📖 **完整指南：[docs/island-appearance.md](docs/island-appearance.md)** — 全部 token 默认值与范围、11 种节点逐键参考、通用修饰键、8 绑定 + 12 谓词、示例布局/主题、上限与诊断、排错清单。下面只留速查。
 
@@ -507,7 +507,9 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 
 ```
 ~/Library/Application Support/MacDesktopNotify/
-  island.json                 # 布局文档；存在且可解析时按 surface 生效
+  island.json                 # 旧位置的布局（「自动」时使用）
+  layouts/
+    classic.json              # 具名布局；文件名即布局 ID
   themes/
     midnight.json             # 主题；缺失 = 内置默认（等于今天的字面量）
 ```
@@ -536,6 +538,8 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 | `fontDesign` | `rounded` | 固定枚举 `default\|rounded\|serif\|monospaced` |
 | `fontScale` | `1.0` | 壳层字号乘数（0.8…1.6） |
 | `monoDigits` | `true` | 数字等宽 |
+| `fontFamily` | 无（系统字体） | 外壳比例文本的字体族，如 `"JetBrainsMono Nerd Font"` |
+| `monoFontFamily` | 无（系统等宽） | 等宽文本（代码块）的字体族 |
 | `panelMaterial` | `solid` | `solid\|popover` |
 | `motionScale` | `1.0` | 动效倍率（0…2） |
 
@@ -548,7 +552,7 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 | `type` | 键 |
 |---|---|
 | `vstack` / `hstack` / `zstack` | `spacing`, `alignment`, `children` |
-| `text` | `value`(绑定/字面串), `size`, `weight`, `design`, `tint`, `lineLimit` |
+| `text` | `value`(绑定/字面串), `size`, `weight`, `design`, `tint`, `lineLimit`, `fontFamily`(Nerd Font 图标) |
 | `image` | `system`(SF Symbol，可为绑定), `size`, `weight`, `tint` |
 | `dot` | `size`, `fill` |
 | `badge` | `value`(`$unread`), **`format` 必填**（`timesN`=`×N`，`count`=裸数字）, `fill`, `clip` |
@@ -578,15 +582,15 @@ a11y:       { label, hidden }
 
 `Sources/MacDesktopNotify/Island/Examples/` 下有可直接复制到配置目录的示例：
 
-- 主题：`themes/midnight.json`（暗色）、`themes/solar.json`（暖色，含 light/dark 双色）
-- 布局：`island-classic.json`（等于内置壳布局）、`island-progress.json`（紧凑面 + 迷你条进度条）
+- 主题：`themes/midnight.json`（暗色）、`themes/solar.json`（暖色，含 light/dark 双色）、`themes/github-dark.json`（GitHub Dark / Primer 配色）、`themes/nerd-font.json`（只换字体族）
+- 布局：`layouts/classic.json`（等于内置壳布局）、`layouts/progress.json`（紧凑面 + 迷你条进度条）、`layouts/github.json`（GitHub Dark 配套）、`layouts/nerd.json`（Nerd Font 字形当图标）
 
 ```bash
-cp "$(pwd)/Sources/MacDesktopNotify/Island/Examples/island-classic.json" \
-   ~/Library/Application\ Support/MacDesktopNotify/island.json
-mkdir -p ~/Library/Application\ Support/MacDesktopNotify/themes
-cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/themes/*.json \
-   ~/Library/Application\ Support/MacDesktopNotify/themes/
+CFG=~/Library/Application\ Support/MacDesktopNotify
+mkdir -p "$CFG/themes" "$CFG/layouts"
+cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/themes/*.json "$CFG/themes/"
+cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/layouts/*.json "$CFG/layouts/"
+# 然后在「设置 → 外观」里选主题和布局
 ```
 
 ### 回退与边界

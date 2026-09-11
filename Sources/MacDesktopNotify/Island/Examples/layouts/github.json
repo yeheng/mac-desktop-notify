@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "surfaces": {
+    "compactLeading": {
+      "type": "hstack", "spacing": 5, "children": [
+        { "type": "image", "system": "$icon", "size": 11, "weight": "bold", "tint": "$urgency" },
+        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "tint": "textPrimary", "if": "hasIslandText" }
+      ]
+    },
+    "compactTrailing": {
+      "type": "badge", "value": "$unread", "format": "count",
+      "fill": "badgeFill", "clip": "capsule", "if": "showsPillBadge"
+    },
+    "expanded": {
+      "type": "vstack", "alignment": "leading", "spacing": 0, "children": [
+        { "type": "hstack", "spacing": 8,
+          "padding": { "top": 12, "bottom": 12, "leading": 16, "trailing": 16 },
+          "children": [
+            { "type": "dot", "size": 8, "fill": "$urgency", "if": "showUrgency" },
+            { "type": "vstack", "spacing": 2, "children": [
+              { "type": "text", "value": "$panelTitle", "size": 13, "weight": "semibold", "tint": "textPrimary" },
+              { "type": "text", "value": "$panelSubtitle", "size": 11, "tint": "textSubtle" }
+            ]},
+            { "type": "spacer", "minLength": 8 },
+            { "type": "slot", "name": "headerActions" }
+          ]
+        },
+        { "type": "divider" },
+        { "type": "slot", "name": "messageBody" },
+        { "type": "slot", "name": "footerActions", "if": "showsCurrentCard" }
+      ]
+    },
+    "miniBar": {
+      "type": "hstack", "spacing": 6,
+      "padding": { "horizontal": 10, "vertical": 5 },
+      "children": [
+        { "type": "image", "system": "$icon", "size": 11, "weight": "bold", "tint": "$urgency", "if": "showUrgency" },
+        { "type": "text", "value": "$status", "size": 11, "weight": "semibold", "tint": "textPrimary" },
+        { "type": "spacer", "minLength": 4 },
+        { "type": "progress", "value": "$progress", "height": 3, "fill": "$urgency",
+          "frame": { "width": 56 }, "if": "hasProgress" },
+        { "type": "badge", "value": "$unread", "format": "count",
+          "fill": "badgeFill", "clip": "capsule", "if": "showsMiniBarBadge" }
+      ]
+    }
+  }
+}

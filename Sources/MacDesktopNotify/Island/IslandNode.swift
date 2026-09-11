@@ -213,7 +213,8 @@ enum IslandNodeKind: Equatable, Sendable {
         weight: IslandFontWeight?,
         design: IslandFontDesign?,
         tint: IslandColorSource?,
-        lineLimit: Int?
+        lineLimit: Int?,
+        fontFamily: String?
     )
     case image(system: IslandIconSource, size: CGFloat?, weight: IslandFontWeight?, tint: IslandColorSource?)
     case dot(size: CGFloat?, fill: IslandColorSource?)

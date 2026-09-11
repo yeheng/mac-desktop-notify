@@ -182,6 +182,8 @@ final class IslandTokensTests: XCTestCase {
                 raw[key.rawValue] = 1
             case .fontDesign:
                 raw[key.rawValue] = "serif"
+            case .fontFamily, .monoFontFamily:
+                raw[key.rawValue] = "Menlo"
             case .panelMaterial:
                 raw[key.rawValue] = "popover"
             case .monoDigits:
@@ -196,6 +198,19 @@ final class IslandTokensTests: XCTestCase {
         XCTAssertEqual(tokens.fontDesign, .serif)
         XCTAssertEqual(tokens.panelMaterial, .popover)
         XCTAssertFalse(tokens.monoDigits)
+        XCTAssertEqual(tokens.fontFamily, "Menlo")
+        XCTAssertEqual(tokens.monoFontFamily, "Menlo")
+    }
+
+    func testFontFamilyTokensParse() {
+        let tokens = ResolvedIslandTokens.builtin.applying(
+            ["fontFamily": "JetBrainsMono Nerd Font", "monoFontFamily": "Menlo"],
+            colorScheme: .dark
+        )
+        XCTAssertEqual(tokens.fontFamily, "JetBrainsMono Nerd Font")
+        XCTAssertEqual(tokens.monoFontFamily, "Menlo")
+        XCTAssertNil(ResolvedIslandTokens.builtin.fontFamily, "default is the system font")
+        XCTAssertNil(ResolvedIslandTokens.builtin.monoFontFamily)
     }
 
     // MARK: - Derived values

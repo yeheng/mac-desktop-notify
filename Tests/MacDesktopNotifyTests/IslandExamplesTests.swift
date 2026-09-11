@@ -13,6 +13,10 @@ final class IslandExamplesTests: XCTestCase {
             .appendingPathComponent("Sources/MacDesktopNotify/Island/Examples")
     }
 
+    private var layoutsDirectory: URL {
+        examplesDirectory.appendingPathComponent("layouts")
+    }
+
     private func jsonFiles(in directory: URL) throws -> [URL] {
         try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "json" }
@@ -20,7 +24,7 @@ final class IslandExamplesTests: XCTestCase {
     }
 
     func testLayoutExamplesParseWithZeroDiagnostics() throws {
-        let files = try jsonFiles(in: examplesDirectory)
+        let files = try jsonFiles(in: layoutsDirectory)
         XCTAssertFalse(files.isEmpty, "expected example layouts")
         for file in files {
             let document = IslandLayoutParser.parse(try Data(contentsOf: file))
@@ -53,7 +57,7 @@ final class IslandExamplesTests: XCTestCase {
 
     func testClassicExampleCoversAllFourSurfaces() throws {
         let document = IslandLayoutParser.parse(
-            try Data(contentsOf: examplesDirectory.appendingPathComponent("island-classic.json"))
+            try Data(contentsOf: layoutsDirectory.appendingPathComponent("classic.json"))
         )
         XCTAssertEqual(Set(document.surfaces.keys), Set(IslandSurface.allCases))
     }

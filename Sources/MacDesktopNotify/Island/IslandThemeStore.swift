@@ -15,8 +15,10 @@ enum IslandPaths {
         supportDirectory.appendingPathComponent("themes", isDirectory: true)
     }
 
-    static var layoutFile: URL {
-        supportDirectory.appendingPathComponent("island.json")
+    /// Named, selectable layouts. `island.json` at the support root is the
+    /// original single-file location and is still honored ("auto").
+    static var layoutsDirectory: URL {
+        supportDirectory.appendingPathComponent("layouts", isDirectory: true)
     }
 }
 
@@ -121,7 +123,8 @@ final class IslandThemeStore {
 
         switch load(themeID: requested) {
         case .success(let tokens):
-            apply(tokens: tokens, diagnostics: [])
+            let checked = validated(tokens)
+            apply(tokens: checked.tokens, diagnostics: checked.diagnostics)
         case .default:
             apply(tokens: nil, diagnostics: [])
         case .missing:
@@ -162,6 +165,20 @@ final class IslandThemeStore {
         cache.removeAll()
         self.diagnostics = diagnostics
         revision += 1
+    }
+
+    /// A theme may name fonts that are not installed. Strip those keys so the
+    /// render really falls back to the system font, and report it: a silent
+    /// fallback face is the kind of "why does it look wrong" that costs an hour.
+    private func validated(_ tokens: [String: Any]) -> (tokens: [String: Any], diagnostics: [String]) {
+        var tokens = tokens
+        var diagnostics: [String] = []
+        for key in [TokenKey.fontFamily.rawValue, TokenKey.monoFontFamily.rawValue] {
+            guard let name = tokens[key] as? String, !IslandFontCatalog.isAvailable(name) else { continue }
+            tokens.removeValue(forKey: key)
+            diagnostics.append("字体 \(name) 未安装（\(key)），已回退系统字体")
+        }
+        return (tokens, diagnostics)
     }
 
     private func refreshThemeIDs() {

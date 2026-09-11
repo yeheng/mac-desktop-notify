@@ -1,29 +1,53 @@
 import Foundation
 import Observation
 
-/// Loads `island.json` and keeps one parsed document per surface. Each surface
-/// opts in independently: a surface absent from `document.surfaces` renders the
-/// builtin Swift view, and a broken file is simply an empty document.
+/// Loads the selected layout and keeps one parsed document per surface.
+///
+/// A layout can come from three places, in the order the settings picker lists
+/// them:
+/// - `"auto"` (the default) - the legacy `island.json`, or the first
+///   `layouts/*.json` if that file is absent. This is what keeps existing
+///   installs working: no setting, file present, layout applies.
+/// - `"default"` - builtin Swift views, no custom layout.
+/// - `"<id>"` - `layouts/<id>.json`.
+///
+/// Each surface opts in independently: one absent from `document.surfaces`
+/// renders the builtin Swift view, and a broken file is an empty document.
 @MainActor
 @Observable
 final class IslandLayoutStore {
     static let shared = IslandLayoutStore()
 
+    static let autoID = "auto"
+    static let builtinID = "default"
+
     private(set) var document: IslandLayoutDocument = .empty
+    /// Named layouts found in `layouts/`, sorted; the picker lists these.
+    private(set) var layoutIDs: [String] = []
     /// Bumped on every reload; reading it is how a view subscribes.
     private(set) var revision = 0
 
-    @ObservationIgnored private var watcher: DirectoryWatcher?
-    @ObservationIgnored private var lastModified: Date?
+    @ObservationIgnored private var watchers: [DirectoryWatcher] = []
+    @ObservationIgnored private var lastSignature = ""
+    @ObservationIgnored private var attemptedSelection: String?
     @ObservationIgnored private let directory: URL
+    @ObservationIgnored private let layoutsDirectory: URL
 
-    init(directory: URL = IslandPaths.supportDirectory) {
+    init(
+        directory: URL = IslandPaths.supportDirectory,
+        layoutsDirectory: URL = IslandPaths.layoutsDirectory
+    ) {
         self.directory = directory
+        self.layoutsDirectory = layoutsDirectory
     }
 
-    private var layoutFile: URL { directory.appendingPathComponent("island.json") }
+    private var legacyLayoutFile: URL {
+        directory.appendingPathComponent("island.json")
+    }
 
     func node(for surface: IslandSurface) -> IslandNode? {
+        // Self-heals when the picker changes the selection.
+        if AppSettings.shared.islandLayoutID != attemptedSelection { reload() }
         _ = revision
         return document.node(for: surface)
     }
@@ -41,33 +65,93 @@ final class IslandLayoutStore {
 
     func start() {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        // Watch the containing directory: `island.json` is rewritten by atomic
-        // save (rename), which invalidates a file descriptor. The debounce plus
-        // the mtime check keep unrelated writes (history.json) from re-parsing.
-        watcher = DirectoryWatcher(url: directory) { [weak self] in
-            self?.reloadIfChanged()
-        }
-        watcher?.start()
+        try? FileManager.default.createDirectory(at: layoutsDirectory, withIntermediateDirectories: true)
+        // Watch both directories: `island.json` and each `layouts/*.json` are
+        // rewritten by atomic save (rename), which invalidates a file
+        // descriptor. The debounce plus the signature check keep unrelated
+        // writes (history.json) from re-parsing.
+        watchers = [
+            DirectoryWatcher(url: directory) { [weak self] in self?.reloadIfChanged() },
+            DirectoryWatcher(url: layoutsDirectory) { [weak self] in self?.reloadIfChanged() },
+        ]
+        watchers.forEach { $0.start() }
         reload()
     }
 
     func reload() {
-        let url = layoutFile
-        lastModified = modificationDate(of: url)
-        guard let data = try? Data(contentsOf: url) else {
+        let selection = AppSettings.shared.islandLayoutID
+        attemptedSelection = selection
+        refreshLayoutIDs()
+
+        switch resolvedTarget(for: selection) {
+        case .builtin:
             document = .empty
-            revision += 1
-            return
+        case .file(let url, let id, let explicit):
+            guard let data = try? Data(contentsOf: url) else {
+                // A missing file is only worth reporting when the user picked it
+                // by name; in auto mode "no file" is the normal first-run state.
+                document = explicit
+                    ? IslandLayoutDocument(surfaces: [:], diagnostics: [
+                        IslandParseDiagnostic(path: url.lastPathComponent, message: "布局文件不存在（\(id)），已回退内置")
+                    ])
+                    : .empty
+                lastSignature = signature()
+                revision += 1
+                return
+            }
+            document = IslandLayoutParser.parse(data)
         }
-        document = IslandLayoutParser.parse(data)
+        lastSignature = signature()
         revision += 1
     }
 
+    // MARK: - Resolution
+
+    private enum Target {
+        case builtin
+        case file(URL, id: String, explicit: Bool)
+    }
+
+    private func resolvedTarget(for selection: String) -> Target {
+        if selection == Self.builtinID { return .builtin }
+        if !selection.isEmpty, selection != Self.autoID {
+            let url = layoutsDirectory.appendingPathComponent("\(selection).json")
+            return .file(url, id: selection, explicit: true)
+        }
+        if FileManager.default.fileExists(atPath: legacyLayoutFile.path) {
+            return .file(legacyLayoutFile, id: "island.json", explicit: false)
+        }
+        if let first = layoutIDs.first {
+            return .file(layoutsDirectory.appendingPathComponent("\(first).json"), id: first, explicit: false)
+        }
+        return .builtin
+    }
+
+    private func refreshLayoutIDs() {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: layoutsDirectory.path)) ?? []
+        let ids = names
+            .filter { $0.hasSuffix(".json") }
+            .map { String($0.dropLast(".json".count)) }
+            .sorted()
+        if ids != layoutIDs { layoutIDs = ids }
+    }
+
+    // MARK: - Change detection
+
     private func reloadIfChanged() {
-        let url = layoutFile
-        let exists = FileManager.default.fileExists(atPath: url.path)
-        guard !exists || modificationDate(of: url) != lastModified else { return }
+        guard signature() != lastSignature else { return }
         reload()
+    }
+
+    /// mtimes of the legacy file and every named layout, so a `history.json`
+    /// write in the same directory does not force a re-parse.
+    private func signature() -> String {
+        let legacy = modificationDate(of: legacyLayoutFile)?.timeIntervalSince1970 ?? -1
+        let named = layoutIDs.map { id -> String in
+            let url = layoutsDirectory.appendingPathComponent("\(id).json")
+            return "\(id):\(modificationDate(of: url)?.timeIntervalSince1970 ?? -1)"
+        }
+        return "\(legacy)|\(named.joined(separator: ","))"
     }
 
     private func modificationDate(of url: URL) -> Date? {
