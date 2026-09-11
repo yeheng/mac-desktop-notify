@@ -66,7 +66,11 @@ private struct FullscreenKey: Equatable {
 
 @MainActor
 final class NotchPresenter: NotchPresenting {
-    private typealias IslandNotch = DynamicNotch<IslandExpandedView, CompactIslandView, CompactIslandView>
+    private typealias IslandNotch = DynamicNotch<
+        IslandEnvironmentScope<IslandExpandedView>,
+        IslandEnvironmentScope<CompactIslandView>,
+        IslandEnvironmentScope<CompactIslandView>
+    >
 
     /// One notch per display. See `PerScreenInstances` for why they cannot be shared.
     private let notches = PerScreenInstances<IslandNotch>()
@@ -231,11 +235,11 @@ final class NotchPresenter: NotchPresenting {
             // screen without one shows instead is `SummaryRouting`'s decision.
             style: .notch(topCornerRadius: 15, bottomCornerRadius: 20)
         ) {
-            IslandExpandedView()
+            IslandEnvironmentScope { IslandExpandedView() }
         } compactLeading: {
-            CompactIslandView(side: .leading)
+            IslandEnvironmentScope { CompactIslandView(side: .leading) }
         } compactTrailing: {
-            CompactIslandView(side: .trailing)
+            IslandEnvironmentScope { CompactIslandView(side: .trailing) }
         }
 
         notch.transitionConfiguration = DynamicNotchTransitionConfiguration(

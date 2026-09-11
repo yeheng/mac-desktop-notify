@@ -47,48 +47,25 @@ private struct MiniSummaryView: View {
 
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
+    @Environment(\.islandTokens) private var theme
 
     var body: some View {
-        HStack(spacing: 6) {
-            if settings.showUrgency {
-                // An island icon replaces the urgency dot but keeps its tint;
-                // an invalid SF Symbol name renders empty, by design.
-                if let icon = manager.current?.island?.icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(manager.displayUrgency?.color ?? .blue)
-                        .accessibilityHidden(true)
-                } else {
-                    Circle()
-                        .fill(manager.displayUrgency?.color ?? .blue)
-                        .frame(width: 6, height: 6)
-                        .accessibilityHidden(true)
-                }
-            }
-            Text(summary)
-                .lineLimit(1)
-                .frame(maxWidth: Self.maxTextWidth, alignment: .leading)
-            if settings.showHistoryCount, manager.unreadCount > 0 {
-                Text("\(manager.unreadCount)")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(.white.opacity(0.24), in: Capsule())
-                    .accessibilityLabel("\(manager.unreadCount) 条未读")
-            }
+        IslandSurfaceView(surface: .miniBar) {
+            builtinMiniBar
         }
-        .font(.system(size: 11, weight: .semibold, design: .rounded))
-        .foregroundStyle(.white)
+        .font(theme.font(size: 11, weight: .semibold, design: theme.fontDesign.design))
+        .foregroundStyle(theme.textPrimary)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(.black.opacity(0.72), in: Capsule())
+        .background(theme.miniBarFill, in: Capsule())
         .overlay(alignment: .bottom) {
             // Determinate progress as a 2pt strip along the capsule's bottom
-            // edge (already clamped to 0...1 at the ingress gate).
-            if let progress = manager.current?.island?.progress {
+            // edge (already clamped to 0...1 at the ingress gate). A custom
+            // layout places its own `progress` node instead.
+            if !hasCustomLayout, let progress = manager.current?.island?.progress {
                 GeometryReader { geo in
                     Capsule()
-                        .fill(manager.displayUrgency?.color ?? .blue)
+                        .fill(theme.urgencyColor(manager.displayUrgency))
                         .frame(width: geo.size.width * progress, height: 2)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                 }
@@ -118,6 +95,44 @@ private struct MiniSummaryView: View {
 
     private var summary: String {
         manager.compactStatus
+    }
+
+    /// The built-in mini bar content. A custom `miniBar` document replaces it;
+    /// the capsule background and the tap/context-menu wrapper stay in Swift.
+    @ViewBuilder
+    private var builtinMiniBar: some View {
+        HStack(spacing: 6) {
+            if settings.showUrgency {
+                // An island icon replaces the urgency dot but keeps its tint;
+                // an invalid SF Symbol name renders empty, by design.
+                if let icon = manager.current?.island?.icon {
+                    Image(systemName: icon)
+                        .font(theme.font(size: 10, weight: .bold))
+                        .foregroundStyle(theme.urgencyColor(manager.displayUrgency))
+                        .accessibilityHidden(true)
+                } else {
+                    Circle()
+                        .fill(theme.urgencyColor(manager.displayUrgency))
+                        .frame(width: 6, height: 6)
+                        .accessibilityHidden(true)
+                }
+            }
+            Text(summary)
+                .lineLimit(1)
+                .frame(maxWidth: Self.maxTextWidth, alignment: .leading)
+            if settings.showHistoryCount, manager.unreadCount > 0 {
+                Text("\(manager.unreadCount)")
+                    .font(theme.font(size: 10, weight: .bold, design: theme.fontDesign.design))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(theme.badgeFill, in: Capsule())
+                    .accessibilityLabel("\(manager.unreadCount) 条未读")
+            }
+        }
+    }
+
+    private var hasCustomLayout: Bool {
+        IslandLayoutStore.shared.node(for: .miniBar) != nil
     }
 }
 
@@ -218,7 +233,7 @@ final class MiniSummaryBars {
             backing: .buffered,
             defer: false
         )
-        panel.contentView = NSHostingView(rootView: MiniSummaryView())
+        panel.contentView = NSHostingView(rootView: IslandEnvironmentScope { MiniSummaryView() })
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true

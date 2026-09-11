@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import ServiceManagement
 import SwiftUI
@@ -477,6 +478,45 @@ private struct AppearanceSettingsContent: View {
             Text("摘要栏")
         }
 
+        Section {
+            Picker("主题", selection: $settings.islandThemeID) {
+                ForEach(IslandThemeStore.shared.themeIDs, id: \.self) { id in
+                    Text(id == IslandThemeStore.defaultThemeID ? "默认" : id).tag(id)
+                }
+            }
+            Button("打开配置文件夹") {
+                NSWorkspace.shared.open(IslandPaths.supportDirectory)
+            }
+        } header: {
+            Text("主题")
+        } footer: {
+            SectionFooter("把主题 JSON 放进 themes/ 文件夹即可在此选择；没有文件或解析失败时使用内置默认。")
+        }
+
+        themeDiagnostics
+
+        Section {
+            if let node = IslandLayoutStore.shared.node(for: .expanded) {
+                IslandEnvironmentScope { IslandNodeView(node: node) }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 150)
+                    .background(Color.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .environment(\.colorScheme, .dark)
+            } else {
+                Text(IslandLayoutStore.shared.hasCustomLayout
+                     ? "island.json 未定义 expanded，该面使用内置布局。"
+                     : "无 island.json，四个面均使用内置布局。")
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("布局预览（expanded）")
+        } footer: {
+            SectionFooter("island.json 存在且该 surface 可解析时即时生效；坏的 surface 只回退它自己。")
+        }
+
+        layoutDiagnostics
+
         // Geometry micro-adjustment and the calibration overlay are escape
         // hatches for a macOS release that moves the menu bar, not everyday
         // settings - a ±20pt slider is an admission that detection failed,
@@ -522,6 +562,38 @@ private struct AppearanceSettingsContent: View {
                     settings.resetDisplayDefaults()
                 }
                 Spacer()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var themeDiagnostics: some View {
+        if !IslandThemeStore.shared.diagnostics.isEmpty {
+            Section {
+                ForEach(IslandThemeStore.shared.diagnostics, id: \.self) { message in
+                    Text(message)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                        .textSelection(.enabled)
+                }
+            } header: {
+                Text("主题诊断")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var layoutDiagnostics: some View {
+        if !IslandLayoutStore.shared.diagnostics.isEmpty {
+            Section {
+                ForEach(IslandLayoutStore.shared.diagnostics, id: \.self) { message in
+                    Text(message)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                        .textSelection(.enabled)
+                }
+            } header: {
+                Text("布局诊断")
             }
         }
     }

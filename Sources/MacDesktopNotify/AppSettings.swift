@@ -72,6 +72,8 @@ final class AppSettings {
         }
     }
     var contentFontSize: Double { didSet { save(contentFontSize, key: Keys.contentFontSize) } }
+    /// Selected `themes/<id>.json`; `"default"` means the builtin literals.
+    var islandThemeID: String { didSet { save(islandThemeID, key: Keys.islandThemeID) } }
 
     var panelWidth: Double { didSet { save(panelWidth, key: Keys.panelWidth) } }
     var panelHeight: Double { didSet { save(panelHeight, key: Keys.panelHeight) } }
@@ -175,6 +177,7 @@ final class AppSettings {
         miniSummaryOnNotchlessScreens = defaults.object(forKey: Keys.miniSummaryOnNotchlessScreens.rawValue) as? Bool ?? true
         mirrorSummaryOnAllDisplays = defaults.object(forKey: Keys.mirrorSummaryOnAllDisplays.rawValue) as? Bool ?? false
         contentFontSize = defaults.object(forKey: Keys.contentFontSize.rawValue) as? Double ?? 12
+        islandThemeID = defaults.string(forKey: Keys.islandThemeID.rawValue) ?? "default"
         panelWidth = defaults.object(forKey: Keys.panelWidth.rawValue) as? Double ?? 720
         panelHeight = defaults.object(forKey: Keys.panelHeight.rawValue) as? Double ?? 360
         notchWidthOffset = defaults.object(forKey: Keys.notchWidthOffset.rawValue) as? Double ?? 0
@@ -262,6 +265,7 @@ final class AppSettings {
         case miniSummaryOnNotchlessScreens = "island.miniSummaryOnNotchlessScreens"
         case mirrorSummaryOnAllDisplays = "island.mirrorSummaryOnAllDisplays"
         case contentFontSize = "island.contentFontSize"
+        case islandThemeID = "island.themeID"
         case panelWidth = "island.panelWidth"
         case panelHeight = "island.panelHeight"
         case notchWidthOffset = "island.notchWidthOffset"

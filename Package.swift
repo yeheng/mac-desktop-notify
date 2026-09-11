@@ -20,7 +20,10 @@ let package = Package(
         .executableTarget(
             name: "MacDesktopNotify",
             dependencies: ["DynamicNotchKit"],
-            path: "Sources/MacDesktopNotify"
+            path: "Sources/MacDesktopNotify",
+            // Shipped as reference documentation, not bundled: the tests read
+            // them from source and assert they parse with zero diagnostics.
+            exclude: ["Island/Examples"]
         ),
         .testTarget(
             name: "MacDesktopNotifyTests",

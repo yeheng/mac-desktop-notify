@@ -71,13 +71,6 @@ private struct ActionCapsuleStyle: ButtonStyle {
     }
 }
 
-/// Text opacities on the black panel, chosen against WCAG AA (4.5:1 for body,
-/// 3:1 for large text). The old 0.35/0.42 values measured ~3.0:1/4.0:1.
-private enum PanelTextOpacity {
-    static let timestamp: Double = 0.62
-    static let subtle: Double = 0.66
-}
-
 /// Shared by the panel toolbar and context menu so cleanup scopes agree.
 private struct MessageManagementActions: View {
     private var manager: NotificationManager { .shared }
@@ -138,57 +131,30 @@ struct IslandContextMenu: ViewModifier {
 
 struct CompactIslandView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.islandTokens) private var theme
     let side: CompactIslandSide
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
 
     var body: some View {
-        Group {
-            switch side {
-            case .leading:
-                // Tier 1 when the live message carries island content: the
-                // sender's icon (replacing the urgency glyph, still tinted)
-                // plus one line of status text. No island → Tier 0 ambient:
-                // urgency glyph only - titles live on the card and in the
-                // message center, never in the pill (§6).
-                HStack(spacing: 4) {
-                    Image(systemName: manager.current?.island?.icon
-                          ?? manager.displayUrgency?.symbolName ?? "sparkles")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(settings.showUrgency ? (manager.displayUrgency?.color ?? .blue) : Color.secondary)
-                        .accessibilityHidden(true)
-                    if let text = manager.current?.island?.text {
-                        Text(text)
-                            .lineLimit(1)
-                            .fixedSize()
-                    }
-                }
-            case .trailing:
-                // ×N unread badge, N > 1 (Open Island style); the glyph alone
-                // already says "something" when there is exactly one.
-                if settings.showHistoryCount, manager.unreadCount > 1 {
-                    Text("×\(manager.unreadCount)")
-                        .lineLimit(1)
-                        .monospacedDigit()
-                        .contentTransition(.numericText())
-                }
-            }
+        IslandSurfaceView(surface: side == .leading ? .compactLeading : .compactTrailing) {
+            builtinCompact(side: side)
         }
-        .font(.system(size: 11, weight: .semibold, design: .rounded))
-        .foregroundStyle(.white.opacity(manager.pointerNearIsland ? 1 : 0.92))
+        .font(theme.font(size: 11, weight: .semibold, design: theme.fontDesign.design))
+        .foregroundStyle(theme.textPrimary.opacity(manager.pointerNearIsland ? 1 : 0.92))
         // Pre-expansion cue: the pill wakes up (slightly brighter, slightly
         // larger) the moment the pointer enters the activation zone, so the
         // hover-delayed panel never appears out of nowhere. `scaleEffect` is a
         // render transform - it does not feed back into `setCompactContentWidth`.
         .scaleEffect(manager.pointerNearIsland && !reduceMotion ? 1.06 : 1)
-        .animation(.easeOut(duration: 0.12), value: manager.pointerNearIsland)
+        .animation(.easeOut(duration: theme.motion(0.12)), value: manager.pointerNearIsland)
         .padding(.horizontal, max(4, 8 + settings.notchWidthOffset / 4))
         .padding(.vertical, max(2, 4 + settings.notchHeightOffset / 4))
         .fixedSize()
         // Status and count changes shift the pill's width; animate so it glides
         // instead of snapping.
-        .animation(.easeInOut(duration: 0.15), value: manager.compactStatus)
-        .animation(.easeInOut(duration: 0.15), value: manager.unreadCount)
+        .animation(.easeInOut(duration: theme.motion(0.15)), value: manager.compactStatus)
+        .animation(.easeInOut(duration: theme.motion(0.15)), value: manager.unreadCount)
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
             manager.setCompactContentWidth(width, for: side)
         }
@@ -197,59 +163,48 @@ struct CompactIslandView: View {
         .modifier(IslandContextMenu(expanded: false))
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
     }
+
+    /// The built-in pill content. A custom `compactLeading` / `compactTrailing`
+    /// document replaces exactly this node; the hover/geometry/a11y wrapper
+    /// above stays in Swift (§1).
+    @ViewBuilder
+    private func builtinCompact(side: CompactIslandSide) -> some View {
+        switch side {
+        case .leading:
+            HStack(spacing: 4) {
+                Image(systemName: manager.current?.island?.icon
+                      ?? manager.displayUrgency?.symbolName ?? "sparkles")
+                    .font(theme.font(size: 10, weight: .bold))
+                    .foregroundStyle(settings.showUrgency ? theme.urgencyColor(manager.displayUrgency) : Color.secondary)
+                    .accessibilityHidden(true)
+                if let text = manager.current?.island?.text {
+                    Text(text)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+        case .trailing:
+            // ×N unread badge, N > 1 (Open Island style); the glyph alone
+            // already says "something" when there is exactly one.
+            if settings.showHistoryCount, manager.unreadCount > 1 {
+                Text("×\(manager.unreadCount)")
+                    .lineLimit(1)
+                    .islandMonospacedDigits(theme.monoDigits)
+                    .contentTransition(.numericText())
+            }
+        }
+    }
 }
 
 struct IslandExpandedView: View {
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.islandTokens) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            // A hairline, not a Divider: Divider already draws a line, and
-            // overlaying a tint on it double-draws.
-            Rectangle()
-                .fill(.white.opacity(0.12))
-                .frame(height: 1)
-                .padding(.horizontal, 16)
-
-            if showsFullList {
-                MessageListView()
-            } else if let current = manager.current {
-                // An automatic opening gets the one actionable card, nothing
-                // else: the panel asked for the screen, so it may not parade
-                // the whole backlog. The full message center is reserved for
-                // an explicit open (manualExpanded). The card keeps the
-                // list's scroll + shrink-to-content bounds, minus the list.
-                // The scroll view is inset to the card's box (`.padding(16)`
-                // outside the frame, not on the content), so the viewport *is*
-                // the card: the scrollbar `PanelScrollView` draws sits inside
-                // the card's edge and clips where the card clips.
-                PanelScrollView {
-                    CurrentCard(notification: current)
-                        .id(current.id)
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .top).combined(with: .opacity),
-                            removal: .opacity
-                        ))
-                }
-                .frame(maxHeight: max(120, settings.panelHeight - 75 - 32))
-                .padding(16)
-            }
-            if !showsFullList {
-                Button {
-                    manager.openMessageCenter()
-                } label: {
-                    Label("查看全部消息（\(manager.unreadCount) 条未读）", systemImage: "list.bullet")
-                        .font(.system(size: 12, weight: .medium))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(ActionCapsuleStyle(primary: false))
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
-            }
+        IslandSurfaceView(surface: .expanded) {
+            builtinExpanded
         }
         .frame(width: max(320, settings.panelWidth))
         // The outer frame already clamps to `minHeight...maxHeight`, so the list
@@ -257,16 +212,16 @@ struct IslandExpandedView: View {
         // rendered inside a 360pt-tall scroll view - every arrival looked like a
         // popup regardless of how much content it had.
         .frame(minHeight: 190, maxHeight: max(220, settings.panelHeight), alignment: .top)
-        .background(Color.black)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .foregroundStyle(.white)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: manager.current?.id)
+        .background(theme.panelFill)
+        .clipShape(RoundedRectangle(cornerRadius: theme.panelRadius, style: .continuous))
+        .foregroundStyle(theme.textPrimary)
+        .animation(reduceMotion ? nil : .easeInOut(duration: theme.motion(0.18)), value: manager.current?.id)
         .onHover { manager.setHovering($0) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("通知面板")
         .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(.white.opacity(0.18), lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.panelRadius, style: .continuous)
+                .strokeBorder(theme.panelBorder, lineWidth: 1)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         }
@@ -282,71 +237,158 @@ struct IslandExpandedView: View {
         manager.displayState.openReason != .notification || manager.current == nil
     }
 
+    /// The built-in panel layout: header, hairline, body, footer. The body uses
+    /// `fillsAvailableSpace: false`, which keeps the historical
+    /// `panelHeight - 75 - 32` budget; a custom layout's `messageBody` slot uses
+    /// the flexible variant and lets the outer clamp size the panel (§4).
+    private var builtinExpanded: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            // A hairline, not a Divider: Divider already draws a line, and
+            // overlaying a tint on it double-draws.
+            Rectangle()
+                .fill(theme.divider)
+                .frame(height: 1)
+                .padding(.horizontal, theme.paddingPanel)
+            IslandPanelBody(fillsAvailableSpace: false)
+            if !showsFullList {
+                IslandFooterActions()
+            }
+        }
+    }
+
     private var header: some View {
         HStack(spacing: 9) {
             if settings.showUrgency {
                 Circle()
-                    .fill(manager.displayUrgency?.color ?? .blue)
+                    .fill(theme.urgencyColor(manager.displayUrgency))
                     .frame(width: 7, height: 7)
-                    .shadow(color: manager.displayUrgency?.color ?? .blue, radius: 4)
+                    .shadow(color: theme.urgencyColor(manager.displayUrgency), radius: 4)
                     .accessibilityHidden(true)
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(showsFullList ? "通知中心" : "当前通知")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(theme.font(size: 13, weight: .semibold, design: theme.fontDesign.design))
                     .lineLimit(1)
                 Text(showsFullList ? "\(manager.unreadCount) 条未读" : manager.compactStatus)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.66))
+                    .font(theme.font(size: 10, weight: .medium, design: theme.fontDesign.design))
+                    .foregroundStyle(theme.textSubtle)
             }
 
             Spacer(minLength: 12)
 
-            Button {
-                manager.markAllRead()
-            } label: {
-                Text("全部已读")
-                    .font(.system(size: 11, weight: .medium))
-                    .padding(.horizontal, 8)
-                    .frame(height: 28)
-            }
-            .buttonStyle(ActionCapsuleStyle(primary: false))
-            .help("全部标为已读")
-            .accessibilityLabel("全部标为已读")
-            .disabled(manager.unreadCount == 0)
-
-            Menu {
-                Button("历史信息…") {
-                    NotificationCenter.default.post(name: .openHistoryWindow, object: nil)
-                }
-                Divider()
-                MessageManagementActions()
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 12, weight: .bold))
-                    .frame(width: 28, height: 28)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("更多操作")
-            .accessibilityLabel("更多操作")
-
-            Button {
-                manager.dismissPanel()
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.75))
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(PanelIconButtonStyle())
-            .help("收起面板")
-            .accessibilityLabel("收起面板")
+            IslandHeaderActions()
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, theme.paddingPanel)
         .padding(.top, 14)
+        .padding(.bottom, 12)
+    }
+}
+
+/// The panel's action cluster, extracted so the DSL `headerActions` slot and
+/// the builtin header render the exact same controls.
+struct IslandHeaderActions: View {
+    @Environment(\.islandTokens) private var theme
+    private var manager: NotificationManager { .shared }
+
+    var body: some View {
+        Button {
+            manager.markAllRead()
+        } label: {
+            Text("全部已读")
+                .font(theme.font(size: 11, weight: .medium))
+                .padding(.horizontal, 8)
+                .frame(height: 28)
+        }
+        .buttonStyle(ActionCapsuleStyle(primary: false))
+        .help("全部标为已读")
+        .accessibilityLabel("全部标为已读")
+        .disabled(manager.unreadCount == 0)
+
+        Menu {
+            Button("历史信息…") {
+                NotificationCenter.default.post(name: .openHistoryWindow, object: nil)
+            }
+            Divider()
+            MessageManagementActions()
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(theme.font(size: 12, weight: .bold))
+                .frame(width: 28, height: 28)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("更多操作")
+        .accessibilityLabel("更多操作")
+
+        Button {
+            manager.dismissPanel()
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(theme.font(size: 10, weight: .bold))
+                .foregroundStyle(.white.opacity(0.75))
+                .frame(width: 28, height: 28)
+        }
+        .buttonStyle(PanelIconButtonStyle())
+        .help("收起面板")
+        .accessibilityLabel("收起面板")
+    }
+}
+
+/// The panel's scrollable body - the built-in `messageBody` slot. When
+/// `fillsAvailableSpace` is true (a custom layout), the scroll view has no
+/// height cap and eats whatever the outer `maxHeight` leaves it.
+struct IslandPanelBody: View {
+    var fillsAvailableSpace: Bool = false
+    @Environment(\.islandTokens) private var theme
+    private var manager: NotificationManager { .shared }
+    private var settings: AppSettings { .shared }
+
+    var body: some View {
+        if showsFullList {
+            MessageListView(fillsAvailableSpace: fillsAvailableSpace)
+        } else if let current = manager.current {
+            // An automatic opening gets the one actionable card, nothing else:
+            // the panel asked for the screen, so it may not parade the whole
+            // backlog. The scroll view is inset to the card's box (`.padding`
+            // outside the frame, not on the content), so the viewport *is* the
+            // card: the scrollbar sits inside the card's edge.
+            PanelScrollView {
+                CurrentCard(notification: current)
+                    .id(current.id)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .top).combined(with: .opacity),
+                        removal: .opacity
+                    ))
+            }
+            .frame(maxHeight: fillsAvailableSpace ? nil : max(120, settings.panelHeight - 75 - 32))
+            .padding(theme.paddingPanel)
+        }
+    }
+
+    private var showsFullList: Bool {
+        manager.displayState.openReason != .notification || manager.current == nil
+    }
+}
+
+/// The "查看全部消息" footer button - the built-in `footerActions` slot.
+struct IslandFooterActions: View {
+    @Environment(\.islandTokens) private var theme
+    private var manager: NotificationManager { .shared }
+
+    var body: some View {
+        Button {
+            manager.openMessageCenter()
+        } label: {
+            Label("查看全部消息（\(manager.unreadCount) 条未读）", systemImage: "list.bullet")
+                .font(theme.font(size: 12, weight: .medium))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+        }
+        .buttonStyle(ActionCapsuleStyle(primary: false))
+        .padding(.horizontal, theme.paddingPanel)
         .padding(.bottom, 12)
     }
 }
@@ -356,8 +398,10 @@ struct IslandExpandedView: View {
 /// Expanding a row is the explicit open that marks it read (v4 §4).
 /// §5.2: read-only - management lives in the history window.
 private struct MessageListView: View {
+    var fillsAvailableSpace: Bool = false
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
+    @Environment(\.islandTokens) private var theme
 
     // The accordion lives on the manager: the notch window is recreated per
     // presentation, and view-local @State died with it - reopening the panel
@@ -395,7 +439,7 @@ private struct MessageListView: View {
                 }
             }
             // Animate history churn so pushes slide in instead of popping.
-            .animation(.easeInOut(duration: 0.2), value: manager.pastHistory)
+            .animation(.easeInOut(duration: theme.motion(0.2)), value: manager.pastHistory)
         }
         // Upper bound only, so the panel shrinks to its content (see the outer
         // frame's note). The header above costs ~75pt, which is the only fixed
@@ -404,15 +448,15 @@ private struct MessageListView: View {
         // `.padding` sits outside the frame (not on the content) so the
         // viewport matches the rows' box: the scrollbar ends up inside the
         // cards rather than in the panel's gutter.
-        .frame(maxHeight: max(120, settings.panelHeight - 75 - 32))
-        .padding(16)
+        .frame(maxHeight: fillsAvailableSpace ? nil : max(120, settings.panelHeight - 75 - 32))
+        .padding(theme.paddingPanel)
     }
 
     /// Accordion toggle: tapping the open row folds it; tapping any other row
     /// opens it and folds the previous one in the same animation. Expanding a
     /// body is an explicit act of reading - the row becomes 历史.
     private func toggleExpanded(_ id: UUID) {
-        withAnimation(.easeInOut(duration: 0.15)) {
+        withAnimation(.easeInOut(duration: theme.motion(0.15))) {
             expandedHistoryID = expandedHistoryID == id ? nil : id
         }
         if expandedHistoryID == id {
@@ -428,26 +472,27 @@ private struct MessageListView: View {
 private struct CurrentCard: View {
     let notification: NotchNotification
     private var manager: NotificationManager { .shared }
+    @Environment(\.islandTokens) private var theme
     @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 7) {
                 Image(systemName: notification.urgency.symbolName)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(notification.urgency.color)
+                    .font(theme.font(size: 11, weight: .bold))
+                    .foregroundStyle(theme.urgencyColor(notification.urgency))
                     .accessibilityLabel(notification.urgency.accessibilityLabel)
                 Text("正在显示 · \(notification.urgency.accessibilityLabel)")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.66))
+                    .font(theme.font(size: 11, weight: .semibold, design: theme.fontDesign.design))
+                    .foregroundStyle(theme.textSubtle)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if showsInlineActions {
                     InlineActionCapsules(notification: notification)
                 }
                 Text(notification.timestamp.formatted(.relative(presentation: .named)))
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(PanelTextOpacity.timestamp))
+                    .font(theme.font(size: 10, weight: .medium, design: theme.fontDesign.design))
+                    .foregroundStyle(theme.textTimestamp)
             }
             // Combine the header only, never the whole card: a card-level
             // `.combine` folds the buttons below and the critical snooze
@@ -474,7 +519,7 @@ private struct CurrentCard: View {
             }
 
             Text(notification.title)
-                .font(.system(size: 14, weight: .semibold))
+                .font(theme.font(size: 14, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
 
@@ -490,10 +535,10 @@ private struct CurrentCard: View {
                 criticalControls
             }
         }
-        .padding(12)
-        .background(.white.opacity(hovering ? 0.14 : 0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(theme.paddingCard)
+        .background(hovering ? theme.cardFillHover : theme.cardFill, in: RoundedRectangle(cornerRadius: theme.cardRadius, style: .continuous))
         .onHover { hovering = $0 }
-        .animation(.easeInOut(duration: 0.12), value: hovering)
+        .animation(.easeInOut(duration: theme.motion(0.12)), value: hovering)
     }
 
     private var showsInlineActions: Bool {
@@ -509,7 +554,7 @@ private struct CurrentCard: View {
                 manager.snoozeCurrentCritical()
             } label: {
                 Text("稍后处理")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .font(theme.font(size: 11, weight: .semibold, design: theme.fontDesign.design))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
             }
@@ -519,8 +564,8 @@ private struct CurrentCard: View {
 
             if manager.criticalBacklogCount > 3 {
                 Text("还有 \(manager.criticalBacklogCount - 1) 条紧急等待")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(PanelTextOpacity.subtle))
+                    .font(theme.font(size: 10, weight: .medium, design: theme.fontDesign.design))
+                    .foregroundStyle(theme.textSubtle)
             }
             Spacer(minLength: 0)
         }
@@ -538,12 +583,13 @@ private struct HistoryRow: View {
     let isUnread: Bool
     let toggle: () -> Void
     private var manager: NotificationManager { .shared }
+    @Environment(\.islandTokens) private var theme
     @State private var hovering = false
 
     var body: some View {
         content
             .onHover { hovering = $0 }
-            .animation(.easeInOut(duration: 0.12), value: hovering)
+            .animation(.easeInOut(duration: theme.motion(0.12)), value: hovering)
     }
 
     private var content: some View {
@@ -553,18 +599,18 @@ private struct HistoryRow: View {
             // the action row below.
             HStack(alignment: .top, spacing: 9) {
                 Image(systemName: notification.urgency.symbolName)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(notification.urgency.color)
+                    .font(theme.font(size: 10, weight: .bold))
+                    .foregroundStyle(theme.urgencyColor(notification.urgency))
                     .frame(width: 16, height: 16)
                     .accessibilityLabel(notification.urgency.accessibilityLabel)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
                         Text(notification.title)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .font(theme.font(size: 12, weight: .semibold, design: theme.fontDesign.design))
                             .lineLimit(1)
                         if isUnread {
                             Circle()
-                                .fill(Color.blue)
+                                .fill(theme.accent)
                                 .frame(width: 5, height: 5)
                                 .accessibilityHidden(true)
                         }
@@ -574,7 +620,7 @@ private struct HistoryRow: View {
                     }
                     if !isExpanded, let previewText {
                         Text(previewText)
-                            .font(.system(size: 11, weight: .regular, design: .rounded))
+                            .font(theme.font(size: 11, weight: .regular, design: theme.fontDesign.design))
                             .foregroundStyle(.white.opacity(0.68))
                             .lineLimit(2)
                     }
@@ -583,14 +629,14 @@ private struct HistoryRow: View {
                 // Relative time everywhere: absolute clock time made the
                 // list read like a log file, not a message list.
                 Text(notification.timestamp.formatted(.relative(presentation: .named)))
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(PanelTextOpacity.timestamp))
+                    .font(theme.font(size: 10, weight: .medium, design: theme.fontDesign.design))
+                    .foregroundStyle(theme.textTimestamp)
                     .lineLimit(1)
                 // Rows are tappable; without an affordance that was
                 // undiscoverable. The chevron sits at the row's trailing edge,
                 // rotating to signal the open state.
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(theme.font(size: 8, weight: .bold))
                     .foregroundStyle(.white.opacity(0.45))
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .accessibilityHidden(true)
@@ -616,11 +662,11 @@ private struct HistoryRow: View {
 
             if isExpanded {
                 Text(notification.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(theme.font(size: 13, weight: .semibold))
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                 Text(notification.urgency.accessibilityLabel)
-                    .font(.system(size: 11))
+                    .font(theme.font(size: 11))
                     .foregroundStyle(.white.opacity(0.7))
                 NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
                 if !notification.actions.isEmpty {
@@ -631,7 +677,7 @@ private struct HistoryRow: View {
             }
         }
         .padding(10)
-        .background(.white.opacity(hovering ? 0.12 : 0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(hovering ? theme.historyRowFillHover : theme.historyRowFill, in: RoundedRectangle(cornerRadius: theme.historyRowRadius, style: .continuous))
     }
 
     /// Inline capsules only on the collapsed row: the expanded body already
@@ -703,14 +749,15 @@ private struct InlineActionCapsules: View {
 private struct NotificationBodyView: View {
     let bodyMarkdown: String
     private var settings: AppSettings { .shared }
+    @Environment(\.islandTokens) private var theme
 
     var body: some View {
         MarkdownBlocksView(
             bodyMarkdown: bodyMarkdown,
             style: MarkdownBlocksStyle(
-                proseFont: .system(size: settings.contentFontSize, design: .rounded),
-                codeFont: .system(size: settings.contentFontSize, design: .monospaced),
-                headingFont: .system(size: settings.contentFontSize + 2, weight: .semibold, design: .rounded),
+                proseFont: theme.font(size: CGFloat(settings.contentFontSize), design: theme.fontDesign.design),
+                codeFont: theme.font(size: CGFloat(settings.contentFontSize), design: .monospaced),
+                headingFont: theme.font(size: CGFloat(settings.contentFontSize) + 2, weight: .semibold, design: theme.fontDesign.design),
                 proseColor: .white.opacity(0.9),
                 codeColor: .white.opacity(0.88),
                 codeBackground: .white.opacity(0.07)
@@ -724,6 +771,7 @@ private struct ActionRow: View {
     let actions: [NotificationAction]
     /// The comment the user typed, when the button asked for one.
     let perform: (NotificationAction, String?) -> Void
+    @Environment(\.islandTokens) private var theme
 
     /// A button that asked for a comment (`&input=1`) parks here instead of
     /// firing on click: the receipt is written when the reason is submitted.
@@ -761,8 +809,8 @@ private struct ActionRow: View {
     private func commentRow(for action: NotificationAction) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("\(action.label)：填写原因（可选）")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(PanelTextOpacity.subtle))
+                .font(theme.font(size: 10, weight: .medium, design: theme.fontDesign.design))
+                .foregroundStyle(theme.textSubtle)
             HStack(spacing: 6) {
                 TextField("原因", text: $comment)
                     .textFieldStyle(.plain)

@@ -79,8 +79,8 @@ swift build -c release
 | `timeout` | `number` | ❌ | 设置值（默认 `5` 秒） | 自动收起秒数，范围 1-60；未传时使用「设置 → 通知」中的停留时长 |
 | `group` | `string` | ❌ | _(无)_ | 分组键，最长 64 字符。同组新消息**顶掉**旧消息（含历史与屏上），适合 CI 等重复任务；空白串视为无分组 |
 | `actions` | `string` | ❌ | _(空)_ | 操作按钮，JSON 数组 `[{"label":"允许","url":"http://..."}]`，最多 3 个。`url` 若为 `notch-notify://ack` 则记录回执而非打开浏览器（见下文） |
-| `blocks` | `array` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：结构化正文块数组，JSON 原生免转义；非空时优先于 `body`（见「本地 API → 推送通知」） |
-| `island` | `object` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：灵动岛状态行 `{"text","progress","icon"}`，驱动刘海 pill / 迷你条 / peek 停留态的紧凑面（见「本地 API → 推送通知」） |
+| `blocks` | `array` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：结构化正文块数组，JSON 原生免转义；非空时优先于 `body`（见 [docs/api.md](docs/api.md#31-blocks结构化正文)） |
+| `island` | `object` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：灵动岛状态行 `{"text","progress","icon"}`，驱动刘海 pill / 迷你条 / peek 停留态的紧凑面（见 [docs/api.md](docs/api.md#32-island灵动岛状态行)） |
 | `display` | `string` | ❌ | 设置值 | 展示档位：`"peek"` 轻提醒（只在摘要栏停留，不展开面板）/ `"expand"` 正常展开；未传时由「设置 → 通知 → 普通消息使用轻提醒」决定；critical 恒为展开，忽略此参数 |
 
 #### 编码与转义（重要）
@@ -114,7 +114,7 @@ API Server | ✅
 Web App | ✅&urgency=normal&timeout=10'
 ```
 
-需要 `##` 标题或正文含 `#` / `&` 时，改用本地 API（见下文）：
+需要 `##` 标题或正文含 `#` / `&` 时，改用本地 API（完整规则见 [docs/api.md](docs/api.md)）：
 
 ```bash
 curl http://127.0.0.1:4770/v1/push \
@@ -282,7 +282,7 @@ open 'notch-notify://clear?group=ci-build'
 
 ## 本地 API（HTTP / WebSocket / Unix Socket）
 
-三种对接方式共用同一套 API，仅监听本机（127.0.0.1），不对外网开放。在「设置 → 接口」中启用：
+三种对接方式共用同一套路由与校验（`APIRouter`），仅监听本机（127.0.0.1），不对外网开放。在「设置 → 接口」中启用：
 
 | 传输 | 默认 | 地址 |
 |------|------|------|
@@ -290,154 +290,27 @@ open 'notch-notify://clear?group=ci-build'
 | HTTP | 关（设置中开启） | `http://127.0.0.1:4770` |
 | WebSocket | 随 HTTP 一同开启 | `ws://127.0.0.1:4770/v1/events` |
 
-仅绑定本机地址并不足以挡住浏览器：DNS rebinding 能把恶意域名解析到 127.0.0.1（Host 头是唯一还写着预期主机的东西）。因此每个请求都校验 Host，WebSocket 升级时额外校验 Origin，两者只有本机取值才放行，其余返回 403。
-
-**这**不是鉴权，也不打算是：该服务只服务本机，任何本机进程都能直连它，所以 HTTP 路由本身不做 Origin 校验，接口也没有 token。HTTP 端口默认关闭，需要时在「设置 → 接口」手动开启；Unix socket 权限 0600，且浏览器无法连接。
-
-### 端点
-
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `POST` | `/v1/push` | 推送通知，同步返回结果（URL Scheme 做不到） |
-| `POST` | `/v1/clear` | 清除通知；body 缺省或为空 = 清空全部，`{"group":"ci-build"}` 只清该分组 |
+| `POST` | `/v1/push` | 推送通知，同步返回 `outcome` 与 `id`（URL Scheme 做不到） |
+| `POST` | `/v1/clear` | 清除通知；body 缺省或为空 = 清空全部，`{"group":"ci"}` 只清该分组 |
+| `POST` | `/v1/exec` | 手动执行脚本，同步等结果 |
 | `GET` | `/v1/history?limit=20` | 最近历史，默认 20 条、上限 50 条，含已读标记与未读数 |
 | `GET` | `/v1/status` | 未读数、历史条数、静默状态与各监听器状态 |
-
-未知路径返回 404，方法不匹配返回 405，参数不合法返回 400：`{"error":"…","field":"title"}`（`field` 仅在字段校验失败时出现，如 push 缺 `title`）。
-
-### 推送通知
-
-请求体为 JSON，字段与 URL Scheme 完全一致（仅 `title` 必填，body/urgency/timeout/group/actions 可选，长度与取值限制相同）：
 
 ```bash
 curl http://127.0.0.1:4770/v1/push \
   -d '{"title":"构建完成","body":"全部通过","urgency":"normal","timeout":10}'
-
-# Unix socket（无需开端口）。注意：系统自带 curl 的 --unix-socket 不接受
-# 带空格的路径，需先做一个无空格的软链：
-ln -sf "$HOME/Library/Application Support/MacDesktopNotify/api.sock" /tmp/mdn-api.sock
-curl --unix-socket /tmp/mdn-api.sock http://localhost/v1/push -d '{"title":"构建完成"}'
+# → {"outcome":"displayed","id":"…"}
 ```
 
-响应：
+WebSocket 连上先收 `hello`（带当前未读数），随后实时推送 `ack`（审批回执）与 `unreadCount`（未读数变化）——磁盘轮询可以退役了。同一连接也可直接发 `push` / `clear` / `exec` 命令，`ref` 关联请求与结果。
 
-```json
-{"outcome": "displayed", "id": "…"}
-```
+仅绑定本机地址并不足以挡住浏览器：DNS rebinding 能把恶意域名解析到 127.0.0.1（Host 头是唯一还写着预期主机的东西）。因此每个请求都校验 Host，WebSocket 升级时额外校验 Origin，两者只有本机取值才放行，其余返回 403。
 
-`outcome` ∈ `displayed`（成为当前展示，顶掉上一条）/ `queued`（critical 占屏，消息存为未读历史）/ `withheld`（静默期，仅入历史）。
+**这不是鉴权，也不打算是**：该服务只服务本机，任何本机进程都能直连它，接口没有 token。HTTP 端口默认关闭，需要时在「设置 → 接口」手动开启；Unix socket 权限 0600，且浏览器无法连接。
 
-`actions` 同样支持，规则与 URL Scheme 一致（最多 3 个按钮，`notch-notify://ack` 记录回执）：
-
-```bash
-curl http://127.0.0.1:4770/v1/push \
-  -d '{"title":"部署审批","urgency":"critical","actions":[{"label":"允许","url":"notch-notify://ack?token=deploy-42&label=approve"}]}'
-```
-
-#### 结构化正文（`blocks`）
-
-多行 Markdown 塞进 JSON 字符串是转义地狱：每个换行都是一次 `\n`，人类根本没法维护。本地 API 的 push 支持结构化块数组，JSON 原生表达，入口反糖成规范 Markdown 后与 `body` 走同一条渲染管线——历史、搜索、脚本桥看到的仍是同一个字符串：
-
-```bash
-curl http://127.0.0.1:4770/v1/push -d '{
-  "title": "部署报告",
-  "blocks": [
-    {"type": "heading", "text": "摘要", "level": 2},
-    {"type": "text", "text": "全部通过，无回归"},
-    {"type": "list", "items": ["单测 353/353", "集成 12/12"], "ordered": true},
-    {"type": "code", "text": "exit 0"}
-  ],
-  "timeout": 10
-}'
-```
-
-| 块类型 | 字段 | 反糖结果 |
-|--------|------|----------|
-| `heading` | `text` + `level`（1-6，越界钳制） | `## text` |
-| `text` | `text` | 原样文本 |
-| `list` | `items` + `ordered`（默认 `false`） | `- item` / `1. item` 逐行 |
-| `code` | `text` | ` ```\ncode\n``` ` 围栏 |
-
-规则：
-
-- `blocks` 非空时**优先于** `body`——发送方显式选择了结构化。
-- 未知 `type` 或空内容的条目**静默丢弃**，不拒绝整条推送（与 `actions` 同一哲学：truncate, never reject）。
-- 反糖总量仍受 5000 字符上限约束。
-- URL Scheme 不支持 `blocks`（query 参数不是结构化 JSON 的载体）；WebSocket push 帧与 HTTP body 规则相同。
-
-#### 灵动岛状态行（`island`）
-
-推送可携带结构化 `island` 字段，让摘要面（刘海 pill / 无刘海屏迷你条 / `display=peek` 停留态）直接显示一行发送方驱动的状态，而不只是「新消息」：
-
-```bash
-curl http://127.0.0.1:4770/v1/push -d '{
-  "title": "部署",
-  "blocks": [{"type": "code", "text": "exit 0"}],
-  "island": {"text": "构建中 42%", "progress": 0.42, "icon": "hammer.fill"},
-  "group": "ci"
-}'
-```
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `text` | `string` | 状态行文本，trim、最长 64 字符。刘海 pill 在 glyph 旁显示（单行）；迷你条与展开面板头部的状态行直接采用 |
-| `progress` | `number` | 0-1 的确定进度，越界钳制、NaN/Inf 丢弃；迷你条在胶囊底边画一条 2pt 进度细条 |
-| `icon` | `string` | SF Symbol 名，替换紧急度 glyph（仍染紧急度色）；无效名渲染为空 |
-
-规则：
-
-- 整体缺失或全部字段为空 → 视为无 `island`，三个摘要面的渲染与接入前完全一致。
-- 未知字段忽略；单字段类型错误只丢弃该字段，不拒绝整条推送（与 `actions`/`blocks` 同一哲学）。
-- 配合 `group` 顶替即是进度刷新：CI 周期推同一 `group=ci`，岛上 42% → 60%，消息不堆叠。
-- URL Scheme 不支持 `island`（同 `blocks`：query 不是结构化 JSON 的载体）；脚本桥 `notify.push` 与脚本回填不合并 `island`。
-
-### 历史与状态
-
-```bash
-curl 'http://127.0.0.1:4770/v1/history?limit=5'
-```
-
-```json
-{
-  "items": [
-    {"id":"…","title":"构建完成","body":"全部通过","urgency":"normal","timeout":10,
-     "timestamp":1789999999.17,"actions":[],"group":"ci-build","read":false}
-  ],
-  "unreadCount": 1
-}
-```
-
-`timestamp` 是 Unix 秒（Double）。`limit` 超过 50 时按 50 截断，条目按时间升序（最新在末尾）。
-
-```bash
-curl http://127.0.0.1:4770/v1/status
-```
-
-```json
-{"unreadCount":3,"historyCount":12,"silenced":false,
- "listening":{"unixSocket":true,"http":true}}
-```
-
-### WebSocket 事件流
-
-连接 `ws://127.0.0.1:4770/v1/events`：先收到 `hello`（带当前未读数），随后按钮回执（ack）与未读数变化实时推送——磁盘轮询可以退役了：
-
-```json
-{"type": "hello", "unreadCount": 2}
-{"type": "ack", "token": "deploy-42", "label": "approve", "notificationID": "…", "decidedAt": 1789999999.17}
-{"type": "unreadCount", "count": 3}
-```
-
-同一连接也可直接发命令，`ref` 用于关联请求与结果：
-
-```json
-{"op":"push","ref":"r1","title":"…"}
-{"type":"result","ref":"r1","ok":true,"outcome":"displayed","id":"…"}
-{"op":"clear","ref":"r2","group":"ci-build"}
-{"type":"result","ref":"r2","ok":true}
-```
-
-未知 `op` 或非法 JSON 返回 `ok:false`，`error` 字段说明原因。
+📖 **完整指南：[docs/api.md](docs/api.md)** — 全部推送字段（含 `blocks` / `island` / `actions` 的完整规则）、HTTP 状态码表、WebSocket 帧全谱、命令行调用方式与编码陷阱、排错清单。
 
 ---
 
@@ -624,6 +497,109 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 
 ---
 
+## 自定义灵动岛外观
+
+灵动岛的**外壳**（刘海 pill 两面、展开面板、无刘海迷你条）可以按主题和 JSON 布局定制。文件存在即生效，没有开关设置项：删文件即回退，无需重启。定制的是外壳，不是消息正文，也不是行为（点击 / URL / 脚本 / 窗口几何留在 Swift）。
+
+📖 **完整指南：[docs/island-appearance.md](docs/island-appearance.md)** — 全部 token 默认值与范围、11 种节点逐键参考、通用修饰键、8 绑定 + 12 谓词、示例布局/主题、上限与诊断、排错清单。下面只留速查。
+
+### 文件位置
+
+```
+~/Library/Application Support/MacDesktopNotify/
+  island.json                 # 布局文档；存在且可解析时按 surface 生效
+  themes/
+    midnight.json             # 主题；缺失 = 内置默认（等于今天的字面量）
+```
+
+「设置 → 外观」可切换主题、预览 `expanded` 布局、查看解析诊断，并有「打开配置文件夹」。改文件后自动热重载（200ms 去抖）。
+
+### 主题 token
+
+主题是一个 JSON：`{"name":"...","tokens":{...}}`。颜色支持 `#RRGGBB` / `#RRGGBBAA` 或 `{"light":"#...","dark":"#..."}`。未知 token 忽略，缺失取默认，数值 clamp。
+
+| token | 默认 | 说明 |
+|---|---|---|
+| `panelFill` | `#000000` | 面板底色 |
+| `panelBorder` | `#FFFFFF2E` | 面板描边 |
+| `divider` | `#FFFFFF1F` | 分隔线 |
+| `textPrimary` | `#FFFFFFFF` | 主文本 |
+| `textSubtle` | `#FFFFFFA8` | 次级文本 |
+| `textTimestamp` | `#FFFFFF9E` | 时间戳 |
+| `cardFill` / `cardFillHover` | `#FFFFFF17` / `#FFFFFF24` | 当前卡片底 / hover |
+| `historyRowFill` / `historyRowFillHover` | `#FFFFFF12` / `#FFFFFF1F` | 历史行底 / hover |
+| `miniBarFill` | `#000000B8` | 迷你条胶囊底 |
+| `badgeFill` | `#FFFFFF3D` | 未读徽章底 |
+| `accent` / `critical` | `.blue` / `.red` | 普通 / 紧急色 |
+| `panelRadius` / `cardRadius` / `historyRowRadius` | `22` / `12` / `10` | 圆角（0…48） |
+| `paddingPanel` / `paddingCard` | `16` / `12` | 内边距（0…64） |
+| `fontDesign` | `rounded` | 固定枚举 `default\|rounded\|serif\|monospaced` |
+| `fontScale` | `1.0` | 壳层字号乘数（0.8…1.6） |
+| `monoDigits` | `true` | 数字等宽 |
+| `panelMaterial` | `solid` | `solid\|popover` |
+| `motionScale` | `1.0` | 动效倍率（0…2） |
+
+### 布局文档
+
+`island.json` 顶层是 `{ "version": 1, "surfaces": { ... } }`。四个 surface 各自独立：`compactLeading`、`compactTrailing`、`expanded`、`miniBar`。某个 surface 缺失或无效时，只有它回退内置视图。
+
+**节点闭集（11 种）**：
+
+| `type` | 键 |
+|---|---|
+| `vstack` / `hstack` / `zstack` | `spacing`, `alignment`, `children` |
+| `text` | `value`(绑定/字面串), `size`, `weight`, `design`, `tint`, `lineLimit` |
+| `image` | `system`(SF Symbol，可为绑定), `size`, `weight`, `tint` |
+| `dot` | `size`, `fill` |
+| `badge` | `value`(`$unread`), **`format` 必填**（`timesN`=`×N`，`count`=裸数字）, `fill`, `clip` |
+| `progress` | `value`(`$progress`), `height`, `fill`, `track` |
+| `divider` | — |
+| `spacer` | `minLength` |
+| `slot` | `name` ∈ `headerActions` / `messageBody` / `footerActions` |
+
+**通用修饰键**（任意节点；应用顺序固定 `if` → `frame` → `padding` → `background` → `clip` → `opacity` → `a11y`）：
+
+```
+frame:      { width, height, minWidth, maxWidth, minHeight, maxHeight, alignment }
+padding:    { top, bottom, leading, trailing, horizontal, vertical }
+background: { fill, radius, clip: "rounded"|"capsule", stroke, strokeWidth }
+a11y:       { label, hidden }
+```
+
+**取值规则**：`$xxx` = 绑定；`@xxx` 或裸名 = 主题 token；`#RRGGBB` / `#RRGGBBAA` = 字面色。没有表达式、插值、运算或拼接。颜色 token 也可写成 `{"light":"#...","dark":"#..."}`。
+
+**绑定（8 个，全部预格式化）**：`$status`、`$islandText`、`$panelTitle`、`$panelSubtitle`、`$icon`、`$unread`、`$progress`、`$urgency`。
+
+**谓词（12 个，用于 `if`）**：`hasStatus`、`hasIslandText`、`hasCurrent`、`hasUnread`、`manyUnread`、`isCritical`、`showUrgency`、`showHistoryCount`、`showsPillBadge`、`showsMiniBarBadge`、`hasProgress`、`showsCurrentCard`。未知谓词按 **true（可见）** 处理。
+
+**原生内容槽**：`messageBody` 是消息卡片/历史列表（含滚动与内边距），`headerActions` 是面板头部按钮，`footerActions` 是「查看全部消息」。这些内容、Markdown 正文、点击/URL/脚本都留在 Swift，JSON 只决定盒子怎么摆。
+
+### 示例
+
+`Sources/MacDesktopNotify/Island/Examples/` 下有可直接复制到配置目录的示例：
+
+- 主题：`themes/midnight.json`（暗色）、`themes/solar.json`（暖色，含 light/dark 双色）
+- 布局：`island-classic.json`（等于内置壳布局）、`island-progress.json`（紧凑面 + 迷你条进度条）
+
+```bash
+cp "$(pwd)/Sources/MacDesktopNotify/Island/Examples/island-classic.json" \
+   ~/Library/Application\ Support/MacDesktopNotify/island.json
+mkdir -p ~/Library/Application\ Support/MacDesktopNotify/themes
+cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/themes/*.json \
+   ~/Library/Application\ Support/MacDesktopNotify/themes/
+```
+
+### 回退与边界
+
+- **逐 surface 回退**：某个 surface 解析失败、根节点被丢空、或文件里没写它 → 只回退该面，其余不受影响，绝不出现空白岛。
+- **宽容解码**：未知 `type` 丢该子树、未知键忽略、字段类型错丢该字段、`version` 未知整体回退；上限为文件 ≤ 64KB、深度 ≤ 12、每 surface 节点 ≤ 256、单字符串 ≤ 256、frame 数值 ≤ 4000。
+- **诊断带节点路径**（如 `surfaces.expanded.children[2].background.fill: 颜色解析失败`），显示在「设置 → 外观」。
+- **收起路径永远在 Swift**：`Esc`、`⌃⌥N`、右键菜单与 DSL 无关，自定义布局无法移除它们；删文件立即回退。
+
+**不做**：表达式/条件组合、循环或列表模板、在 JSON 里定义按钮或点击行为、描述消息正文、窗口宽高与刘海几何、每节点动画、多主题继承 / `$ref` / 跨文件 include、per-surface 主题（主题全局，布局 per-surface）。
+
+---
+
 ## 项目结构
 
 ```
@@ -639,6 +615,16 @@ Sources/MacDesktopNotify/
 ├── AppSettings.swift                    # 类型化设置与持久化（@Observable）
 ├── IslandDisplayState.swift             # 两态展示状态（NotchDisplayState + OpenReason，打开意图随状态流转）
 ├── IslandGeometry.swift                 # 刘海区域计算、触发区、屏幕标识
+├── Island/                              # 自定义外观：主题 token + JSON-DSL 布局
+│   ├── IslandTokens.swift               # token 闭集 + 默认值（= 今天的字面量）
+│   ├── IslandThemeStore.swift           # themes/ 目录、当前主题、热重载
+│   ├── IslandNode.swift                 # 11 种节点 + 修饰键（纯值类型）
+│   ├── IslandLayoutParser.swift         # 宽容 JSON walker + 上限 + 路径诊断
+│   ├── IslandLayoutStore.swift          # island.json 加载与热重载
+│   ├── IslandBindings.swift             # 8 个绑定 + 12 个谓词
+│   ├── IslandNodeView.swift             # 递归渲染器（具体类型，无 AnyView）
+│   ├── IslandSurfaceView.swift          # surface 入口 + 原生 slot
+│   └── Examples/                        # 示例主题与布局（不打包）
 ├── IslandHaptics.swift                  # 触控板触觉反馈（触发区进入、点击、手势确认）
 ├── NotificationManager.swift            # 当前消息、历史、未读、dwell 状态机、静默闸门（@MainActor）
 ├── NotificationLog.swift                # 消息历史与已读集合（50 条上限、分组整组移除、撤销恢复）

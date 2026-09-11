@@ -61,6 +61,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncPanelHotkey()
         // Local API listeners (HTTP/WS on 127.0.0.1, unix socket in App Support).
         APIListenerService.shared.restart()
+        // Custom island appearance: themes/ and island.json, watched for edits.
+        IslandThemeStore.shared.start()
+        IslandLayoutStore.shared.start()
         // The observers below pair `queue: .main` with `MainActor.assumeIsolated`:
         // delivery already lands on the main thread, so handlers run inline
         // instead of one Task hop later. Keep the queue with the assertion —

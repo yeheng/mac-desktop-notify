@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "surfaces": {
+    "compactLeading": {
+      "type": "hstack", "spacing": 5, "children": [
+        { "type": "dot", "size": 6, "fill": "$urgency" },
+        { "type": "text", "value": "$islandText", "size": 11, "weight": "semibold", "if": "hasIslandText" },
+        { "type": "spacer" },
+        { "type": "progress", "value": "$progress", "height": 3, "fill": "$urgency", "if": "hasProgress" }
+      ]
+    },
+    "miniBar": {
+      "type": "hstack", "spacing": 6, "children": [
+        { "type": "image", "system": "$icon", "size": 10, "weight": "bold", "tint": "$urgency" },
+        { "type": "text", "value": "$status" },
+        { "type": "badge", "value": "$unread", "format": "count", "if": "showsMiniBarBadge" },
+        { "type": "spacer", "minLength": 2 },
+        { "type": "progress", "value": "$progress", "height": 2, "fill": "$urgency", "if": "hasProgress" }
+      ]
+    }
+  }
+}

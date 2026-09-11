@@ -1,0 +1,29 @@
+{
+  "name": "solar",
+  "tokens": {
+    "panelFill": { "light": "#FFF8EC", "dark": "#1A1408" },
+    "panelBorder": "#00000022",
+    "divider": "#00000018",
+    "textPrimary": { "light": "#1A1408", "dark": "#FFF3DC" },
+    "textSubtle": { "light": "#1A140899", "dark": "#FFF3DCA8" },
+    "textTimestamp": { "light": "#1A14087A", "dark": "#FFF3DC8C" },
+    "cardFill": { "light": "#0000000F", "dark": "#FFFFFF14" },
+    "cardFillHover": { "light": "#0000001C", "dark": "#FFFFFF22" },
+    "historyRowFill": { "light": "#0000000A", "dark": "#FFFFFF10" },
+    "historyRowFillHover": { "light": "#00000017", "dark": "#FFFFFF1E" },
+    "miniBarFill": "#1A1408B8",
+    "badgeFill": "#FFFFFF2E",
+    "accent": "#E8871E",
+    "critical": "#D7263D",
+    "panelRadius": 18,
+    "cardRadius": 10,
+    "historyRowRadius": 8,
+    "paddingPanel": 14,
+    "paddingCard": 10,
+    "fontDesign": "default",
+    "fontScale": 1.05,
+    "monoDigits": false,
+    "panelMaterial": "solid",
+    "motionScale": 0.8
+  }
+}

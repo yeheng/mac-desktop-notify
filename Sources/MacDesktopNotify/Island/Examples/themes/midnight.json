@@ -1,0 +1,29 @@
+{
+  "name": "midnight",
+  "tokens": {
+    "panelFill": { "light": "#F2F2F7", "dark": "#0B0B0F" },
+    "panelBorder": "#FFFFFF2E",
+    "divider": "#FFFFFF1F",
+    "textPrimary": "#FFFFFFFF",
+    "textSubtle": "#FFFFFFA8",
+    "textTimestamp": "#FFFFFF9E",
+    "cardFill": "#FFFFFF17",
+    "cardFillHover": "#FFFFFF24",
+    "historyRowFill": "#FFFFFF12",
+    "historyRowFillHover": "#FFFFFF1F",
+    "miniBarFill": "#000000B8",
+    "badgeFill": "#FFFFFF3D",
+    "accent": "#4C8DFF",
+    "critical": "#FF453A",
+    "panelRadius": 22,
+    "cardRadius": 12,
+    "historyRowRadius": 10,
+    "paddingPanel": 16,
+    "paddingCard": 12,
+    "fontDesign": "rounded",
+    "fontScale": 1.0,
+    "monoDigits": true,
+    "panelMaterial": "solid",
+    "motionScale": 1.0
+  }
+}
