@@ -7,25 +7,19 @@ let package = Package(
     products: [
         .executable(name: "MacDesktopNotify", targets: ["MacDesktopNotify"])
     ],
-    dependencies: [
-        // Pinned to the exact revision this app was built and verified against.
-        // `branch: "main"` meant any `swift package update` could silently change
-        // rendering: the kit's floating style went from a rounded rectangle
-        // (tag 1.1.0) to a `Capsule` clip, which is what put pale wedges in the
-        // notch panel's corners on displays without a notch. A revision cannot
-        // drift, and the one place that depends on the floating path is already
-        // forced to the notch style on purpose (see `NotchPresenter.makeNotch`).
-        .package(
-            url: "https://github.com/yeheng/DynamicNotchKit",
-            revision: "46c2af215639941184b30b277c18bfc3dddba291"
-        )
-    ],
     targets: [
+        // Vendored from https://github.com/yeheng/DynamicNotchKit (MIT, see its
+        // LICENSE): upstream `cd0b3e5` plus the fork's pill-radius tuning, with
+        // the floating `Capsule` clip reverted. Local patches are marked
+        // `local patch:` in the sources. Owned here on purpose - the kit's API
+        // is too narrow for what the app needs to ask it (see IslandGeometry).
+        .target(
+            name: "DynamicNotchKit",
+            path: "Sources/DynamicNotchKit"
+        ),
         .executableTarget(
             name: "MacDesktopNotify",
-            dependencies: [
-                .product(name: "DynamicNotchKit", package: "DynamicNotchKit")
-            ],
+            dependencies: ["DynamicNotchKit"],
             path: "Sources/MacDesktopNotify"
         ),
         .testTarget(

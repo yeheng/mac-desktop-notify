@@ -543,7 +543,7 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 
 | 库 | 说明 |
 |----|------|
-| [DynamicNotchKit](https://github.com/yeheng/DynamicNotchKit) | macOS 灵动岛窗口、摘要态与转场基础 |
+| [DynamicNotchKit](https://github.com/yeheng/DynamicNotchKit) | macOS 灵动岛窗口、摘要态与转场基础。**已本地 vendor**：源码在 `Sources/DynamicNotchKit/`（MIT，随附 `LICENSE`），基线为上游 `cd0b3e5` + pill 圆角调整，本地改动在源码中以 `local patch:` 标出（回退了把 floating 渲染裁成 `Capsule` 的改动）。不再依赖远端包，`Package.resolved` 随之移除 |
 
 ---
 
@@ -568,6 +568,12 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 ## 项目结构
 
 ```
+Sources/DynamicNotchKit/                  # 本地 vendor 的 DynamicNotchKit（MIT）
+├── DynamicNotch/                         # DynamicNotch 主体、样式、状态、转场配置、hover 行为
+├── DynamicNotchInfo/                     # 预设信息卡样式（应用未使用，随库保留）
+├── Utility/                              # NSScreen 刘海测量、panel、环境值、材质视图
+└── Views/                                # NotchView / NotchlessView / NotchShape 等渲染
+
 Sources/MacDesktopNotify/
 ├── main.swift                          # 入口
 ├── AppDelegate.swift                   # 应用代理，URL Scheme 处理，菜单栏，快捷键，提示音
