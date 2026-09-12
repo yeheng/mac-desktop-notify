@@ -252,6 +252,42 @@ final class APIListenerServiceTests: SettingsIsolatedTestCase {
         )
     }
 
+    /// A path past `sun_path` is redirected to a short deterministic one, and the
+    /// redirect is surfaced rather than left as an unexplained bind failure.
+    func testOverlongSocketPathIsRedirected() {
+        let long = "/tmp/" + String(repeating: "a", count: 140) + ".sock"
+        XCTAssertGreaterThan(long.utf8.count, APIListenerService.maxSocketPathBytes)
+
+        let service = APIListenerService(socketPath: long)
+        XCTAssertNotEqual(service.resolvedSocketPath, long)
+        XCTAssertLessThanOrEqual(service.resolvedSocketPath.utf8.count, APIListenerService.maxSocketPathBytes)
+        XCTAssertTrue(service.resolvedSocketPath.hasPrefix("/tmp/mdn-"))
+        XCTAssertNotNil(service.socketPathNotice)
+    }
+
+    /// Same input → same short path, so two launches of the same user collide on
+    /// one socket (and the liveness probe protects them) instead of splitting.
+    func testShortSocketPathIsDeterministic() {
+        let long = "/tmp/" + String(repeating: "b", count: 200) + ".sock"
+        XCTAssertEqual(
+            APIListenerService.shortSocketPath(for: long),
+            APIListenerService.shortSocketPath(for: long)
+        )
+        XCTAssertNotEqual(
+            APIListenerService.shortSocketPath(for: long),
+            APIListenerService.shortSocketPath(for: long + "x")
+        )
+    }
+
+    /// Inside the limit the path is used verbatim - the default location stays
+    /// backward compatible for existing clients.
+    func testShortSocketPathIsUnchanged() {
+        let short = "/tmp/mdn-test-\(UUID().uuidString.prefix(8)).sock"
+        let service = APIListenerService(socketPath: short)
+        XCTAssertEqual(service.resolvedSocketPath, short)
+        XCTAssertNil(service.socketPathNotice)
+    }
+
     /// The mirror image: a file this process never bound must survive `stop()`.
     func testStopKeepsForeignLiveSocket() async throws {
         let path = tempSocketPath

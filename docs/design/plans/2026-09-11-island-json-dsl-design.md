@@ -296,7 +296,8 @@ Sources/MacDesktopNotify/Island/
   IslandBindings.swift        // 闭集绑定，预格式化，从 manager/settings 派生
   IslandNodeView.swift        // 递归渲染：一个 struct + switch，无 AnyView
   IslandSurfaceView.swift     // 每个 surface 的入口：有自定义布局 → DSL，否则 → 内置 Swift 视图
-  Examples/                   // 2 示例主题 + 2 示例布局（T6；被单测加载并断言零诊断）
+  BuiltinConfigs.swift        // app bundle 里的内置 layouts/themes 定位
+  (Builtin/)                  // 随包发布的内置预设：layouts/ + themes/；用户目录同名文件覆盖
 ```
 
 `Package.swift` 的 target 以 `Sources/MacDesktopNotify` 为 path，子目录无需改 manifest。
@@ -492,7 +493,7 @@ P4 可选打磨（按需，不预先做）
 ### T6 文档与示例
 - **目标**：README 新增「自定义灵动岛外观」，附节点/token 表与 2 个示例主题 + 2 个示例布局
 - **理由**：这是给用户写的 JSON，没有 schema 文档等于没有功能
-- **范围**：`README.md`、`Sources/MacDesktopNotify/Island/Examples/`
+- **范围**：`README.md`、`Sources/MacDesktopNotify/Builtin/`（内置主题/布局，随包发布；仓库根 `layouts/`、`themes/` 为软链）
 - **方案**：沿用 README 现有 local API 章节风格（表格 + bash/json 示例）；明确写出"不做"清单与回退语义
 - **测试**：示例文件必须被 Parser 接受（单测加载并断言零诊断）
 - **验收**：示例文件零诊断；文档中每个字段都能在代码里找到对应

@@ -104,50 +104,51 @@ extension ScriptValue: Decodable {
 /// 看门狗：run() 用 resume-once 盒做双竞速——线程完成与睡满预算，先到先得。
 /// 超时后线程被放弃（JSC 无法外部中断），泄漏到进程结束，os_log 警告。
 ///
-/// `aliveThreadCount` 是真实存活的线程数（看门狗超时后泄漏的线程也计入），
-/// 并发闸必须检查它而不是"未完成的请求数"——否则死循环脚本每 100ms 就能
-/// 绕过闸门，不断攒出新的泄漏线程直到资源耗尽。
+/// `activeExecutions` 是**逻辑槽位**（在飞的请求数，上限 4），
+/// `zombieThreads` 是被看门狗放弃、仍在 JSC 里跑的线程数。两者必须分开：
+/// 死循环脚本超时后底层线程永远不会退出，若拿线程数当闸门，4 次超时就把
+/// 闸门永久占死；而逻辑槽位在超时那一刻就该还给下一个请求。
+/// 僵尸线程另有一条熔断线，防止极端情况下无限攒线程耗光虚拟内存。
 final class ScriptEngine: @unchecked Sendable {
     typealias Fetcher = @Sendable (String, [String: ScriptValue]?) -> FetchResponse
     typealias Notifier = @Sendable (NotifyOp) -> String
 
+    /// 僵尸线程熔断线：累计到这么多就不再接新活，等它们退出或进程结束。
+    /// 这不是槽位扣减——单次超时绝不能让闸门永久变小。
+    static let maxZombieThreads = 8
+
     private let fetch: Fetcher
     private let notify: Notifier
-    /// 真实存活的脚本线程数（含看门狗超时后仍在跑的泄漏线程）。
-    /// 并发闸的依据，不是"还没返回的请求数"。
-    private let aliveThreadCount = OSAllocatedUnfairLock<Int>(initialState: 0)
+    private let ledger = ExecutionLedger()
 
-    var aliveThreads: Int { aliveThreadCount.withLock { $0 } }
+    /// 逻辑槽位（在飞的请求数）。并发闸的依据。
+    var activeExecutions: Int { ledger.activeCount }
+    /// 被放弃但仍存活（或尚未被清理）的脚本线程数。
+    var zombieThreads: Int { ledger.zombieCount }
 
     init(fetch: @escaping Fetcher, notify: @escaping Notifier) {
         self.fetch = fetch
         self.notify = notify
     }
 
-    /// 原子地尝试占一个并发槽位。达到上限返回 false。
-    /// 与 `aliveThreadCount` 递减配对——线程真实退出时扣减，
-    /// 确保计数反映真实资源占用而非逻辑请求数。
-    func tryAcquireSlot(maxConcurrent: Int) -> Bool {
-        aliveThreadCount.withLock { count in
-            guard count < maxConcurrent else { return false }
-            count += 1
-            return true
-        }
+    /// 原子地尝试占一个逻辑槽位。达到并发上限或僵尸熔断线时返回 false。
+    func tryAcquireSlot(maxConcurrent: Int, maxZombies: Int = ScriptEngine.maxZombieThreads) -> Bool {
+        ledger.tryAcquire(maxConcurrent: maxConcurrent, maxZombies: maxZombies)
     }
 
     /// 回退一个已获取的槽位（脚本加载失败等场景）。
     func releaseSlot() {
-        aliveThreadCount.withLock { $0 = max(0, $0 - 1) }
+        ledger.releaseActive()
     }
 
     /// 无上限直接执行（测试和内部调用用）。
     /// 并发上限由 `ScriptRunner` 层负责，调用前先 `tryAcquireSlot`。
     func run(source: String, input: ScriptValue, budget: Duration) async -> ScriptOutcome {
-        aliveThreadCount.withLock { $0 += 1 }
+        ledger.acquireUnchecked()
         return await runBody(source: source, input: input, budget: budget)
     }
 
-    /// 已经获取槽位后启动执行（线程退出时由 defer 扣减计数）。
+    /// 已经获取槽位后启动执行。逻辑槽位由本次执行在结束（或超时）时释放。
     func runAcquired(source: String, input: ScriptValue, budget: Duration) async -> ScriptOutcome {
         await runBody(source: source, input: input, budget: budget)
     }
@@ -156,46 +157,120 @@ final class ScriptEngine: @unchecked Sendable {
         let deadline = ContinuousClock.now.advanced(by: budget)
         return await withCheckedContinuation { (cont: CheckedContinuation<ScriptOutcome, Never>) in
             // resume-once 盒：线程完成与睡满预算竞速，先到先得，后到 no-op。
-            // 超时的线程被放弃（JSC 无法外部中断），泄漏到进程结束，os_log 警告。
-            let once = ResumeOnce(cont)
+            // 超时的线程被放弃（JSC 无法外部中断），但**逻辑槽位在超时那一刻
+            // 就释放**，另外单独记一个僵尸线程。
+            let execution = Execution(cont: cont, ledger: ledger)
             Thread.detachNewThread { [self] in
-                defer { aliveThreadCount.withLock { $0 -= 1 } }
-                once.resume(runSync(source: source, input: input, deadline: deadline))
+                execution.finish(runSync(source: source, input: input, deadline: deadline))
             }
             Task {
                 try? await Task.sleep(for: budget)
-                if !once.isResumed {
-                    Self.logger.warning("脚本超时，线程被放弃（泄漏至进程结束）：\(source.prefix(120), privacy: .public)")
+                if execution.timeout() {
+                    Self.logger.warning(
+                        "脚本超时，线程被放弃（僵尸线程 \(self.ledger.zombieCount)）：\(source.prefix(120), privacy: .public)"
+                    )
                 }
-                once.resume(ScriptOutcome(result: nil, logs: [], error: "timeout"))
             }
         }
     }
 
     private static let logger = Logger(subsystem: "MacDesktopNotify", category: "script")
 
-    /// resume-once：看门狗与线程完成竞速，后到者的 resume 变 no-op。
-    /// @unchecked Sendable：唯一可变状态由 NSLock 保护。
-    private final class ResumeOnce: @unchecked Sendable {
+    /// 逻辑槽位与僵尸线程的账本。单锁，两个计数永远一致。
+    final class ExecutionLedger: @unchecked Sendable {
+        struct State {
+            var active = 0
+            var zombies = 0
+        }
+
+        private let lock = OSAllocatedUnfairLock<State>(initialState: State())
+
+        func tryAcquire(maxConcurrent: Int, maxZombies: Int) -> Bool {
+            lock.withLock { state in
+                guard state.active < maxConcurrent, state.zombies < maxZombies else { return false }
+                state.active += 1
+                return true
+            }
+        }
+
+        func acquireUnchecked() {
+            lock.withLock { $0.active += 1 }
+        }
+
+        func releaseActive() {
+            lock.withLock { $0.active = max(0, $0.active - 1) }
+        }
+
+        func addZombie() {
+            lock.withLock { $0.zombies += 1 }
+        }
+
+        func removeZombie() {
+            lock.withLock { $0.zombies = max(0, $0.zombies - 1) }
+        }
+
+        var activeCount: Int { lock.withLock { $0.active } }
+        var zombieCount: Int { lock.withLock { $0.zombies } }
+    }
+
+    /// 一次执行的 resume-once：看门狗与线程完成竞速。
+    /// `@unchecked Sendable`：唯一可变状态由 `lock` 保护。
+    ///
+    /// 槽位释放与僵尸计数在同一把锁内决定，所以"线程刚结束"与"看门狗刚超时"
+    /// 交错时不会把计数算错（旧实现用独立 defer 扣 aliveThreadCount，超时的
+    /// 线程永不退出，计数就永远不降）。
+    private final class Execution: @unchecked Sendable {
         private let lock = NSLock()
-        private var resumed = false
         private var cont: CheckedContinuation<ScriptOutcome, Never>?
+        private var activeReleased = false
+        private var countedAsZombie = false
+        private let ledger: ExecutionLedger
 
-        init(_ cont: CheckedContinuation<ScriptOutcome, Never>) {
+        init(cont: CheckedContinuation<ScriptOutcome, Never>, ledger: ExecutionLedger) {
             self.cont = cont
+            self.ledger = ledger
         }
 
-        var isResumed: Bool {
-            lock.lock(); defer { lock.unlock() }
-            return resumed
-        }
-
-        func resume(_ value: ScriptOutcome) {
-            lock.lock(); defer { lock.unlock() }
-            guard !resumed, let cont else { return }
-            resumed = true
+        /// 看门狗胜出：释放逻辑槽位、记一个僵尸线程、回超时。
+        /// 返回 false 表示线程在此之前已经完成（看门狗无需记账）。
+        @discardableResult
+        func timeout() -> Bool {
+            lock.lock()
+            guard let cont else {
+                lock.unlock()
+                return false
+            }
             self.cont = nil
-            cont.resume(returning: value)
+            if !activeReleased {
+                activeReleased = true
+                ledger.releaseActive()
+            }
+            countedAsZombie = true
+            ledger.addZombie()
+            lock.unlock()
+            cont.resume(returning: ScriptOutcome(result: nil, logs: [], error: "timeout"))
+            return true
+        }
+
+        /// 线程结束：正常完成时释放逻辑槽位；若看门狗已判超时，则线程终于
+        /// 退出，把僵尸计数减回去。
+        func finish(_ outcome: ScriptOutcome) {
+            lock.lock()
+            guard let cont else {
+                if countedAsZombie {
+                    countedAsZombie = false
+                    ledger.removeZombie()
+                }
+                lock.unlock()
+                return
+            }
+            self.cont = nil
+            if !activeReleased {
+                activeReleased = true
+                ledger.releaseActive()
+            }
+            lock.unlock()
+            cont.resume(returning: outcome)
         }
     }
 
@@ -366,14 +441,14 @@ final class ScriptEngine: @unchecked Sendable {
 /// @MainActor：决策（busy 判定、后续 backfill/钩子的 manager 写入）都在主线程，
 /// engine.run 的等待是 async 不占主线程。
 ///
-/// 并发闸检查 `engine.aliveThreads`（真实存活的脚本线程数），而不是"未完成的
-/// 请求数"。看门狗超时后 JSC 线程仍在泄漏运行，若用请求数计数，死循环脚本
-/// 每 100ms 就能绕过闸门，无限累积泄漏线程。
+/// 并发闸检查 `engine.activeExecutions`（逻辑槽位，在飞的请求数），而不是底层
+/// 线程数：死循环脚本超时后 JSC 线程永远不会退出，拿线程数当闸门 4 次超时就
+/// 把闸门永久占死。超时释放逻辑槽位，泄漏的线程单独记入 `zombieThreads`，
+/// 只有僵尸累计超过熔断线才暂停接活。
 @MainActor
 final class ScriptRunner {
     static let shared = ScriptRunner()
     /// 设计 §3.1：并发上限 4，超出的执行立即失败 "busy"。
-    /// 上限对应真实存活的脚本线程数（含看门狗超时后仍在泄漏运行的线程）。
     static let maxConcurrent = 4
     /// 设计 §3.2：回填/钩子预算 15s（无人等待，但泄漏线程要有界）。
     static let backfillBudget: Duration = .seconds(15)
@@ -383,8 +458,11 @@ final class ScriptRunner {
     /// 回填/钩子的写入目标；测试注入本地实例避免动全局单例。
     private let targetManager: NotificationManager
     /// 只读调试属性（测试观察闸行为用）。
-    /// 等于 engine.aliveThreads，但通过主 actor 读取，测试代码不用跨 actor。
-    var activeExecutions: Int { engine.aliveThreads }
+    /// 等于 engine.activeExecutions，但通过主 actor 读取，测试代码不用跨 actor。
+    var activeExecutions: Int { engine.activeExecutions }
+    /// 被看门狗放弃但仍存活的脚本线程数；超过 `ScriptEngine.maxZombieThreads`
+    /// 时新任务被拒（熔断），直到它们退出。
+    var zombieThreads: Int { engine.zombieThreads }
 
     init(store: ScriptStore = .shared,
          engine: ScriptEngine? = nil,

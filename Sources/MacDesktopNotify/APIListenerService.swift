@@ -18,6 +18,33 @@ final class APIListenerService {
                     .appendingPathComponent("api.sock").path
     }
 
+    /// `sockaddr_un.sun_path` is 104 bytes on Darwin including the terminating
+    /// NUL, so 103 usable bytes. Past that the bind fails with an opaque error,
+    /// so an overlong path is redirected to a short deterministic one.
+    static let maxSocketPathBytes = 103
+
+    /// Redirects a path that would not fit `sockaddr_un.sun_path`.
+    ///
+    /// The short path is a pure function of the requested one: the same input
+    /// always maps to the same file, so two launches of the same user collide
+    /// (and the liveness probe protects them) instead of each binding a socket
+    /// the other cannot see.
+    static func resolveSocketPath(_ preferred: String) -> (path: String, redirectedFrom: String?) {
+        guard preferred.utf8.count > maxSocketPathBytes else { return (preferred, nil) }
+        return (shortSocketPath(for: preferred), preferred)
+    }
+
+    /// `/tmp/mdn-<uid>-<hash>.sock`, short enough for any user path.
+    static func shortSocketPath(for preferred: String) -> String {
+        // FNV-1a, 64-bit. Only needs to be stable, not cryptographic.
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in preferred.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return "/tmp/mdn-\(getuid())-\(String(hash, radix: 16).suffix(12)).sock"
+    }
+
     /// Nil when the HTTP listener is healthy or off; a human-readable reason
     /// when it failed to bind (shown in Settings).
     private(set) var httpError: String?
@@ -28,13 +55,26 @@ final class APIListenerService {
     private(set) var isSocketListening = false
 
     private let socketPath: String
+    /// Set when the requested path had to be shortened for `sun_path`; shown in
+    /// Settings so a client pointed at the configured path knows why it misses.
+    private(set) var socketPathNotice: String?
     private var httpServer: HTTPServer?
     private var socketServer: HTTPServer?
     private let hub = WSEventHub(manager: .shared)
 
-    init(socketPath: String = APIListenerService.defaultSocketPath) {
-        self.socketPath = socketPath
+    init(socketPath requestedPath: String = APIListenerService.defaultSocketPath) {
+        let resolved = APIListenerService.resolveSocketPath(requestedPath)
+        socketPath = resolved.path
+        if let original = resolved.redirectedFrom {
+            let notice = "socket 路径 \(original.utf8.count) 字节超过 \(Self.maxSocketPathBytes)，已改向 \(resolved.path)"
+            socketPathNotice = notice
+            Diagnostics.degrade("socket 路径过长已改向", reason: notice)
+        }
     }
+
+    /// The path the listener actually binds (equal to the default unless it was
+    /// redirected). Settings shows this, not the requested one.
+    var resolvedSocketPath: String { socketPath }
 
     func restart() {
         stop()

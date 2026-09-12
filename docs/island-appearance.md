@@ -45,14 +45,16 @@ NotchNotify 的灵动岛**外壳**（刘海 pill 两面、展开面板、无刘�
 ~/Library/Application Support/MacDesktopNotify/
 ├── island.json              # 旧位置的布局（「自动」时使用）
 ├── layouts/
-│   ├── classic.json         # 具名布局；文件名即布局 ID
+│   ├── classic.json         # 用户布局；同名会覆盖 app 内置的同名预设
 │   └── github.json
 └── themes/
-    ├── midnight.json        # 具名主题；文件名即主题 ID
+    ├── midnight.json        # 用户主题；文件名即主题 ID
     └── solar.json
 ```
 
 这两个目录与脚本、历史、回执同目录（`ScriptStore` / `NotificationHistoryStore` / `NotificationAckStore` 用的同一个 Application Support 目录）。`themes/` 与 `layouts/` 会在 app 启动时自动创建。
+
+**app 还内置了一套预设**（`layouts/`、`themes/`，随包发布），下拉里带「（内置）」标记：内置先加载，用户目录下的同名文件叠在上面（自定义赢）。用户目录为空时，内置预设依然可选。
 
 「设置 → 外观」里有 **「打开配置文件夹」** 按钮直达；同页还有主题选择器、布局选择器、`expanded` 布局预览和解析诊断。
 
@@ -60,7 +62,7 @@ NotchNotify 的灵动岛**外壳**（刘海 pill 两面、展开面板、无刘�
 
 1. **无文件 = 内置**。没有选中任何自定义布局/主题时，渲染的就是编译期同一段 Swift 视图代码，像素与没有这个功能时一致。
 2. **逐面回退**。布局的四个面彼此独立：`expanded` 写坏了，pill 和 miniBar 不受影响。某个面回退时用内置视图，**绝不出现空白岛**。
-3. **删除即回退**。删掉当前选中的布局文件（或选「内置」）四个面一起回内置；主题选中项被删掉时立即回默认。
+3. **删除即回退**。删掉当前选中的布局文件（或选「不用自定义布局」）四个面一起回内置；主题选中项被删掉时，先回落到内置预设，没有才回默认。
 
 ### 热重载
 
@@ -102,9 +104,9 @@ app 监听 `themes/`、`layouts/` 与 Application Support 目录，文件变化�
 ### 2.3 切换主题
 
 1. 把 `xxx.json` 放进 `themes/`（文件名即 ID）。
-2. **设置 → 外观 → 主题** 下拉里选 `xxx`；选「默认」回内置。
+2. **设置 → 外观 → 主题** 下拉里选 `xxx`；选「默认」回内置字面量。
 
-下拉选项 = `默认` + `themes/` 下所有 `*.json` 的文件名（排序）。持久化在 `AppSettings` 的 `island.themeID`（`defaults` 键名 `island.themeID`）。
+下拉选项 = `默认` + 内置预设（带「（内置）」后缀）+ `themes/` 下所有 `*.json` 的文件名（排序）。**内置先加载，用户目录同名文件叠在上面**（自定义赢）。持久化在 `AppSettings` 的 `island.themeID`（`defaults` 键名 `island.themeID`）。
 
 > 不建议用 `defaults write com.yeheng.macdesktopnotify island.themeID midnight` 切：运行中的进程缓存了这个值，不会热更新，要重启才读到。用设置里的下拉即可。
 >
@@ -196,12 +198,13 @@ app 监听 `themes/`、`layouts/` 与 Application Support 目录，文件变化�
 
 | 选项 | 含义 |
 |---|---|
-| `自动（island.json）` | 默认。用根目录的 `island.json`；没有它就用 `layouts/` 里名字排序的第一个；都没有就用内置 |
-| `内置` | 不用任何自定义布局，四个面全用 Swift 内置视图 |
-| `<名>` | `layouts/<名>.json` |
+| `自动（island.json）` | 默认。用根目录的 `island.json`；没有它就用用户 `layouts/` 里名字排序的第一个；都没有就用 Swift 内置布局（`自动` **不会**自行采用打包预设） |
+| `不用自定义布局` | 不用任何自定义布局，四个面全用 Swift 内置视图 |
+| `<名>（内置）` | 随 app 打包的预设：`classic` / `progress` / `github` / `nerd` |
+| `<名>` | 用户目录下的 `layouts/<名>.json` |
 
 - 选择持久化在 `island.layoutID`，重启后仍是它（保存/加载不需要额外操作）。
-- **按名字选中的**布局文件缺失 → 回退内置并在诊断里说明；`自动` 下“没有文件”是正常状态，不报警。
+- **加载顺序：内置先，用户目录后。** 用户同名文件覆盖内置；删掉它又回到内置（而不是直接回默认）。两者都没有才回退 Swift 内置视图并给诊断。
 - `island.json` 是旧位置，仍然支持；新布局建议放 `layouts/`。
 - 目录里增删文件，下拉选项即时更新。
 
@@ -446,13 +449,13 @@ if → frame → padding → background → clip → opacity → a11y
 
 ## 8. 完整示例
 
-示例文件在 `Sources/MacDesktopNotify/Island/Examples/`，可直接复制到配置目录：
+内置预设**随 app 发布**（下拉里带「（内置）」），这里的文件是它们的源，也是可直接复制到配置目录的示例；同名拷贝过去就会覆盖内置版本：
 
 ```bash
 CFG=~/Library/Application\ Support/MacDesktopNotify
 mkdir -p "$CFG/themes" "$CFG/layouts"
-cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/themes/*.json "$CFG/themes/"
-cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/layouts/*.json "$CFG/layouts/"
+cp themes/*.json "$CFG/themes/"
+cp layouts/*.json "$CFG/layouts/"
 # 然后在「设置 → 外观」里选主题和布局
 ```
 
@@ -647,9 +650,9 @@ cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/layouts/*.json "$CFG/layout
 ```bash
 CFG=~/Library/Application\ Support/MacDesktopNotify
 mkdir -p "$CFG/themes" "$CFG/layouts"
-cp "$(pwd)/Sources/MacDesktopNotify/Island/Examples/themes/github-dark.json" "$CFG/themes/"
-cp "$(pwd)/Sources/MacDesktopNotify/Island/Examples/layouts/github.json" "$CFG/layouts/"
-# 然后在「设置 → 外观」里选主题 github-dark与布局 github
+cp themes/github-dark.json "$CFG/themes/"
+cp layouts/github.json "$CFG/layouts/"
+# 然后在「设置 → 外观」里选主题 github-dark 与布局 github（不拷就是直接用内置）
 ```
 
 设计对照（Primer → token）：
@@ -730,8 +733,8 @@ cp "$(pwd)/Sources/MacDesktopNotify/Island/Examples/layouts/github.json" "$CFG/l
 ```bash
 CFG=~/Library/Application\ Support/MacDesktopNotify
 mkdir -p "$CFG/layouts"
-cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/layouts/*.json "$CFG/layouts/"
-# 下拉里会出现 classic / progress / github / nerd 四个选项
+cp layouts/*.json "$CFG/layouts/"
+# 下拉里会出现 classic / progress / github / nerd（不拷则标为内置）
 ```
 
 不需要软链或拷贝覆盖；想临时回到旧位置的单文件行为，选「自动」即可（它读根目录的 `island.json`）。
@@ -785,7 +788,7 @@ surfaces.expanded.children[2].background.fill: 颜色解析失败 #GGGGGG
 
 ### 9.5 不可被 DSL 移除的路径
 
-无论布局怎么写，以下始终可用：`Esc` 收起、`⌃⌥N` 系统热键、右键菜单（打开/收起面板、历史、管理消息、静默、设置）。删除当前选中的布局文件、或在下拉里选「内置」即回退。
+无论布局怎么写，以下始终可用：`Esc` 收起、`⌃⌥N` 系统热键、右键菜单（打开/收起面板、历史、管理消息、静默、设置）。删除当前选中的布局文件、或在下拉里选「不用自定义布局」即回退。
 
 ---
 
@@ -867,10 +870,14 @@ Sources/MacDesktopNotify/Island/
 ├── IslandNode.swift            # 11 种节点 + 修饰键（纯值类型）
 ├── IslandLayoutParser.swift    # JSONSerialization 手写 walker + 上限 + 路径诊断
 ├── IslandLayoutStore.swift     # island.json 加载、逐 surface 文档、热重载
-├── IslandBindings.swift        # 8 个绑定 + 12 个谓词
+├── IslandBindings.swift        # 9 个绑定 + 13 个谓词
 ├── IslandNodeView.swift        # 递归渲染器（具体类型 switch，无 AnyView）
 ├── IslandSurfaceView.swift     # surface 入口 + 原生 slot + 环境注入
-└── Examples/                   # 示例主题与布局（不打包，单测加载断言零诊断）
+└── BuiltinConfigs.swift        # app bundle 里的内置 layouts/themes 定位
+
+Sources/MacDesktopNotify/Builtin/   # 随包发布的内置预设（仓库根 layouts/、themes/ 为软链）
+├── layouts/                    # classic / progress / github / nerd
+└── themes/                     # midnight / solar / github-dark / nerd-font
 ```
 
 宿主接缝：

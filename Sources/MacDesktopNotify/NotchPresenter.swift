@@ -100,6 +100,9 @@ final class NotchPresenter: NotchPresenting {
     /// Nil means the answer must be recomputed.
     private var fullscreenResult: (key: FullscreenKey, suppressed: Bool)?
     private var fullscreenProbedAt: Date = .distantPast
+    /// A probe in flight, keyed by what it is probing for. Callers that arrive
+    /// while one is running await the same task instead of starting another.
+    private var fullscreenProbe: (key: FullscreenKey, task: Task<(suppressed: Bool, changed: Bool), Never>)?
     /// How long the cached answer may be reused while the pointer keeps moving.
     private static let fullscreenStaleness: TimeInterval = 2
 
@@ -207,11 +210,19 @@ final class NotchPresenter: NotchPresenting {
     ///
     /// The mouse-driven path only runs when the pointer moves, and the
     /// workspace observers only invalidate the cache - neither guarantees a
-    /// probe at the moment something wants to expand. This is that probe: one
-    /// cached lookup in the common case, one window-list walk when stale.
+    /// probe at the moment something wants to expand. This is that probe, and
+    /// unlike the pointer path it *awaits* a fresh answer: it runs right before
+    /// a panel is shown, where a stale "not fullscreen" would put the panel over
+    /// a fullscreen app.
     func probeDisplaySuppressed() async -> Bool {
+        guard AppSettings.shared.hideInFullscreen else { return false }
         guard let screen = targetScreen else { return false }
-        return fullscreenSuppressed(on: screen)
+        let key = fullscreenKey(for: screen)
+        if let cached = fullscreenResult, cached.key == key,
+           Date().timeIntervalSince(fullscreenProbedAt) < Self.fullscreenStaleness {
+            return cached.suppressed
+        }
+        return await refreshFullscreen(for: key, screen: screen).suppressed
     }
 
     func hide() async {
@@ -464,37 +475,77 @@ final class NotchPresenter: NotchPresenting {
         }
     }
 
-    /// Whether the frontmost app has a fullscreen window on `screen`.
-    ///
-    /// `CGWindowListCopyWindowInfo` enumerates every on-screen window and can
-    /// block, so this is called as rarely as correctness allows:
-    ///
-    /// - never, when the setting is off or there is nothing that could be shown;
-    /// - only on a frontmost-app or screen change, otherwise;
-    /// - at most every couple of seconds while the pointer keeps moving, because a
-    ///   window can go fullscreen without any notification firing.
+    /// The pointer-move path: never blocks on the window list. It returns the
+    /// last known answer and kicks a background refresh when that answer is
+    /// stale, so the main actor never runs `CGWindowListCopyWindowInfo`.
     private func fullscreenSuppressed(on screen: NSScreen) -> Bool {
         guard AppSettings.shared.hideInFullscreen else { return false }
 
-        let manager = NotificationManager.shared
-        let key = FullscreenKey(
-            pid: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1,
-            screenID: screen.displayID
-        )
-
+        let key = fullscreenKey(for: screen)
         if let cached = fullscreenResult, cached.key == key {
             let fresh = Date().timeIntervalSince(fullscreenProbedAt) < Self.fullscreenStaleness
             // With nothing on screen there is nothing to suppress, so an ageing
             // answer is left alone rather than paid for on every pointer move.
-            if fresh || !manager.hasContent {
-                return cached.suppressed
+            if !fresh, NotificationManager.shared.hasContent {
+                scheduleFullscreenRefresh(for: key, screen: screen)
             }
+            return cached.suppressed
         }
 
-        let suppressed = frontmostWindowIsFullscreen(on: screen)
-        fullscreenResult = (key, suppressed)
-        fullscreenProbedAt = Date()
-        return suppressed
+        scheduleFullscreenRefresh(for: key, screen: screen)
+        // No answer for this key yet: return the last snapshot rather than
+        // guessing, and let the refresh correct it.
+        return fullscreenResult?.suppressed ?? false
+    }
+
+    private func fullscreenKey(for screen: NSScreen) -> FullscreenKey {
+        FullscreenKey(
+            pid: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1,
+            screenID: screen.displayID
+        )
+    }
+
+    /// Fire-and-forget refresh for the pointer path. When the answer changed,
+    /// the display state is re-derived here: the pointer may have stopped, so
+    /// nothing else would notice the new answer.
+    private func scheduleFullscreenRefresh(for key: FullscreenKey, screen: NSScreen) {
+        guard fullscreenProbe?.key != key else { return }
+        Task {
+            let result = await refreshFullscreen(for: key, screen: screen)
+            guard result.changed, AppSettings.shared.hideInFullscreen else { return }
+            NotificationManager.shared.setDisplaySuppressed(result.suppressed)
+            reapplyDisplayState()
+        }
+    }
+
+    /// Coalesced background probe: `CGWindowListCopyWindowInfo` runs off the
+    /// main actor, and the answer is published back on it. Returning `changed`
+    /// lets the scheduler react only when the answer actually moved.
+    private func refreshFullscreen(
+        for key: FullscreenKey,
+        screen: NSScreen
+    ) async -> (suppressed: Bool, changed: Bool) {
+        if let probe = fullscreenProbe, probe.key == key {
+            let result = await probe.task.value
+            if fullscreenProbe?.key == key { fullscreenProbe = nil }
+            return result
+        }
+
+        let pid = key.pid
+        let frame = screen.frame
+        let task = Task { () -> (suppressed: Bool, changed: Bool) in
+            let suppressed = await Task.detached(priority: .utility) {
+                Self.probeFullscreen(pid: pid, screenFrame: frame)
+            }.value
+            let changed = fullscreenResult?.key != key || fullscreenResult?.suppressed != suppressed
+            fullscreenResult = (key, suppressed)
+            fullscreenProbedAt = Date()
+            return (suppressed, changed)
+        }
+        fullscreenProbe = (key, task)
+        let result = await task.value
+        if fullscreenProbe?.key == key { fullscreenProbe = nil }
+        return result
     }
 
     // MARK: - Notch calibration overlay
@@ -583,23 +634,35 @@ final class NotchPresenter: NotchPresenting {
         }
     }
 
-    private func frontmostWindowIsFullscreen(on screen: NSScreen) -> Bool {
-        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
-              let windows = CGWindowListCopyWindowInfo(
-                [.optionOnScreenOnly, .excludeDesktopElements],
-                kCGNullWindowID
-              ) as? [[String: Any]] else {
+    /// The one place `CGWindowListCopyWindowInfo` is called. `nonisolated` and
+    /// static on purpose: the call is a synchronous IPC round-trip with
+    /// WindowServer and can block for tens of milliseconds, so it must never run
+    /// on the main actor.
+    nonisolated private static func probeFullscreen(pid: pid_t, screenFrame: CGRect) -> Bool {
+        guard let windows = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else {
             return false
         }
+        return hasFullscreenWindow(windows, pid: pid, screenFrame: screenFrame)
+    }
 
-        return windows.contains { info in
+    /// The rule itself, split out from the IPC call: a window of `pid` at layer
+    /// 0 that covers the screen. Pure, so it is testable without a window server.
+    nonisolated static func hasFullscreenWindow(
+        _ windows: [[String: Any]],
+        pid: pid_t,
+        screenFrame: CGRect
+    ) -> Bool {
+        windows.contains { info in
             guard (info[kCGWindowOwnerPID as String] as? Int32) == pid,
                   (info[kCGWindowLayer as String] as? Int) == 0,
                   let bounds = info[kCGWindowBounds as String] as? NSDictionary,
                   let frame = CGRect(dictionaryRepresentation: bounds) else {
                 return false
             }
-            return frame.width >= screen.frame.width - 2 && frame.height >= screen.frame.height - 2
+            return frame.width >= screenFrame.width - 2 && frame.height >= screenFrame.height - 2
         }
     }
 

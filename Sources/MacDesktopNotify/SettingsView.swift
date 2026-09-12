@@ -481,14 +481,14 @@ private struct AppearanceSettingsContent: View {
         Section {
             Picker("主题", selection: $settings.islandThemeID) {
                 ForEach(IslandThemeStore.shared.themeIDs, id: \.self) { id in
-                    Text(id == IslandThemeStore.defaultThemeID ? "默认" : id).tag(id)
+                    Text(themeLabel(id)).tag(id)
                 }
             }
             Picker("布局", selection: $settings.islandLayoutID) {
                 Text("自动（island.json）").tag(IslandLayoutStore.autoID)
-                Text("内置").tag(IslandLayoutStore.builtinID)
+                Text("不用自定义布局").tag(IslandLayoutStore.builtinID)
                 ForEach(IslandLayoutStore.shared.layoutIDs, id: \.self) { id in
-                    Text(id).tag(id)
+                    Text(layoutLabel(id)).tag(id)
                 }
             }
             Button("打开配置文件夹") {
@@ -512,8 +512,8 @@ private struct AppearanceSettingsContent: View {
                     .environment(\.colorScheme, .dark)
             } else {
                 Text(IslandLayoutStore.shared.hasCustomLayout
-                     ? "island.json 未定义 expanded，该面使用内置布局。"
-                     : "无 island.json，四个面均使用内置布局。")
+                     ? "当前布局未定义 expanded，该面使用内置视图。"
+                     : "当前没有启用自定义布局，四个面都使用内置视图。")
                     .foregroundStyle(.secondary)
             }
         } header: {
@@ -571,6 +571,17 @@ private struct AppearanceSettingsContent: View {
                 Spacer()
             }
         }
+    }
+
+    /// Bundled presets are marked so it is obvious which ids the app ships and
+    /// which ones come from the user's directory.
+    private func themeLabel(_ id: String) -> String {
+        if id == IslandThemeStore.defaultThemeID { return "默认" }
+        return IslandThemeStore.shared.builtinThemeIDs.contains(id) ? "\(id)（内置）" : id
+    }
+
+    private func layoutLabel(_ id: String) -> String {
+        IslandLayoutStore.shared.builtinLayoutIDs.contains(id) ? "\(id)（内置）" : id
     }
 
     @ViewBuilder
@@ -726,9 +737,12 @@ private struct ApiSettingsContent: View {
         Section {
             Toggle("启用 Unix Socket（推荐脚本使用）", isOn: $settings.apiUnixSocketEnabled)
             LabeledContent("路径") {
-                Text(APIListenerService.defaultSocketPath)
+                Text(service.resolvedSocketPath)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
+            }
+            if let notice = service.socketPathNotice {
+                StatusRow(kind: .error(notice))
             }
             if let error = service.socketError {
                 StatusRow(kind: .error(error))

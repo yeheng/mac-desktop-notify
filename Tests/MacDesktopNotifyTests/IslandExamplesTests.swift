@@ -10,7 +10,7 @@ final class IslandExamplesTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Sources/MacDesktopNotify/Island/Examples")
+            .appendingPathComponent("Sources/MacDesktopNotify/Builtin")
     }
 
     private var layoutsDirectory: URL {

@@ -154,11 +154,6 @@ final class NotificationManager {
     /// test shortens the window it means instead of poking two `var`s, and the
     /// production durations live next to each other rather than in three files.
     var dwellTiming = DwellTiming.standard
-    /// +Pointer: §3.1 latch - the pointer has been on the open panel during
-    /// this open period. Gates only the leave-collapse rule (§3.1); v4 read
-    /// state is explicit and never consults it. Set on the `.hoverBegan`
-    /// edge, reset when the panel collapses.
-    @ObservationIgnored var panelEntered = false
     /// +History: drives the panel's undo toast; nil while there is nothing
     /// to undo.
     var deletionNotice: DeletionNotice?

@@ -5,11 +5,12 @@ import Observation
 ///
 /// A layout can come from three places, in the order the settings picker lists
 /// them:
-/// - `"auto"` (the default) - the legacy `island.json`, or the first
+/// - `"auto"` (the default) - the legacy `island.json`, or the first user
 ///   `layouts/*.json` if that file is absent. This is what keeps existing
 ///   installs working: no setting, file present, layout applies.
 /// - `"default"` - builtin Swift views, no custom layout.
-/// - `"<id>"` - `layouts/<id>.json`.
+/// - `"<id>"` - the user's `layouts/<id>.json`, else the bundled one with the
+///   same id (built-in first, user on top).
 ///
 /// Each surface opts in independently: one absent from `document.surfaces`
 /// renders the builtin Swift view, and a broken file is an empty document.
@@ -22,8 +23,11 @@ final class IslandLayoutStore {
     static let builtinID = "default"
 
     private(set) var document: IslandLayoutDocument = .empty
-    /// Named layouts found in `layouts/`, sorted; the picker lists these.
+    /// Every selectable layout id - bundled and user - sorted.
     private(set) var layoutIDs: [String] = []
+    /// Ids that come from the app bundle and are not shadowed by a user file;
+    /// the picker marks these 内置.
+    private(set) var builtinLayoutIDs: Set<String> = []
     /// Bumped on every reload; reading it is how a view subscribes.
     private(set) var revision = 0
 
@@ -32,13 +36,17 @@ final class IslandLayoutStore {
     @ObservationIgnored private var attemptedSelection: String?
     @ObservationIgnored private let directory: URL
     @ObservationIgnored private let layoutsDirectory: URL
+    /// Layouts shipped inside the app; nil when the bundle has none.
+    @ObservationIgnored private let builtinLayoutsDirectory: URL?
 
     init(
         directory: URL = IslandPaths.supportDirectory,
-        layoutsDirectory: URL = IslandPaths.layoutsDirectory
+        layoutsDirectory: URL = IslandPaths.layoutsDirectory,
+        builtinLayoutsDirectory: URL? = BuiltinConfigs.layoutsDirectory
     ) {
         self.directory = directory
         self.layoutsDirectory = layoutsDirectory
+        self.builtinLayoutsDirectory = builtinLayoutsDirectory
     }
 
     private var legacyLayoutFile: URL {
@@ -115,25 +123,32 @@ final class IslandLayoutStore {
     private func resolvedTarget(for selection: String) -> Target {
         if selection == Self.builtinID { return .builtin }
         if !selection.isEmpty, selection != Self.autoID {
-            let url = layoutsDirectory.appendingPathComponent("\(selection).json")
-            return .file(url, id: selection, explicit: true)
+            // User file first, bundled one second: custom overrides built-in.
+            let user = layoutsDirectory.appendingPathComponent("\(selection).json")
+            if FileManager.default.fileExists(atPath: user.path) {
+                return .file(user, id: selection, explicit: true)
+            }
+            let bundled = builtinLayoutsDirectory?.appendingPathComponent("\(selection).json")
+            return .file(bundled ?? user, id: selection, explicit: true)
         }
         if FileManager.default.fileExists(atPath: legacyLayoutFile.path) {
             return .file(legacyLayoutFile, id: "island.json", explicit: false)
         }
-        if let first = layoutIDs.first {
+        // Auto only picks the user's own layouts: a fresh install keeps the
+        // builtin Swift layout rather than silently adopting a bundled preset.
+        if let first = BuiltinConfigs.ids(in: layoutsDirectory).first {
             return .file(layoutsDirectory.appendingPathComponent("\(first).json"), id: first, explicit: false)
         }
         return .builtin
     }
 
     private func refreshLayoutIDs() {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: layoutsDirectory.path)) ?? []
-        let ids = names
-            .filter { $0.hasSuffix(".json") }
-            .map { String($0.dropLast(".json".count)) }
-            .sorted()
-        if ids != layoutIDs { layoutIDs = ids }
+        let userIDs = BuiltinConfigs.ids(in: layoutsDirectory)
+        let bundledIDs = BuiltinConfigs.ids(in: builtinLayoutsDirectory)
+        let next = Array(Set(userIDs).union(bundledIDs)).sorted()
+        if next != layoutIDs { layoutIDs = next }
+        let builtin = Set(bundledIDs).subtracting(Set(userIDs))
+        if builtin != builtinLayoutIDs { builtinLayoutIDs = builtin }
     }
 
     // MARK: - Change detection

@@ -306,6 +306,8 @@ curl --unix-socket /tmp/mdn-api.sock http://localhost/v1/status
 
 socket 文件在 app 启动时创建，**退出时删除**（`applicationWillTerminate`）。崩溃留下的旧文件不会阻断下次启动：启动时先探测该路径，没人监听才清理并重新绑定，不会误删另一个实例正在监听的 socket。
 
+`Application Support` 路径过深时（字节数超过 `sun_path` 的 103 字节上限），路径会自动改向 `/tmp/mdn-<uid>-<hash>.sock`（同名输入总是映射到同一个文件），并在「设置 → 接口」显示改向提示——不会变成无法解释的监听失败。
+
 ---
 
 ## 5. WebSocket

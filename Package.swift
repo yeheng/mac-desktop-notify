@@ -21,9 +21,13 @@ let package = Package(
             name: "MacDesktopNotify",
             dependencies: ["DynamicNotchKit"],
             path: "Sources/MacDesktopNotify",
-            // Shipped as reference documentation, not bundled: the tests read
-            // them from source and assert they parse with zero diagnostics.
-            exclude: ["Island/Examples"]
+            // The example layouts/themes are shipped inside the app as the
+            // built-in presets the pickers offer; the tests read them from
+            // source as well.
+            resources: [
+                .copy("Builtin/layouts"),
+                .copy("Builtin/themes")
+            ]
         ),
         .testTarget(
             name: "MacDesktopNotifyTests",

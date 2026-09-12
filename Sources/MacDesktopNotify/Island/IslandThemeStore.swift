@@ -78,8 +78,13 @@ final class IslandThemeStore {
     static let shared = IslandThemeStore()
     static let defaultThemeID = "default"
 
-    /// Always includes `default`, then every `*.json` in `themes/`, sorted.
+    /// Always includes `default`, then every layout id in the bundled configs
+    /// and the user directory, sorted. A user file shadows a built-in with the
+    /// same id.
     private(set) var themeIDs: [String] = [defaultThemeID]
+    /// Ids that come from the app bundle and are not shadowed by a user file;
+    /// the picker marks these 内置.
+    private(set) var builtinThemeIDs: Set<String> = []
     private(set) var diagnostics: [String] = []
     /// Bumped on every successful (or diagnostic) reload; reading it is how a
     /// view subscribes to theme changes.
@@ -90,9 +95,12 @@ final class IslandThemeStore {
     @ObservationIgnored private var cache: [ColorScheme: ResolvedIslandTokens] = [:]
     @ObservationIgnored private var watcher: DirectoryWatcher?
     @ObservationIgnored private let directory: URL
+    /// Themes shipped inside the app; nil when the bundle has none.
+    @ObservationIgnored private let builtinDirectory: URL?
 
-    init(directory: URL = IslandPaths.themesDirectory) {
+    init(directory: URL = IslandPaths.themesDirectory, builtinDirectory: URL? = BuiltinConfigs.themesDirectory) {
         self.directory = directory
+        self.builtinDirectory = builtinDirectory
     }
 
     var currentThemeID: String { AppSettings.shared.islandThemeID }
@@ -148,7 +156,15 @@ final class IslandThemeStore {
 
     private func load(themeID: String) -> LoadOutcome {
         guard themeID != Self.defaultThemeID else { return .default }
-        let url = directory.appendingPathComponent("\(themeID).json")
+        // Built-in first, then the user's directory on top: a user file with the
+        // same id shadows the bundled one.
+        let candidates = [
+            directory.appendingPathComponent("\(themeID).json"),
+            builtinDirectory?.appendingPathComponent("\(themeID).json"),
+        ].compactMap { $0 }
+        guard let url = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+            return .missing
+        }
         guard let data = try? Data(contentsOf: url) else { return .missing }
         guard data.count <= IslandLayoutParser.maxFileSize else {
             return .failure("主题文件超过 64KB，已保留上一份")
@@ -182,12 +198,12 @@ final class IslandThemeStore {
     }
 
     private func refreshThemeIDs() {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        let ids = names
-            .filter { $0.hasSuffix(".json") }
-            .map { String($0.dropLast(".json".count)) }
-            .sorted()
-        let next = [Self.defaultThemeID] + ids
+        let userIDs = BuiltinConfigs.ids(in: directory)
+        let bundledIDs = BuiltinConfigs.ids(in: builtinDirectory)
+        let userSet = Set(userIDs)
+        let next = [Self.defaultThemeID] + Array(Set(userIDs).union(bundledIDs)).sorted()
         if next != themeIDs { themeIDs = next }
+        let builtin = Set(bundledIDs).subtracting(userSet)
+        if builtin != builtinThemeIDs { builtinThemeIDs = builtin }
     }
 }

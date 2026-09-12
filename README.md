@@ -509,12 +509,14 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 ~/Library/Application Support/MacDesktopNotify/
   island.json                 # 旧位置的布局（「自动」时使用）
   layouts/
-    classic.json              # 具名布局；文件名即布局 ID
+    classic.json              # 自己的布局；同名会覆盖 app 内置的同名预设
   themes/
-    midnight.json             # 主题；缺失 = 内置默认（等于今天的字面量）
+    midnight.json             # 自己的主题；缺失 = 内置默认（等于今天的字面量）
 ```
 
-「设置 → 外观」可切换主题、预览 `expanded` 布局、查看解析诊断，并有「打开配置文件夹」。改文件后自动热重载（200ms 去抖）。
+app 内置了一套预设（`layouts/`、`themes/`，随包发布），下拉里带 **「（内置）」** 标记：内置先加载，用户目录下的同名文件叠在上面（自定义赢）。用户目录里没有文件时，内置预设依然可选。
+
+「设置 → 外观」可切换主题/布局、预览 `expanded` 布局、查看解析诊断，并有「打开配置文件夹」。改文件后自动热重载（200ms 去抖）。
 
 ### 主题 token
 
@@ -578,18 +580,20 @@ a11y:       { label, hidden }
 
 **原生内容槽**：`messageBody` 是消息卡片/历史列表（含滚动与内边距），`headerActions` 是面板头部按钮，`footerActions` 是「查看全部消息」。这些内容、Markdown 正文、点击/URL/脚本都留在 Swift，JSON 只决定盒子怎么摆。
 
-### 示例
+### 内置预设与覆盖
 
-`Sources/MacDesktopNotify/Island/Examples/` 下有可直接复制到配置目录的示例：
+`layouts/`、`themes/` 里的预设已**随 app 打包**，下拉菜单直接可用，带「（内置）」标记（如 `classic（内置）`、`github-dark（内置）`）：
 
-- 主题：`themes/midnight.json`（暗色）、`themes/solar.json`（暖色，含 light/dark 双色）、`themes/github-dark.json`（GitHub Dark / Primer 配色）、`themes/nerd-font.json`（只换字体族）
-- 布局：`layouts/classic.json`（等于内置壳布局）、`layouts/progress.json`（紧凑面 + 迷你条进度条）、`layouts/github.json`（GitHub Dark 配套）、`layouts/nerd.json`（Nerd Font 字形当图标）
+- 主题：`midnight`、`solar`、`github-dark`、`nerd-font`
+- 布局：`classic`（等于 Swift 内置壳布局）、`progress`、`github`、`nerd`
+
+**加载顺序：内置先，用户目录后。** 把同名文件放进配置目录就会覆盖内置版本（用户赢）；删掉它又回到内置，而不是直接回默认。
 
 ```bash
 CFG=~/Library/Application\ Support/MacDesktopNotify
 mkdir -p "$CFG/themes" "$CFG/layouts"
-cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/themes/*.json "$CFG/themes/"
-cp "$(pwd)"/Sources/MacDesktopNotify/Island/Examples/layouts/*.json "$CFG/layouts/"
+cp themes/*.json "$CFG/themes/"      # 想改哪个就先拷出来覆盖
+cp layouts/*.json "$CFG/layouts/"
 # 然后在「设置 → 外观」里选主题和布局
 ```
 
@@ -625,10 +629,13 @@ Sources/MacDesktopNotify/
 │   ├── IslandNode.swift                 # 11 种节点 + 修饰键（纯值类型）
 │   ├── IslandLayoutParser.swift         # 宽容 JSON walker + 上限 + 路径诊断
 │   ├── IslandLayoutStore.swift          # island.json 加载与热重载
-│   ├── IslandBindings.swift             # 8 个绑定 + 12 个谓词
+│   ├── IslandBindings.swift             # 9 个绑定 + 13 个谓词
 │   ├── IslandNodeView.swift             # 递归渲染器（具体类型，无 AnyView）
 │   ├── IslandSurfaceView.swift          # surface 入口 + 原生 slot
-│   └── Examples/                        # 示例主题与布局（不打包）
+│   └── BuiltinConfigs.swift             # app bundle 里的内置 layouts/themes 定位
+├── Builtin/                             # 随包发布的内置预设（仓库根 layouts/、themes/ 为软链）
+│   ├── layouts/                         # classic / progress / github / nerd
+│   └── themes/                          # midnight / solar / github-dark / nerd-font
 ├── IslandHaptics.swift                  # 触控板触觉反馈（触发区进入、点击、手势确认）
 ├── NotificationManager.swift            # 当前消息、历史、未读、dwell 状态机、静默闸门（@MainActor）
 ├── NotificationLog.swift                # 消息历史与已读集合（50 条上限、分组整组移除、撤销恢复）

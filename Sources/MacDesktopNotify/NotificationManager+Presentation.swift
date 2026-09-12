@@ -97,7 +97,7 @@ extension NotificationManager {
         delayed.cancel(.hoverExpand)
         delayed.cancel(.manualCollapse)
         displayState = .closed
-        panelEntered = false          // §3.1: the latch resets with the panel
+        pointer.panelEverEntered = false   // §3.1: the latch resets with the panel
         applyDismissRules()
         // Once the panel is gone there is nothing left to hover, so the dwell
         // resumes even if the pointer is still sitting where the panel was.

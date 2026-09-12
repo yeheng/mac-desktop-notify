@@ -157,6 +157,65 @@ final class ScriptRunnerTests: SettingsIsolatedTestCase {
                        "5 个请求、闸门 4：恰好一个必须被拒")
     }
 
+    /// 看门狗超时必须立刻把**逻辑槽位**还给下一个请求。旧实现按真实存活
+    /// 线程计数，卡住的 fetch 线程永不退出，4 次超时就把闸门永久占死，
+    /// 第 5 次直接 "busy"。这里用阻塞在 semaphore 上的 fetch 制造"线程活得比
+    /// budget 长"——与死循环等价，但测试结束前能放行，不在进程里留永久转的线程。
+    func testRepeatedTimeoutsDoNotExhaustSlots() async throws {
+        let dir = try makeDir()
+        try "fetch('https://x.test')".write(
+            to: dir.appendingPathComponent("slow.js"), atomically: true, encoding: .utf8)
+        let gate = DispatchSemaphore(value: 0)
+        let engine = ScriptEngine(
+            fetch: { _, _ in
+                gate.wait()
+                return FetchResponse(status: 200, ok: true, body: "{}")
+            },
+            notify: { _ in "displayed" })
+        let runner = ScriptRunner(store: ScriptStore(directory: dir), engine: engine)
+
+        for attempt in 1...5 {
+            let outcome = await runner.run(named: "slow", input: .object([:]), budget: .milliseconds(50))
+            XCTAssertEqual(outcome.error, "timeout",
+                           "第 \(attempt) 次必须超时，而不是被耗尽槽位拒成 busy")
+        }
+        XCTAssertEqual(runner.activeExecutions, 0, "每次超时都必须释放逻辑槽位")
+
+        for _ in 0..<5 { gate.signal() }   // 放行阻塞的脚本线程，别留在进程里
+    }
+
+    /// 槽位还回来了，但底层线程还在攒：累计超过熔断线就暂停接活，
+    /// 直到它们退出。这是防虚拟内存耗尽的兵底，不是槽位扣减。
+    func testZombieFuseRefusesNewWorkThenRecovers() async throws {
+        let dir = try makeDir()
+        try "fetch('https://x.test')".write(
+            to: dir.appendingPathComponent("slow.js"), atomically: true, encoding: .utf8)
+        let gate = DispatchSemaphore(value: 0)
+        let engine = ScriptEngine(
+            fetch: { _, _ in
+                gate.wait()
+                return FetchResponse(status: 200, ok: true, body: "{}")
+            },
+            notify: { _ in "displayed" })
+        let runner = ScriptRunner(store: ScriptStore(directory: dir), engine: engine)
+
+        for attempt in 1...ScriptEngine.maxZombieThreads {
+            let outcome = await runner.run(named: "slow", input: .object([:]), budget: .milliseconds(30))
+            XCTAssertEqual(outcome.error, "timeout", "第 \(attempt) 次僵尸仍应被接受")
+        }
+        XCTAssertEqual(runner.zombieThreads, ScriptEngine.maxZombieThreads)
+
+        let refused = await runner.run(named: "slow", input: .object([:]), budget: .milliseconds(30))
+        XCTAssertEqual(refused.error, "busy", "僵尸数到线后必须熔断")
+
+        for _ in 0..<ScriptEngine.maxZombieThreads { gate.signal() }
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, runner.zombieThreads > 0 {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(runner.zombieThreads, 0, "线程退出后僵尸计数必须回落，熔断随之解除")
+    }
+
     // MARK: - Push backfill (§2.1)
 
     func testBackfillReplacesPlaceholderFields() async throws {

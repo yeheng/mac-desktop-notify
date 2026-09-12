@@ -37,6 +37,16 @@ echo "   可执行文件: ${EXE_PATH}"
 cp "${EXE_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 
+# SPM 把内置的 layouts/themes 打包成 *体积旁* 的 resource bundle；手工拼装的
+# .app 必须把它搬进 Contents/Resources，否则 Bundle.module 在启动时就 fatalError。
+RESOURCE_BUNDLE=$(find "${BUILD_DIR}" -maxdepth 3 -type d -name "${APP_NAME}_${APP_NAME}.bundle" | head -n 1)
+if [[ -n "${RESOURCE_BUNDLE}" ]]; then
+    echo "   内置配置: ${RESOURCE_BUNDLE}"
+    cp -R "${RESOURCE_BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
+else
+    echo "⚠️  未找到内置配置 resource bundle，下拉菜单将没有内置预设"
+fi
+
 echo "📝 生成 Info.plist..."
 cat > "${APP_BUNDLE}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

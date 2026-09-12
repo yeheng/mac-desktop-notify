@@ -13,7 +13,7 @@ final class IslandRendererTests: SettingsIsolatedTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Sources/MacDesktopNotify/Island/Examples")
+            .appendingPathComponent("Sources/MacDesktopNotify/Builtin")
     }
 
     func testExpandedExampleRendersNonBlank() throws {

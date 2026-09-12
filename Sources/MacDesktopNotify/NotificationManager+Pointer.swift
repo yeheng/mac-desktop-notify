@@ -60,7 +60,7 @@ extension NotificationManager {
                 // §3.1 latch: entering the open panel engages the card. It gates
                 // only the leave-collapse rule - read state is explicit (v4 §4),
                 // so nothing is marked read here.
-                panelEntered = true
+                pointer.panelEverEntered = true
             }
             applyDismissRules()
             reconcileDwell()
@@ -69,7 +69,7 @@ extension NotificationManager {
             guard pointer.onPanel else { return }
             let claims = pointer.nearIsland
             pointer.zone = claims ? .inActivationZone : .away
-            if case .opened(reason: .notification) = displayState, panelEntered {
+            if case .opened(reason: .notification) = displayState, pointer.panelEverEntered {
                 // §3.1: entered, then left - the card was seen; it steps down now.
                 advance()
                 return
@@ -97,7 +97,6 @@ extension NotificationManager {
 
         case .cleared:
             pointer = PointerState()
-            panelEntered = false
         }
     }
 

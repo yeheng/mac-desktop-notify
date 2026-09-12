@@ -32,6 +32,13 @@ struct PointerState: Equatable {
     /// island click overrides it.
     var hoverDismissed = false
 
+    /// §3.1 latch: the pointer has been on the open panel during this open
+    /// period. Gates only the leave-collapse rule; v4 read state is explicit
+    /// and never consults it. Set on the `.hoverBegan` edge, cleared when the
+    /// panel settles. It lives here - not as a loose manager flag - so the
+    /// pointer's whole lifecycle is one value with one reset point.
+    var panelEverEntered = false
+
     /// The activation-zone monitor's claim - what `pointerNearIsland` reports.
     var nearIsland: Bool {
         switch zone {
