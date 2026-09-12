@@ -589,6 +589,8 @@ a11y:       { label, hidden }
 
 **加载顺序：内置先，用户目录后。** 把同名文件放进配置目录就会覆盖内置版本（用户赢）；删掉它又回到内置，而不是直接回默认。
 
+> **打包注意**：内置预设来自 SPM 生成的 `MacDesktopNotify_MacDesktopNotify.bundle`。`build_app.sh` 会把它复制进 `Contents/Resources`，找不到就**中止构建**（手工打包漏了它是发版事故）。即使真的漏了，app 也能启动，只是下拉里没有内置预设 —— `BuiltinConfigs` 刻意不用会 `fatalError` 的 `Bundle.module`。
+
 ```bash
 CFG=~/Library/Application\ Support/MacDesktopNotify
 mkdir -p "$CFG/themes" "$CFG/layouts"

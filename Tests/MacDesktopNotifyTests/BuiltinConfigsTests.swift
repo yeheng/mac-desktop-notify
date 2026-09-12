@@ -5,6 +5,11 @@ import XCTest
 @MainActor
 final class BuiltinConfigsTests: XCTestCase {
 
+    func testIdsOfMissingDirectoryIsEmpty() {
+        XCTAssertEqual(BuiltinConfigs.ids(in: nil), [])
+        XCTAssertEqual(BuiltinConfigs.ids(in: URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)")), [])
+    }
+
     func testBuiltinLayoutsAndThemesAreBundled() throws {
         let layouts = try XCTUnwrap(BuiltinConfigs.layoutsDirectory, "layouts/ must be bundled")
         let themes = try XCTUnwrap(BuiltinConfigs.themesDirectory, "themes/ must be bundled")

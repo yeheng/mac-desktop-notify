@@ -12,8 +12,11 @@ final class MarkdownCacheTests: XCTestCase {
     ```
     """
 
-    override func tearDown() {
-        MarkdownCache.shared.removeAllObjects()
+    override func tearDown() async throws {
+        // `tearDown` overrides are nonisolated even on a `@MainActor` class, so
+        // hop explicitly instead of touching the main-actor cache directly.
+        await MainActor.run { MarkdownCache.shared.removeAllObjects() }
+        try await super.tearDown()
     }
 
     // MARK: - The cache is actually used

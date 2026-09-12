@@ -286,7 +286,7 @@ final class APIIntegrationTests: XCTestCase {
         let base = try await startServer()
         let url = try XCTUnwrap(URL(string: "notch-notify://push?title=nan&timeout=nan"))
         let n = try XCTUnwrap(URLNotificationParser.parsePush(url))
-        await MainActor.run { manager.push(n) }
+        await MainActor.run { _ = manager.push(n) }
         XCTAssertNil(manager.current?.timeout, "NaN 必须被闸口拦下")
 
         let (status, data) = try await request(base.appendingPathComponent("v1/history"), method: "GET")

@@ -37,14 +37,20 @@ echo "   可执行文件: ${EXE_PATH}"
 cp "${EXE_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 
-# SPM 把内置的 layouts/themes 打包成 *体积旁* 的 resource bundle；手工拼装的
-# .app 必须把它搬进 Contents/Resources，否则 Bundle.module 在启动时就 fatalError。
+# SPM 把内置的 layouts/themes 打成可执行文件旁的 resource bundle；手工拼装的
+# .app 必须把它搬进 Contents/Resources。少了它内置预设会全部消失（BuiltinConfigs
+# 已做非致命兜底，不会像 Bundle.module 那样 fatalError），但这显然不是想要的包。
 RESOURCE_BUNDLE=$(find "${BUILD_DIR}" -maxdepth 3 -type d -name "${APP_NAME}_${APP_NAME}.bundle" | head -n 1)
-if [[ -n "${RESOURCE_BUNDLE}" ]]; then
-    echo "   内置配置: ${RESOURCE_BUNDLE}"
-    cp -R "${RESOURCE_BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
-else
-    echo "⚠️  未找到内置配置 resource bundle，下拉菜单将没有内置预设"
+if [[ -z "${RESOURCE_BUNDLE}" ]]; then
+    echo "❌ 找不到内置配置 resource bundle：${APP_NAME}_${APP_NAME}.bundle"
+    exit 1
+fi
+echo "   内置配置: ${RESOURCE_BUNDLE}"
+rm -rf "${APP_BUNDLE}/Contents/Resources/${APP_NAME}_${APP_NAME}.bundle"
+cp -R "${RESOURCE_BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
+if [[ ! -d "${APP_BUNDLE}/Contents/Resources/${APP_NAME}_${APP_NAME}.bundle/layouts" ]]; then
+    echo "❌ 内置配置复制失败，.app 将没有内置 layouts/themes"
+    exit 1
 fi
 
 echo "📝 生成 Info.plist..."

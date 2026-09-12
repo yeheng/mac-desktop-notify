@@ -126,12 +126,14 @@ struct NotchView<Expanded, CompactLeading, CompactTrailing>: View where Expanded
             }
         }
         .frame(height: dynamicNotch.notchSize.height)
-        .onChange(of: dynamicNotch.disableCompactLeading) { _ in
+        // local patch: `onChange(of:perform:)` is deprecated in macOS 14; the
+        // value is unused, so the two-parameter form is the drop-in replacement.
+        .onChange(of: dynamicNotch.disableCompactLeading) { _, _ in
             if dynamicNotch.disableCompactLeading {
                 compactLeadingWidth = 0
             }
         }
-        .onChange(of: dynamicNotch.disableCompactTrailing) { _ in
+        .onChange(of: dynamicNotch.disableCompactTrailing) { _, _ in
             if dynamicNotch.disableCompactTrailing {
                 compactTrailingWidth = 0
             }
