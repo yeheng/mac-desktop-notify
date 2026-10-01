@@ -200,4 +200,31 @@ final class PushValidatorTests: XCTestCase {
         XCTAssertEqual(actions.count, 2, "缺 label 不得让整个数组解码失败")
         XCTAssertEqual(PushValidator.normalizedActions(actions).map(\.label), ["保留"])
     }
+
+    // MARK: - clickUrl
+
+    /// 合法链接原样到达模型；坏链接只损失链接，从不拒绝消息。
+    func testClickURLNormalization() throws {
+        let good = try PushValidator.makeNotification(
+            title: "t", body: nil, urgencyRaw: nil, timeout: nil, group: nil,
+            actions: [], clickUrl: "  https://ci.example.com/runs/42  "
+        ).get()
+        XCTAssertEqual(good.clickURL?.host, "ci.example.com")
+        XCTAssertEqual(good.clickURL?.path, "/runs/42")
+
+        for bad in [nil, "", "   ", "没有 scheme", "://also-bad"] {
+            let n = try PushValidator.makeNotification(
+                title: "t", body: nil, urgencyRaw: nil, timeout: nil, group: nil,
+                actions: [], clickUrl: bad
+            ).get()
+            XCTAssertNil(n.clickURL, "\(bad ?? "nil") 必须被丢弃而不是拒绝整条推送")
+        }
+
+        // 与 action 的 url 同一条规则：scheme 是底线，自定义 scheme 也算。
+        let custom = try PushValidator.makeNotification(
+            title: "t", body: nil, urgencyRaw: nil, timeout: nil, group: nil,
+            actions: [], clickUrl: "myapp://open/1"
+        ).get()
+        XCTAssertEqual(custom.clickURL?.scheme, "myapp")
+    }
 }

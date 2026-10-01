@@ -68,6 +68,7 @@ final class APIRouter: Sendable {
         let blocks: [PushValidator.BlockDTO]?
         let island: PushValidator.IslandDTO?
         let script: String?
+        let clickUrl: String?
     }
 
     private struct PushResponse: Codable {
@@ -91,7 +92,8 @@ final class APIRouter: Sendable {
         switch PushValidator.makeNotification(
             title: dto.title ?? "", body: bodyText, urgencyRaw: dto.urgency,
             timeout: dto.timeout, group: dto.group, actions: actions,
-            script: dto.script, island: PushValidator.normalizedIsland(dto.island)
+            script: dto.script, island: PushValidator.normalizedIsland(dto.island),
+            clickUrl: dto.clickUrl
         ) {
         case .success(let notification):
             // Only jump to MainActor when calling manager. The funnel owns the

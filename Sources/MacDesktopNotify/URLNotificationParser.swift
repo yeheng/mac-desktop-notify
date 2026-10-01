@@ -19,7 +19,8 @@ enum URLNotificationParser {
             timeout: timeout,
             group: value("group"),
             actions: parseActions(value("actions")),
-            script: value("script")
+            script: value("script"),
+            clickUrl: value("click")
         ) {
         case .success(var notification):
             // The `display` hint is a URL-scheme concern; `PushValidator` is the

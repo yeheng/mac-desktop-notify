@@ -40,6 +40,7 @@ enum PushValidator {
         var timeout: TimeInterval?
         var group: String?
         var actions: [NotificationAction]
+        var clickURL: URL?
     }
 
     /// The one normalization of sender-controlled fields.
@@ -48,15 +49,16 @@ enum PushValidator {
     /// rewriting a card) both end here, because the alternative is a bug this
     /// codebase has already shipped once: the backfill path wrote a raw
     /// `timeout` straight into the model, a NaN poisoned `JSONEncoder`, and the
-    /// failure was swallowed - silently killing persistence for the rest of the
-    /// session. One gate, both doors, and any future door as well.
+    /// failure was swallowed - silently killing persistence for the rest of
+    /// the session. One gate, both doors, and any future door as well.
     static func normalize(
         title: String,
         body: String?,
         urgencyRaw: String?,
         timeout: Double?,
         group: String?,
-        actions: [NotificationAction]
+        actions: [NotificationAction],
+        clickUrl: String? = nil
     ) -> Fields {
         var trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedTitle.count > maxTitleLength {
@@ -68,8 +70,21 @@ enum PushValidator {
             urgency: UrgencyLevel(rawValue: urgencyRaw ?? "") ?? .normal,
             timeout: clampedTimeout(timeout),
             group: normalizedGroup(group),
-            actions: normalizedActions(actions)
+            actions: normalizedActions(actions),
+            clickURL: normalizedClickURL(clickUrl)
         )
+    }
+
+    /// The card's click-through link. Same rule as an action's url — must carry
+    /// a scheme — and the same tolerance: an unparsable or scheme-less value
+    /// costs the link, never the message (truncate, never reject). The empty
+    /// scheme is checked explicitly: Foundation happily parses "://host" with
+    /// a non-nil-but-empty scheme.
+    static func normalizedClickURL(_ raw: String?) -> URL? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        guard let url = URL(string: trimmed), let scheme = url.scheme, !scheme.isEmpty else { return nil }
+        return url
     }
 
     /// Truncate, never reject: a 32 KB title is a sender bug, not a reason to
@@ -266,7 +281,8 @@ enum PushValidator {
         group: String?,
         actions: [NotificationAction],
         script: String? = nil,
-        island: IslandContent? = nil
+        island: IslandContent? = nil,
+        clickUrl: String? = nil
     ) -> Result<NotchNotification, PushRejection> {
         var rawTitle = title
         if let script {
@@ -280,7 +296,7 @@ enum PushValidator {
 
         let fields = normalize(
             title: rawTitle, body: body, urgencyRaw: urgencyRaw,
-            timeout: timeout, group: group, actions: actions
+            timeout: timeout, group: group, actions: actions, clickUrl: clickUrl
         )
         guard !fields.title.isEmpty else { return .failure(.missingTitle) }
 
@@ -292,7 +308,8 @@ enum PushValidator {
             actions: fields.actions,
             group: fields.group,
             script: script,
-            island: island
+            island: island,
+            clickURL: fields.clickURL
         ))
     }
 

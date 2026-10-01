@@ -27,6 +27,15 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertEqual(manager.current?.title, "构建完成")
     }
 
+    /// `clickUrl` 走同一道闸：合法链接到达模型，缺省即无。
+    func testPushCarriesClickURL() async {
+        _ = await router.handle(APIRequest(
+            method: "POST", path: "/v1/push", query: [:],
+            body: json(["title": "构建失败", "clickUrl": "https://ci.example.com/42"])
+        ))
+        XCTAssertEqual(manager.current?.clickURL?.host, "ci.example.com")
+    }
+
     func testPushWithoutTitleIs400WithField() async {
         let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/push", query: [:], body: json(["body": "x"])

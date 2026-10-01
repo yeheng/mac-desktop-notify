@@ -79,6 +79,7 @@ swift build -c release
 | `timeout` | `number` | ❌ | 设置值（默认 `5` 秒） | 自动收起秒数，范围 1-60；未传时使用「设置 → 通知」中的停留时长 |
 | `group` | `string` | ❌ | _(无)_ | 分组键，最长 64 字符。同组新消息**顶掉**旧消息（含历史与屏上），适合 CI 等重复任务；空白串视为无分组 |
 | `actions` | `string` | ❌ | _(空)_ | 操作按钮，JSON 数组 `[{"label":"允许","url":"http://..."}]`，最多 3 个。`url` 若为 `notch-notify://ack` 则记录回执而非打开浏览器（见下文） |
+| `click` | `string` | ❌ | _(无)_ | 点击通知卡打开的链接，须带 scheme（URL Scheme 入口为 `click`，本地 API 为 `clickUrl`）；非法值丢弃不影响消息。点击后消息标已读并关闭 |
 | `blocks` | `array` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：结构化正文块数组，JSON 原生免转义；非空时优先于 `body`（见 [docs/api.md](docs/api.md#31-blocks结构化正文)） |
 | `island` | `object` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：灵动岛状态行 `{"text","progress","icon"}`，驱动刘海 pill / 迷你条 / peek 停留态的紧凑面（见 [docs/api.md](docs/api.md#32-island灵动岛状态行)） |
 | `display` | `string` | ❌ | 设置值 | 展示档位：`"peek"` 轻提醒（只在摘要栏停留，不展开面板）/ `"expand"` 正常展开；未传时由「设置 → 通知 → 普通消息使用轻提醒」决定；critical 恒为展开，忽略此参数 |
@@ -153,6 +154,8 @@ open 'notch-notify://push?title=部署审批&body=版本 v1.2.3 等待发布&urg
 ```
 
 规则：最多 3 个按钮，第一个渲染为主按钮；`label` 最长 24 字符；`url` 必须带 scheme；无效条目会被静默丢弃，不影响通知本身。注意 action 的 `url` 里不能含 `#` / `&`（如 ack 回执 URL 含 `&`，须改用 osascript 或本地 API，见下文动作回执一节）。
+
+不想占用按钮位、只想要「点卡片直达」时，用 `click` 参数（本地 API 为 `clickUrl`）：点击通知卡打开链接、标已读并关闭卡片。卡片头部以 ↗ 图标提示可点；与操作按钮互不冲突，两者可同时使用。
 
 **Python 示例（urlencode 编码后须经 `osascript` 调用——`open` 会把 `%` 二次编码）：**
 
@@ -453,6 +456,7 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 | `Esc` | 收起面板——指针在面板/刘海区域，或面板由点击/悬停打开时生效；需辅助功能授权 |
 | 点击面板外 | 收起面板（「鼠标离开时自动收起」关闭时不收起） |
 | 点击历史行 | 就地展开/收起正文与操作按钮（手风琴，开合间保留）；展开即标为已读 |
+| 点击当前通知卡（带 `click`） | 打开发送方链接、标为已读并收起卡片——与操作按钮同一条处理路径 |
 | 面板内管理 | 面板只读：删除/标读/撤销/搜索请用右键「历史信息…」独立历史窗口 |
 | 面板头部 | 「全部已读」「更多操作」菜单、关闭按钮、触感反馈保留 |
 | 刘海 pill | 环境态：紧急度色 glyph + `×N` 未读徽章（N>1）；推送带 `island` 时 glyph（或发送方 icon）旁显示一行状态文本；标题只出现在通知卡与消息中心 |

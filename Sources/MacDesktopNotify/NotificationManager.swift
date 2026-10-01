@@ -446,6 +446,14 @@ final class NotificationManager {
         actionHandler = handler
     }
 
+    /// 点击通知卡直达发送方的 `clickUrl`：与操作按钮同一条处理路径——
+    /// 打开 URL、标记已读、退役当前卡。没有链接的卡片维持原行为，
+    /// 调用方不必判断。
+    func openClickURL(of notification: NotchNotification) {
+        guard let url = notification.clickURL else { return }
+        performAction(NotificationAction(label: "打开链接", url: url), for: notification)
+    }
+
     // MARK: - Silence
 
     /// Temporarily silences messages: everything lands in history, critical

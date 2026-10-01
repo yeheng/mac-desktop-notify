@@ -137,4 +137,22 @@ final class URLNotificationParserTests: XCTestCase {
         XCTAssertEqual(actions[0].script, "approve")
         XCTAssertTrue(actions[0].wantsComment)
     }
+
+    /// `click` 参数经 percent-encode 解析成点击直达链接；缺省 = 无链接。
+    /// URL 用 URLComponents 构造（发送方的规范路径）：`URL(string:)` 直填
+    /// 百分号串会二次编码——正是 README 记录过的 `open` 陷阱。
+    func testClickParameterParses() throws {
+        var components = URLComponents()
+        components.scheme = "notch-notify"
+        components.host = "push"
+        components.queryItems = [
+            URLQueryItem(name: "title", value: "构建失败"),
+            URLQueryItem(name: "click", value: "https://ci.example.com/runs/42"),
+        ]
+        let notification = try XCTUnwrap(URLNotificationParser.parsePush(components.url!))
+        XCTAssertEqual(notification.clickURL?.absoluteString, "https://ci.example.com/runs/42")
+
+        let plain = URLNotificationParser.parsePush(URL(string: "notch-notify://push?title=x")!)
+        XCTAssertNil(plain?.clickURL)
+    }
 }

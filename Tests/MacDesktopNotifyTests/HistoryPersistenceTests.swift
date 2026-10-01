@@ -294,4 +294,17 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
 
         XCTAssertEqual(loaded.items.first?.occurrences, 4)
     }
+
+    /// 点击直达链接随快照往返——重启后卡片仍可点开发送方的链接。
+    func testClickURLRoundTripsThroughDisk() throws {
+        let store = makeStore()
+        let item = NotchNotification(
+            title: "构建失败", bodyMarkdown: "", urgency: .critical, timeout: nil,
+            clickURL: URL(string: "https://ci.example.com/runs/42")!)
+
+        try store.save(HistorySnapshot(items: [item], readIDs: []))
+        let loaded = try XCTUnwrap(snapshot(from: store))
+
+        XCTAssertEqual(loaded.items.first?.clickURL, item.clickURL)
+    }
 }

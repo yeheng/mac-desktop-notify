@@ -569,7 +569,8 @@ final class ScriptRunner {
             urgencyRaw: urgencyRaw,
             timeout: fields["timeout"]?.doubleValue ?? message.timeout,
             group: fields["group"]?.stringValue ?? message.group,
-            actions: rawActions
+            actions: rawActions,
+            clickUrl: fields["clickUrl"]?.stringValue
         )
         message.title = normalized.title
         message.bodyMarkdown = normalized.body
@@ -577,6 +578,7 @@ final class ScriptRunner {
         message.timeout = normalized.timeout
         message.actions = normalized.actions
         message.group = normalized.group
+        message.clickURL = normalized.clickURL
     }
 
     /// 失败（决策 #4）：⚠️ 前缀 + 触发上下文 + 日志尾 3 行。Backfill 的上下文是
@@ -713,7 +715,8 @@ private func performScriptNotify(_ op: NotifyOp) -> String {
             urgencyRaw: fields["urgency"]?.stringValue,
             timeout: fields["timeout"]?.doubleValue,
             group: fields["group"]?.stringValue,
-            actions: actions
+            actions: actions,
+            clickUrl: fields["clickUrl"]?.stringValue
         )
         switch result {
         case .success(let notification):

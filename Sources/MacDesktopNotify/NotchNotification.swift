@@ -116,6 +116,11 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
     /// 首次到达为 1。发送方不可设置（`PushValidator` 不收它），纯模型内部
     /// 计数；分组清空后从 1 重新计。
     var occurrences: Int
+    /// 发送方给的点击直达链接（push 的 `clickUrl` 字段）：点击当前通知卡即
+    /// 打开（打开后标记已读并退役卡片，与操作按钮同一处理路径）。nil =
+    /// 卡片维持原行为。与 action 的 url 同一条规则：必须带 scheme，非法即
+    /// 丢弃（truncate-never-reject）。
+    var clickURL: URL?
 
     init(
         id: UUID = UUID(),
@@ -129,7 +134,8 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         script: String? = nil,
         displayPeek: Bool? = nil,
         island: IslandContent? = nil,
-        occurrences: Int = 1
+        occurrences: Int = 1,
+        clickURL: URL? = nil
     ) {
         self.id = id
         self.title = title
@@ -143,6 +149,7 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         self.displayPeek = displayPeek
         self.island = island
         self.occurrences = occurrences
+        self.clickURL = clickURL
     }
 
     /// Lenient decoding, on the `NotificationAction` precedent: the snapshot is
@@ -165,6 +172,7 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         displayPeek = try container.decodeIfPresent(Bool.self, forKey: .displayPeek)
         island = try container.decodeIfPresent(IslandContent.self, forKey: .island)
         occurrences = try container.decodeIfPresent(Int.self, forKey: .occurrences) ?? 1
+        clickURL = try container.decodeIfPresent(URL.self, forKey: .clickURL)
     }
 
     /// A non-empty trimmed group, or `nil`. Blank groups never collapse anything.

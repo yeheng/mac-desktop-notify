@@ -510,6 +510,14 @@ private struct CurrentCard: View {
                 if showsInlineActions {
                     InlineActionCapsules(notification: notification)
                 }
+                if notification.clickURL != nil {
+                    // The click-through affordance: a tap on the card opens the
+                    // sender's link, so the chevron says so before the first tap.
+                    Image(systemName: "arrow.up.forward")
+                        .font(theme.font(size: 10, weight: .bold))
+                        .foregroundStyle(theme.textSubtle)
+                        .accessibilityHidden(true)
+                }
                 Text(notification.timestamp.formatted(.relative(presentation: .named)))
                     .font(theme.font(size: 10, weight: .medium, design: theme.fontDesign.design))
                     .foregroundStyle(theme.textTimestamp)
@@ -534,6 +542,11 @@ private struct CurrentCard: View {
                         Button("操作：\(action.label)") {
                             manager.performAction(action, for: notification)
                         }
+                    }
+                }
+                if notification.clickURL != nil {
+                    Button("打开链接") {
+                        manager.openClickURL(of: notification)
                     }
                 }
             }
@@ -564,6 +577,12 @@ private struct CurrentCard: View {
         .background(hovering ? theme.cardFillHover : theme.cardFill, in: RoundedRectangle(cornerRadius: theme.cardRadius, style: .continuous))
         .onHover { hovering = $0 }
         .animation(.easeInOut(duration: theme.motion(0.12)), value: hovering)
+        // 点击直达：仅在发送方给了 clickUrl 时有行为。操作按钮自吞点击，
+        // 标题的文本选择靠拖拽，都不与之冲突。
+        .onTapGesture {
+            guard notification.clickURL != nil else { return }
+            manager.openClickURL(of: notification)
+        }
     }
 
     private var showsInlineActions: Bool {
