@@ -295,11 +295,12 @@ curl 'http://127.0.0.1:4770/v1/history?limit=5'
 ### 4.7 Unix Socket
 
 ```bash
-# 系统自带 curl 的 --unix-socket 不接受带空格的路径，先做无空格软链
+# 带引号的空格路径在 curl 8.7+ 可直接使用；个别旧版 curl 的 --unix-socket
+# 处理不好空格，失败就先做个无空格软链
 ln -sf "$HOME/Library/Application Support/MacDesktopNotify/api.sock" /tmp/mdn-api.sock
 
+curl --unix-socket "$HOME/Library/Application Support/MacDesktopNotify/api.sock" http://localhost/v1/status
 curl --unix-socket /tmp/mdn-api.sock http://localhost/v1/push -d '{"title":"构建完成"}'
-curl --unix-socket /tmp/mdn-api.sock http://localhost/v1/status
 ```
 
 路径里的 `http://localhost` 是必需的占位——curl 需要一个 URL 来决定请求行，实际连接走 socket。Host 头为 `localhost`，通过校验。

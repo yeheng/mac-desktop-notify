@@ -108,10 +108,9 @@ open 'notch-notify://push?title=构建完成&body=项目编译成功&urgency=nor
 ```bash
 open 'notch-notify://push?title=部署报告&body=**部署摘要**
 
-项目 | 状态
------- | ------
-API Server | ✅
-Web App | ✅&urgency=normal&timeout=10'
+- API Server：✅
+- Web App：✅
+- 耗时：2m30s&urgency=normal&timeout=10'
 ```
 
 需要 `##` 标题或正文含 `#` / `&` 时，改用本地 API（完整规则见 [docs/api.md](docs/api.md)）：
@@ -299,6 +298,13 @@ open 'notch-notify://clear?group=ci-build'
 | `GET` | `/v1/status` | 未读数、历史条数、静默状态与各监听器状态 |
 
 ```bash
+# Unix Socket 默认开启，无需任何设置；JSON 正文，没有 URL 编码问题
+curl --unix-socket "$HOME/Library/Application Support/MacDesktopNotify/api.sock" \
+  http://127.0.0.1/v1/push -d '{"title":"构建完成","body":"全部通过","urgency":"normal","timeout":10}'
+# → {"outcome":"displayed","id":"…"}
+# 个别 curl 版本处理不好带空格的路径：失败就先 ln -sf 到无空格软链（见 docs/api.md §4.7）
+
+# HTTP 需先在「设置 → 接口」开启（默认关闭）
 curl http://127.0.0.1:4770/v1/push \
   -d '{"title":"构建完成","body":"全部通过","urgency":"normal","timeout":10}'
 # → {"outcome":"displayed","id":"…"}
