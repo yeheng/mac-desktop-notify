@@ -168,6 +168,11 @@ final class NotificationManager {
     /// without a manual refresh pass.
     private(set) var quietOverrideUntil: Date?
 
+    /// +Dwell: the message a 「稍后提醒」 will bring back. It left the screen
+    /// at reminder time (still in history, unread); nil when nothing is
+    /// pending. One reminder at a time — the `DelayedEvents` key replaces.
+    @ObservationIgnored var snoozedReminderItem: NotchNotification?
+
     init() {}
 
     init(presenter: NotchPresenting) {

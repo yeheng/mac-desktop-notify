@@ -27,6 +27,8 @@ final class DelayedEvents {
         case deletionUndoExpiry
         /// §3.1: the informational card's auto-close countdown.
         case notificationAutoClose
+        /// 「稍后提醒」的到点重现：一条被用户主动推迟的消息按约回来。
+        case remindResurface
     }
 
     private var tasks: [Key: Task<Void, Never>] = [:]

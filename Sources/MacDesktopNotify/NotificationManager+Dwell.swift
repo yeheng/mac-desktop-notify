@@ -187,4 +187,41 @@ extension NotificationManager {
         delayed.cancel(.criticalAging)
         delayed.cancel(.actionHoldAging)
     }
+
+    // MARK: - Remind me later
+
+    /// 「稍后提醒」：用户确认了这条消息但现在不看，指定时长后让它重新上屏。
+    /// 消息立即退役——留在历史、保持未读——到点经 `present` 重现，落点规则
+    /// 与一次新推送完全相同（critical 照常占屏、已开面板原地换内容、全屏
+    /// 抑制下停靠）。
+    ///
+    /// 提醒是进程内定时器，退出即丢，与 dwell/hover 等其余延迟事件一致：
+    /// 「重启后还在」是历史持久化的职责，不是定时器的。
+    func remindMeLater(for duration: Duration) {
+        guard let item = current else { return }
+        snoozedReminderItem = item
+        advance()
+        // 同名 Key 重新排程即替换：同一时刻只有一条提醒在途。
+        delayed.schedule(.remindResurface, after: duration) { [weak self] in
+            self?.resurfaceReminder()
+        }
+    }
+
+    /// 提醒到点：消息像新推送一样回来，但不重新入历史——它从未离开。
+    /// 已读、已删除、已清空或此刻勿扰，提醒静默放弃，消息留在用户放它的
+    /// 地方。internal（而非 private）以便测试直接点火，不必为等定时器而睡。
+    func resurfaceReminder() {
+        guard let item = snoozedReminderItem else { return }
+        snoozedReminderItem = nil
+        guard messages.history.contains(where: { $0.id == item.id }),
+              !messages.readIDs.contains(item.id),
+              !isQuiet(for: item) else { return }
+
+        // A critical on screen keeps it, exactly like `push`: a normal message's
+        // reminder waits as an unread history row; a critical reminder displaces.
+        if item.urgency == .critical || presentation?.item.urgency != .critical {
+            present(item)
+            soundPlayer?(item)
+        }
+    }
 }

@@ -106,6 +106,14 @@ struct IslandContextMenu: ViewModifier {
                 Button("打开面板") { manager.togglePanel() }
                     .disabled(!manager.hasContent)
             }
+            // Operates on the live message wherever the menu is attached (pill,
+            // panel, mini bar): defer it, and it comes back on its own.
+            if manager.current != nil {
+                Menu("稍后提醒") {
+                    Button("30 分钟后") { manager.remindMeLater(for: .seconds(1800)) }
+                    Button("1 小时后") { manager.remindMeLater(for: .seconds(3600)) }
+                }
+            }
             Divider()
             // The full backlog in a real window: the panel's history section
             // is a glance, this is the browse-and-manage surface.
