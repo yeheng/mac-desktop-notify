@@ -109,6 +109,58 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.historyCount, 2)
     }
 
+    // MARK: - Occurrence count
+
+    /// The Nth push of a group knows it is the Nth: the count rides on the
+    /// replacement, one entry per group still.
+    func testRepeatedGroupPushesCountOccurrences() {
+        let (m, old) = manager()
+        defer { AppSettings.shared.autoExpandOnMessage = old }
+
+        m.push(make("run-1", group: "ci"))
+        m.push(make("run-2", group: "ci"))
+        m.push(make("run-3", group: "ci"))
+
+        XCTAssertEqual(m.current?.occurrences, 3)
+        XCTAssertEqual(m.historyCount, 1, "the count replaces, it never stacks")
+    }
+
+    /// Displacement into history is still the same group: the count follows
+    /// the entry wherever it lives.
+    func testOccurrenceCountSurvivesDisplacement() {
+        let (m, old) = manager()
+        defer { AppSettings.shared.autoExpandOnMessage = old }
+
+        m.push(make("run-1", group: "ci"))
+        m.push(make("unrelated"))
+        m.push(make("run-2", group: "ci"))
+
+        XCTAssertEqual(m.current?.occurrences, 2)
+    }
+
+    /// Clearing the group ends the job; the next one starts from one.
+    func testClearGroupResetsTheCount() {
+        let (m, old) = manager()
+        defer { AppSettings.shared.autoExpandOnMessage = old }
+
+        m.push(make("run-1", group: "ci"))
+        m.push(make("run-2", group: "ci"))
+        m.clear(group: "ci")
+        m.push(make("run-3", group: "ci"))
+
+        XCTAssertEqual(m.current?.occurrences, 1)
+    }
+
+    func testUngroupedMessagesStayAtOne() {
+        let (m, old) = manager()
+        defer { AppSettings.shared.autoExpandOnMessage = old }
+
+        m.push(make("a"))
+        m.push(make("b"))
+
+        XCTAssertEqual(m.history.map(\.occurrences), [1, 1])
+    }
+
     // MARK: - Clearing one group
 
     func testClearGroupRemovesOnlyThatGroup() {

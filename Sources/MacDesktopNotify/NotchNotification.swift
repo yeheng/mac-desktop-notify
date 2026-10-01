@@ -108,10 +108,14 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
     /// written before this field existed still decodes.
     var displayPeek: Bool?
     /// Sender-driven island status line (push 的 `island` 字段，仅 HTTP/WS
-    /// 入口；URL Scheme 不载结构化字段）。Optional so history written before
-    /// this field existed still decodes（`displayPeek` 先例，零迁移）.
+    /// 入口；URL Scheme 不载结构化字段）。Optional so history written
+    /// before this field existed still decodes（`displayPeek` 先例，零迁移）.
     /// 脚本回填不碰它（YAGNI：回填的是报告，进度推送来自推送方）。
     var island: IslandContent?
+    /// 同组重复推送的累计次数：`collapseGroup` 每次顶掉同组旧条目时 +1，
+    /// 首次到达为 1。发送方不可设置（`PushValidator` 不收它），纯模型内部
+    /// 计数；分组清空后从 1 重新计。
+    var occurrences: Int
 
     init(
         id: UUID = UUID(),
@@ -124,7 +128,8 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         group: String? = nil,
         script: String? = nil,
         displayPeek: Bool? = nil,
-        island: IslandContent? = nil
+        island: IslandContent? = nil,
+        occurrences: Int = 1
     ) {
         self.id = id
         self.title = title
@@ -137,6 +142,29 @@ struct NotchNotification: Identifiable, Sendable, Equatable, Codable {
         self.script = script
         self.displayPeek = displayPeek
         self.island = island
+        self.occurrences = occurrences
+    }
+
+    /// Lenient decoding, on the `NotificationAction` precedent: the snapshot is
+    /// decoded with ONE `try?` at the array level (`HistoryStore.load`), so a
+    /// single strict failure does not drop one message — it quarantines the
+    /// whole file and the user loses every message on disk. Every field gets
+    /// `decodeIfPresent` and a sane default, so a snapshot written by any older
+    /// build (before `occurrences`, `island`, `displayPeek`…) still loads.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        bodyMarkdown = try container.decodeIfPresent(String.self, forKey: .bodyMarkdown) ?? ""
+        urgency = try container.decodeIfPresent(UrgencyLevel.self, forKey: .urgency) ?? .normal
+        timeout = try container.decodeIfPresent(TimeInterval.self, forKey: .timeout)
+        timestamp = try container.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date()
+        actions = try container.decodeIfPresent([NotificationAction].self, forKey: .actions) ?? []
+        group = try container.decodeIfPresent(String.self, forKey: .group)
+        script = try container.decodeIfPresent(String.self, forKey: .script)
+        displayPeek = try container.decodeIfPresent(Bool.self, forKey: .displayPeek)
+        island = try container.decodeIfPresent(IslandContent.self, forKey: .island)
+        occurrences = try container.decodeIfPresent(Int.self, forKey: .occurrences) ?? 1
     }
 
     /// A non-empty trimmed group, or `nil`. Blank groups never collapse anything.

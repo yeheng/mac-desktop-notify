@@ -358,8 +358,20 @@ final class NotificationManager {
     /// repeating job updates one entry instead of stacking a fresh one every run.
     /// The on-screen entry is not spared: the sender explicitly replaced it, so
     /// the update takes the screen right away.
+    ///
+    /// The replacement carries the group's occurrence count: Nth report of the
+    /// same job, not the first one again. The count lives on the message so the
+    /// card and history row can both show it; clearing the group resets it.
     private func collapseGroup(_ notification: NotchNotification) -> NotchNotification {
         guard let key = notification.groupingKey else { return notification }
+
+        var incoming = notification
+        // `history` holds the live message too, so the entry being displaced is
+        // counted without a second lookup path.
+        let previous = messages.history.filter { $0.groupingKey == key }
+        if let highest = previous.map(\.occurrences).max() {
+            incoming.occurrences = highest + 1
+        }
 
         // The group's earlier entries are gone from history/read state in
         // one sweep, so the replacement re-enters as the group's only entry.
@@ -373,7 +385,7 @@ final class NotificationManager {
             // id guard in `startDwell` to ignore it later.
             stopDwell()
         }
-        return notification
+        return incoming
     }
 
     /// Clears one sender-defined group, leaving the rest of the history alone.

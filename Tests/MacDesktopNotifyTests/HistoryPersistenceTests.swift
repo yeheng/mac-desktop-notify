@@ -273,4 +273,25 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
 
         XCTAssertEqual(loaded.items.first?.island, item.island)
     }
+
+    /// occurrences 是新键：老版本写出的快照没有它，解码默认 1。解码宽容是
+    /// 硬要求——`HistoryStore.load` 的 `try?` 是数组级的，一条严格失败会把
+    /// 整个文件判成 unreadable 并隔离，用户丢的是全部历史。
+    func testSnapshotWithoutOccurrencesKeyStillDecodes() throws {
+        let json = Data(#"{"schemaVersion":1,"items":[{"id":"00000000-0000-0000-0000-000000000001","title":"旧消息","bodyMarkdown":"正文","urgency":"normal","timestamp":750000000,"actions":[]}],"readIDs":[]}"#.utf8)
+        let snapshot = try JSONDecoder().decode(HistorySnapshot.self, from: json)
+        XCTAssertEqual(snapshot.items[0].occurrences, 1)
+    }
+
+    /// 计数随快照落盘并原样读回——重启后卡片仍知道这是第 N 次报告。
+    func testOccurrencesRoundTripThroughDisk() throws {
+        let store = makeStore()
+        var item = make("CI #42")
+        item.occurrences = 4
+
+        try store.save(HistorySnapshot(items: [item], readIDs: []))
+        let loaded = try XCTUnwrap(snapshot(from: store))
+
+        XCTAssertEqual(loaded.items.first?.occurrences, 4)
+    }
 }

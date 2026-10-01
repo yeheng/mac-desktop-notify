@@ -514,7 +514,7 @@ private struct CurrentCard: View {
             // title reaches assistive tech, so the combined label carries it
             // along with urgency.
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("当前消息：\(notification.title)，\(notification.urgency.accessibilityLabel)")
+            .accessibilityLabel(currentCardAccessibilityLabel)
             // §5.5: the swipe gesture is gone; VoiceOver keeps a named way to
             // put the card away.
             .accessibilityAction(named: "收起当前消息") {
@@ -530,10 +530,15 @@ private struct CurrentCard: View {
                 }
             }
 
-            Text(notification.title)
-                .font(theme.font(size: 14, weight: .semibold))
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(notification.title)
+                    .font(theme.font(size: 14, weight: .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                if notification.occurrences > 1 {
+                    OccurrenceTag(count: notification.occurrences)
+                }
+            }
 
             NotificationBodyView(bodyMarkdown: notification.bodyMarkdown)
 
@@ -555,6 +560,16 @@ private struct CurrentCard: View {
 
     private var showsInlineActions: Bool {
         InlineActionCapsules.canInline(notification)
+    }
+
+    /// The header's combined label is the only place the title reaches
+    /// assistive tech, so the occurrence count rides along with it.
+    private var currentCardAccessibilityLabel: String {
+        var label = "当前消息：\(notification.title)，\(notification.urgency.accessibilityLabel)"
+        if notification.occurrences > 1 {
+            label += "，累计 \(notification.occurrences) 次"
+        }
+        return label
     }
 
     /// Critical-specific affordances: snooze (it stays, but stops hogging the
@@ -620,6 +635,9 @@ private struct HistoryRow: View {
                         Text(notification.title)
                             .font(theme.font(size: 12, weight: .semibold, design: theme.fontDesign.design))
                             .lineLimit(1)
+                        if notification.occurrences > 1 {
+                            OccurrenceTag(count: notification.occurrences)
+                        }
                         if isUnread {
                             Circle()
                                 .fill(theme.accent)
@@ -656,7 +674,7 @@ private struct HistoryRow: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: toggle)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(isUnread ? "未读消息" : "消息")：\(notification.title)，\(notification.urgency.accessibilityLabel)")
+            .accessibilityLabel("\(isUnread ? "未读消息" : "消息")：\(notification.title)，\(notification.urgency.accessibilityLabel)\(occurrenceSuffix)")
             .accessibilityHint(isExpanded ? "收起正文" : "展开正文")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { toggle() }
@@ -673,10 +691,15 @@ private struct HistoryRow: View {
             }
 
             if isExpanded {
-                Text(notification.title)
-                    .font(theme.font(size: 13, weight: .semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(notification.title)
+                        .font(theme.font(size: 13, weight: .semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                    if notification.occurrences > 1 {
+                        OccurrenceTag(count: notification.occurrences)
+                    }
+                }
                 Text(notification.urgency.accessibilityLabel)
                     .font(theme.font(size: 11))
                     .foregroundStyle(.white.opacity(0.7))
@@ -697,6 +720,10 @@ private struct HistoryRow: View {
     /// duplicate them.
     private var showsInlineActions: Bool {
         !isExpanded && InlineActionCapsules.canInline(notification)
+    }
+
+    private var occurrenceSuffix: String {
+        notification.occurrences > 1 ? "，累计 \(notification.occurrences) 次" : ""
     }
 
     /// Collapsed preview renders inline Markdown instead of showing raw source
@@ -724,6 +751,23 @@ private struct HistoryRow: View {
             .joined(separator: " ")
         guard !flat.isEmpty else { return nil }
         return MarkdownCache.shared.inline(flat)
+    }
+}
+
+/// 同组重复推送的 `×N` 计数（N > 1 才显示）。`collapseGroup` 在模型上累加，
+/// 卡片与历史行渲染同一个真相——视图不做任何计数。
+private struct OccurrenceTag: View {
+    let count: Int
+    @Environment(\.islandTokens) private var theme
+
+    var body: some View {
+        Text("×\(count)")
+            .font(theme.font(size: 10, weight: .semibold, design: theme.fontDesign.design))
+            .foregroundStyle(theme.textSubtle)
+            .islandMonospacedDigits(theme.monoDigits)
+            .fixedSize()
+            .help("该分组累计推送 \(count) 次")
+            .accessibilityLabel("累计 \(count) 次")
     }
 }
 

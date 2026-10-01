@@ -183,6 +183,8 @@ open 'notch-notify://push?title=构建中&group=ci-build'
 open 'notch-notify://push?title=构建成功&group=ci-build'   # 顶掉上一条，不堆叠
 ```
 
+顶替时卡片和历史行会显示 `×N` 累计次数（这是该任务的第 N 次报告）；`clear?group=` 清空该组后从 1 重新计。
+
 #### 动作回执（脚本可读的审批结论）
 
 普通 `actions` 点击后只是打开一个 URL，发起方无从得知结果。把按钮的 `url` 换成 `notch-notify://ack`，点击会**写一个 JSON 文件到磁盘**而不是打开浏览器，脚本随后轮询即可拿到结论：

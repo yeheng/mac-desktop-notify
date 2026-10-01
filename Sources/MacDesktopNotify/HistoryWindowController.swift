@@ -213,6 +213,13 @@ private struct HistoryWindowRow: View {
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
 
+                if notification.occurrences > 1 {
+                    Text("×\(notification.occurrences)")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .help("该分组累计推送 \(notification.occurrences) 次")
+                }
+
                 statusBadge
 
                 Spacer(minLength: 8)
@@ -258,7 +265,7 @@ private struct HistoryWindowRow: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: toggle)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(isUnread ? "未读消息" : "消息")：\(notification.title)，\(notification.urgency.accessibilityLabel)")
+            .accessibilityLabel("\(isUnread ? "未读消息" : "消息")：\(notification.title)，\(notification.urgency.accessibilityLabel)\(occurrenceSuffix)")
             .accessibilityHint(isExpanded ? "收起正文" : "展开正文")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { toggle() }
@@ -289,6 +296,10 @@ private struct HistoryWindowRow: View {
         )
         .onHover { hovering = $0 }
         .animation(.easeInOut(duration: 0.12), value: hovering)
+    }
+
+    private var occurrenceSuffix: String {
+        notification.occurrences > 1 ? "，累计 \(notification.occurrences) 次" : ""
     }
 
     @ViewBuilder
