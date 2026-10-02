@@ -98,7 +98,7 @@ enum PointerIntent {
     /// presenter stands down entirely.
     case displaySuppressed
     /// An explicit click on the island: the user overrides the ban.
-    case islandClicked
+    case summaryClicked
     /// `clear()`: everything resets.
     case cleared
 }

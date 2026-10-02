@@ -80,7 +80,7 @@ private struct MiniSummaryView: View {
         // Clicking opens the panel, exactly as clicking the pill does. Hovering
         // needs no handling here: the bar sits inside the activation zone the
         // pointer monitor already watches, so hover-expand works unchanged.
-        .onTapGesture { manager.islandClicked() }
+        .onTapGesture { manager.summaryClicked() }
         // Island text changes arrive with a group replacement, which can leave
         // the unread count untouched - and the window frame only re-derives on
         // unreadCountDidChange. Announce the text change so the bar relayouts

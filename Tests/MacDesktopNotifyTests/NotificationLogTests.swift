@@ -137,7 +137,7 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
         m.push(make("a"))
         m.push(make("b"))
         m.dismissPanel()
-        m.islandClicked()
+        m.summaryClicked()
         XCTAssertEqual(m.displayState, .opened(reason: .click))
         XCTAssertTrue(m.current.map { m.isRead($0) } ?? false, "点开面板即点开当前消息")
         XCTAssertEqual(m.unreadCount, 1, "the displaced message stays unread until it is opened itself")
@@ -282,7 +282,7 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
 
     func testIslandClickedIgnoredWithoutContent() {
         let m = NotificationManager()
-        m.islandClicked()
+        m.summaryClicked()
         XCTAssertEqual(m.displayState, .closed)
     }
 

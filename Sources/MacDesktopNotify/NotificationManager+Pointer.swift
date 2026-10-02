@@ -91,7 +91,7 @@ extension NotificationManager {
         case .displaySuppressed:
             pointer.forgetActivationZoneClaim()
 
-        case .islandClicked:
+        case .summaryClicked:
             // An explicit click is the user overriding the dismissal ban.
             pointer.hoverDismissed = false
 

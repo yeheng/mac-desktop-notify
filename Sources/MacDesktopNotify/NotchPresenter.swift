@@ -468,9 +468,9 @@ final class NotchPresenter: NotchPresenting {
         manager.setPointerNearIsland(inside)
         if clicked {
             if inside {
-                manager.islandClicked()
+                manager.summaryClicked()
             } else {
-                manager.clickedOutsideIsland()
+                manager.clickedOutsideSummary()
             }
         }
     }
@@ -637,8 +637,9 @@ final class NotchPresenter: NotchPresenting {
     /// The one place `CGWindowListCopyWindowInfo` is called. `nonisolated` and
     /// static on purpose: the call is a synchronous IPC round-trip with
     /// WindowServer and can block for tens of milliseconds, so it must never run
-    /// on the main actor.
-    nonisolated private static func probeFullscreen(pid: pid_t, screenFrame: CGRect) -> Bool {
+    /// on the main actor. Internal so `ToastPresenter` shares the single
+    /// implementation instead of growing a second window-list walk.
+    nonisolated static func probeFullscreen(pid: pid_t, screenFrame: CGRect) -> Bool {
         guard let windows = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
             kCGNullWindowID

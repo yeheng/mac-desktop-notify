@@ -4,12 +4,13 @@ import Foundation
 /// display settles when a panel collapses (`settleDisplay`), and the
 /// explicit open/close entry points the views and the presenter call.
 extension NotificationManager {
-    /// Clicking the compact island opens the panel immediately, skipping the hover delay.
-    func islandClicked() {
+    /// Clicking the compact summary (island pill, mini bar, or toast) opens
+    /// the panel immediately, skipping the hover delay.
+    func summaryClicked() {
         guard !displaySuppressed, hasContent, !displayState.isOpened else { return }
         IslandHaptics.actionConfirmed()
         delayed.cancel(.hoverExpand)
-        reduce(.islandClicked)
+        reduce(.summaryClicked)
         displayState = .opened(reason: .click)
         markCurrentRead()
         presentExpanded()
@@ -17,10 +18,10 @@ extension NotificationManager {
         reconcileDwell()
     }
 
-    /// A left click that landed outside the island while the panel is open.
-    /// Collapsing is the panel's own judgment call (it owns the dwell and
+    /// A left click that landed outside the active surface while the panel is
+    /// open. Collapsing is the panel's own judgment call (it owns the dwell and
     /// settle rules), so the presenter only reports the click.
-    func clickedOutsideIsland() {
+    func clickedOutsideSummary() {
         // Panel-hovering keeps clicks on the panel itself - its buttons sit
         // outside the compact activation frame - from counting as "outside".
         guard displayState.isOpened, !pointer.onPanel, AppSettings.shared.autoCollapseOnLeave else { return }

@@ -352,6 +352,12 @@ private struct GeneralSettingsContent: View {
 
     var body: some View {
         Section {
+            Picker("呈现方式", selection: $settings.presentationStyle) {
+                ForEach(PresentationStyle.allCases) { style in
+                    Text(style.title).tag(style)
+                }
+            }
+            SectionFooter("\(settings.presentationStyle.detail) 更改在重启应用后生效。")
             Toggle("悬停时展开面板", isOn: $settings.hoverToExpand)
             Toggle("鼠标离开时自动收起", isOn: $settings.autoCollapseOnLeave)
             Toggle("无活跃消息时自动隐藏", isOn: $settings.hideWhenIdle)

@@ -14,7 +14,9 @@ extension Notification.Name {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
-    private var presenter: NotchPresenter?
+    /// Path A: one active presentation, chosen at launch. The manager holds
+    /// the presenter weakly, so this retained reference is what keeps it alive.
+    private var presenter: (any NotchPresenting)?
     private var presenceMonitor: PresenceMonitor?
     private var settingsController: SettingsWindowController?
     private var historyController: HistoryWindowController?
@@ -32,7 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let presenter = NotchPresenter()
+        let presenter: any NotchPresenting = switch AppSettings.shared.presentationStyle {
+        case .island: NotchPresenter()
+        case .toast: ToastPresenter()
+        }
         self.presenter = presenter                 // retain (manager holds it weakly)
         NotificationManager.shared.attach(presenter)
         NotificationManager.shared.restoreHistory(using: .default)

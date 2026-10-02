@@ -72,6 +72,10 @@ final class AppSettings {
         }
     }
     var contentFontSize: Double { didSet { save(contentFontSize, key: Keys.contentFontSize) } }
+    /// Which presenter draws notifications. Path A: one active presentation,
+    /// chosen at launch by the app delegate - flipping this takes effect on
+    /// the next launch, not live, so the two presenters never coexist.
+    var presentationStyle: PresentationStyle { didSet { save(presentationStyle.rawValue, key: Keys.presentationStyle) } }
     /// Selected `themes/<id>.json`; `"default"` means the builtin literals.
     var islandThemeID: String { didSet { save(islandThemeID, key: Keys.islandThemeID) } }
     /// Selected layout. `"auto"` = the legacy `island.json` (or the first
@@ -180,6 +184,7 @@ final class AppSettings {
         miniSummaryOnNotchlessScreens = defaults.object(forKey: Keys.miniSummaryOnNotchlessScreens.rawValue) as? Bool ?? true
         mirrorSummaryOnAllDisplays = defaults.object(forKey: Keys.mirrorSummaryOnAllDisplays.rawValue) as? Bool ?? false
         contentFontSize = defaults.object(forKey: Keys.contentFontSize.rawValue) as? Double ?? 12
+        presentationStyle = PresentationStyle(rawValue: defaults.string(forKey: Keys.presentationStyle.rawValue) ?? "") ?? .island
         islandThemeID = defaults.string(forKey: Keys.islandThemeID.rawValue) ?? "default"
         islandLayoutID = defaults.string(forKey: Keys.islandLayoutID.rawValue) ?? "auto"
         panelWidth = defaults.object(forKey: Keys.panelWidth.rawValue) as? Double ?? 720
@@ -269,6 +274,7 @@ final class AppSettings {
         case miniSummaryOnNotchlessScreens = "island.miniSummaryOnNotchlessScreens"
         case mirrorSummaryOnAllDisplays = "island.mirrorSummaryOnAllDisplays"
         case contentFontSize = "island.contentFontSize"
+        case presentationStyle = "island.presentationStyle"
         case islandThemeID = "island.themeID"
         case islandLayoutID = "island.layoutID"
         case panelWidth = "island.panelWidth"
@@ -300,6 +306,34 @@ final class AppSettings {
         case apiUnixSocketEnabled = "island.apiUnixSocketEnabled"
         case apiHttpEnabled = "island.apiHttpEnabled"
         case apiHttpPort = "island.apiHttpPort"
+    }
+}
+
+/// Which presenter draws the notifications: the notch island or a floating
+/// toast in the screen's top-right corner. The two shapes share everything
+/// behind the `NotchPresenting` seam - message stream, history, dwell rules,
+/// sounds - and differ only in where pixels land, so this is a launch-time
+/// choice, not a per-message one.
+enum PresentationStyle: String, CaseIterable, Identifiable {
+    /// The Dynamic Notch island (needs a display with a physical notch).
+    case island
+    /// A toast card anchored to the top-right corner; works on any display.
+    case toast
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .island: "灵动岛"
+        case .toast: "浮动 Toast"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .island: "消息出现在刘海区域，悬停或点击展开。需要带刘海的显示器。"
+        case .toast: "消息以卡片形式出现在屏幕右上角，点击展开面板。任何显示器都可用；悬停展开与指针跟随不生效。"
+        }
     }
 }
 

@@ -95,7 +95,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
         defer { AppSettings.shared.autoExpandOnMessage = old }
 
         m.push(make("run-1", group: "ci"))
-        m.islandClicked()                       // deliberate open: reads the live card
+        m.summaryClicked()                       // deliberate open: reads the live card
         XCTAssertEqual(m.unreadCount, 0)
 
         m.push(make("run-2", group: "ci"))

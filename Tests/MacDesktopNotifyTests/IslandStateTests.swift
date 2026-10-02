@@ -197,7 +197,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(make("t", timeout: 0.2))
-        m.islandClicked()
+        m.summaryClicked()
         m.setHovering(true)                              // pointer resting on the panel
         m.dismissPanel()                                 // close button: still hovering
 
@@ -216,7 +216,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(make("first", timeout: 0.2))
-        m.islandClicked()
+        m.summaryClicked()
         m.setHovering(true)
         m.dismissPanel()
 
@@ -251,7 +251,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         m.push(make("t", timeout: 0.4))
         XCTAssertNotNil(m.presentation?.remaining)
 
-        m.islandClicked()                                // manual hold pauses the countdown
+        m.summaryClicked()                                // manual hold pauses the countdown
         XCTAssertNil(m.dwellDeadline, "a held countdown must not have a live deadline")
 
         m.setHovering(false)
@@ -343,10 +343,10 @@ final class IslandStateTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(make("t", timeout: 60))
-        m.islandClicked()
+        m.summaryClicked()
         XCTAssertEqual(m.displayState, .opened(reason: .click))
 
-        m.clickedOutsideIsland()
+        m.clickedOutsideSummary()
 
         XCTAssertEqual(m.displayState, .closed, "outside click collapses to the pill while a message is live")
         XCTAssertNotNil(m.dwellDeadline, "collapse must resume the dwell")
@@ -367,9 +367,9 @@ final class IslandStateTests: SettingsIsolatedTestCase {
 
         let m = NotificationManager()
         m.push(make("t", timeout: 60))
-        m.islandClicked()
+        m.summaryClicked()
 
-        m.clickedOutsideIsland()
+        m.clickedOutsideSummary()
 
         XCTAssertEqual(m.displayState, .opened(reason: .click), "with auto-collapse off, an outside click must not close the panel")
     }
@@ -391,7 +391,7 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         m.push(make("t", timeout: 60))                    // auto-expand path
         XCTAssertEqual(m.displayState, .opened(reason: .notification))
 
-        m.clickedOutsideIsland()
+        m.clickedOutsideSummary()
 
         XCTAssertEqual(m.displayState, .closed)
     }
