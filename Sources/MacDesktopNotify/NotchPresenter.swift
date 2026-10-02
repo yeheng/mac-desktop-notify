@@ -76,6 +76,11 @@ final class NotchPresenter: NotchPresenting {
     private let notches = PerScreenInstances<IslandNotch>()
     /// Floating summary bars for the displays the kit cannot draw a pill on.
     private let miniBars = MiniSummaryBars()
+    /// The pill's measured content widths. Declared before the calibration
+    /// overlay, which is built from it. The manager no longer stores these —
+    /// the pill reports through the environment into the presenter that
+    /// consumes them.
+    private let metrics = CompactIslandMetrics()
     /// The display the island currently belongs to: wherever the pointer last was.
     private var activeScreenID: CGDirectDisplayID?
 
@@ -87,7 +92,8 @@ final class NotchPresenter: NotchPresenting {
     /// kit windows — one per settle, not one per tick.
     private var behaviorReplayTask: Task<Void, Never>?
     /// Owns the calibration overlay windows when the debug toggle is on.
-    private let calibrationOverlay = CalibrationOverlay()
+    /// Built in `init` — a property initializer cannot read `metrics`.
+    private let calibrationOverlay: CalibrationOverlay
 
     /// Sub-pixel jitter below this is not worth acting on.
     ///
@@ -122,6 +128,7 @@ final class NotchPresenter: NotchPresenting {
     private var screensSnapshot: [NSScreen] = []
 
     init() {
+        calibrationOverlay = CalibrationOverlay(metrics: metrics)
         syncScreens()
         installMouseMonitors()
         installInvalidationObservers()
@@ -252,9 +259,9 @@ final class NotchPresenter: NotchPresenting {
         ) {
             IslandEnvironmentScope { IslandExpandedView() }
         } compactLeading: {
-            IslandEnvironmentScope { CompactIslandView(side: .leading) }
+            IslandEnvironmentScope(compactIslandMetrics: self.metrics) { CompactIslandView(side: .leading) }
         } compactTrailing: {
-            IslandEnvironmentScope { CompactIslandView(side: .trailing) }
+            IslandEnvironmentScope(compactIslandMetrics: self.metrics) { CompactIslandView(side: .trailing) }
         }
 
         notch.transitionConfiguration = DynamicNotchTransitionConfiguration(
@@ -470,8 +477,8 @@ final class NotchPresenter: NotchPresenting {
 
         let activationFrame = IslandGeometry.compactActivationFrame(
             for: screen,
-            leadingContentWidth: manager.compactLeadingWidth,
-            trailingContentWidth: manager.compactTrailingWidth
+            leadingContentWidth: metrics.leadingWidth,
+            trailingContentWidth: metrics.trailingWidth
         )
         let inside = activationFrame.contains(location)
         manager.setPointerNearIsland(inside)
@@ -572,6 +579,11 @@ final class NotchPresenter: NotchPresenting {
         /// which is the one thing this overlay exists to disprove.
         private var windows: [CGDirectDisplayID: NSWindow] = [:]
         private var hosts: [CGDirectDisplayID: NSHostingView<CalibrationOverlayView>] = [:]
+        private let metrics: CompactIslandMetrics
+
+        init(metrics: CompactIslandMetrics) {
+            self.metrics = metrics
+        }
 
         func update(screens: [NSScreen]) {
             let current = Set(screens.map(\.displayID))
@@ -583,8 +595,8 @@ final class NotchPresenter: NotchPresenting {
                 let notch = IslandGeometry.notchFrame(for: screen)
                 let activation = IslandGeometry.compactActivationFrame(
                     notchFrame: notch,
-                    leadingContentWidth: NotificationManager.shared.compactLeadingWidth,
-                    trailingContentWidth: NotificationManager.shared.compactTrailingWidth
+                    leadingContentWidth: metrics.leadingWidth,
+                    trailingContentWidth: metrics.trailingWidth
                 )
                 let overlay = CalibrationOverlayView(notchFrame: notch, activationFrame: activation)
 

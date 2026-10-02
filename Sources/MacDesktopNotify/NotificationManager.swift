@@ -159,8 +159,6 @@ final class NotificationManager {
     /// pre-expansion cue reads that. All transitions flow through
     /// `reduce(_:)` (+Pointer); nothing else writes it.
     var pointer = PointerState()
-    @ObservationIgnored var compactLeadingWidth: CGFloat = 0
-    @ObservationIgnored var compactTrailingWidth: CGFloat = 0
     /// Readable by the presenter, which re-applies display state across screen
     /// changes and must stand down while a fullscreen app owns the display.
     @ObservationIgnored var displaySuppressed = false

@@ -119,4 +119,29 @@ struct IslandBindings: Equatable, Sendable {
 extension EnvironmentValues {
     /// Injected once per presentation root; leaves re-read it every frame.
     @Entry var islandBindings: IslandBindings = .empty
+    /// The island presenter's metrics store, injected into the kit views it
+    /// builds. Nil when nobody owns one — previews and tests render without
+    /// it and the writes no-op.
+    @Entry var compactIslandMetrics: CompactIslandMetrics? = nil
+}
+
+/// The compact island's measured content widths — the two scalars the
+/// activation-frame geometry needs (`IslandGeometry.compactActivationFrame`).
+///
+/// Owned by `NotchPresenter`, the only consumer: the pill's geometry reader
+/// reports through the environment and the presenter reads its own store,
+/// so view layout metrics no longer park on the manager (the P4 backflow).
+/// `@unchecked Sendable` because both ends are main-actor only — the box
+/// itself does no locking.
+@MainActor
+final class CompactIslandMetrics: @unchecked Sendable {
+    var leadingWidth: CGFloat = 0
+    var trailingWidth: CGFloat = 0
+
+    func setWidth(_ width: CGFloat, for side: CompactIslandSide) {
+        switch side {
+        case .leading: leadingWidth = width
+        case .trailing: trailingWidth = width
+        }
+    }
 }

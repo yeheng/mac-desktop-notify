@@ -5,8 +5,8 @@ import SwiftUI
 /// without letting the pill grow with a long title.
 ///
 /// The view keeps a **fixed width** while scrolling (`offset` is a render
-/// transform, not layout), so the width the pill reports through
-/// `setCompactContentWidth` - and therefore the hover activation zone - stays
+/// transform, not layout), so the width the pill reports into the
+/// activation-frame metrics - and therefore the hover activation zone - stays
 /// stable.
 struct MarqueeText: View {
     let text: String

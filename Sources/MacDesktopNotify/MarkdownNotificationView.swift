@@ -140,6 +140,9 @@ struct IslandContextMenu: ViewModifier {
 struct CompactIslandView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandTokens) private var theme
+    /// Injected by the island presenter; nil in previews/tests, where the
+    /// measurement write is simply skipped.
+    @Environment(\.compactIslandMetrics) private var metrics
     let side: CompactIslandSide
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
@@ -153,7 +156,8 @@ struct CompactIslandView: View {
         // Pre-expansion cue: the pill wakes up (slightly brighter, slightly
         // larger) the moment the pointer enters the activation zone, so the
         // hover-delayed panel never appears out of nowhere. `scaleEffect` is a
-        // render transform - it does not feed back into `setCompactContentWidth`.
+        // render transform - it does not feed back into the activation-frame
+        // metrics below.
         .scaleEffect(manager.pointerNearIsland && !reduceMotion ? 1.06 : 1)
         .animation(.easeOut(duration: theme.motion(0.12)), value: manager.pointerNearIsland)
         .padding(.horizontal, max(4, 8 + settings.notchWidthOffset / 4))
@@ -164,7 +168,7 @@ struct CompactIslandView: View {
         .animation(.easeInOut(duration: theme.motion(0.15)), value: manager.compactStatus)
         .animation(.easeInOut(duration: theme.motion(0.15)), value: manager.unreadCount)
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
-            manager.setCompactContentWidth(width, for: side)
+            metrics?.setWidth(width, for: side)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(manager.current.map { "通知：\($0.title)" } ?? "通知中心")

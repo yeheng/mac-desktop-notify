@@ -28,15 +28,6 @@ extension NotificationManager {
         dismissPanel()
     }
 
-    func setCompactContentWidth(_ width: CGFloat, for side: CompactIslandSide) {
-        switch side {
-        case .leading:
-            compactLeadingWidth = width
-        case .trailing:
-            compactTrailingWidth = width
-        }
-    }
-
     func togglePanel() {
         guard !displaySuppressed else { return }
         if displayState.isOpened {

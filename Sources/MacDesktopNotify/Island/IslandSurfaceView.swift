@@ -40,7 +40,11 @@ struct IslandSlotView: View {
 /// Injects the frame-fresh theme and bindings at a presentation root. Reading
 /// `manager` / `settings` here is what makes the injection track live state:
 /// the scope re-renders and re-injects, and every DSL leaf sees fresh values.
+/// `compactIslandMetrics` is presenter-owned plumbing: the island presenter
+/// hands its store in so the pill's geometry reports land there instead of on
+/// the manager; every other root leaves it nil and the writes no-op.
 struct IslandEnvironmentScope<Content: View>: View {
+    var compactIslandMetrics: CompactIslandMetrics?
     @Environment(\.colorScheme) private var scheme
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
@@ -50,5 +54,6 @@ struct IslandEnvironmentScope<Content: View>: View {
         content()
             .environment(\.islandTokens, IslandThemeStore.shared.resolved(for: scheme))
             .environment(\.islandBindings, IslandBindings(manager: manager, settings: settings))
+            .environment(\.compactIslandMetrics, compactIslandMetrics)
     }
 }
