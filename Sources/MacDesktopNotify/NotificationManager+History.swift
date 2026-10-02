@@ -55,7 +55,7 @@ extension NotificationManager {
             // everything was already read, stay out of the way.
             if unreadCount > 0, !displaySuppressed {
                 displayState = .closed
-                presentCompact()
+                presentCurrent()
             }
         case .unreadable:
             // Adopt a store only if the file could be moved aside. With no
@@ -239,7 +239,7 @@ extension NotificationManager {
             advance()
         } else if !hasContent {
             displayState = .closed
-            Task { await presenter?.hide() }
+            Task { await presenter?.reapply(on: self) }
         }
         schedulePersist()
     }

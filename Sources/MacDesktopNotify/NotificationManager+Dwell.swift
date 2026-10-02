@@ -21,7 +21,7 @@ extension NotificationManager {
         demoted.remaining = demoted.policy.budget
         presentation = demoted
         displayState = .closed
-        presentCompact()
+        presentCurrent()
         applyDismissRules()
         // The hold only exists once the card has a countdown, so it is armed
         // after the transition, not before it: at arm time the card was still
@@ -64,7 +64,7 @@ extension NotificationManager {
             self.presentation = demoted
             if case .opened(reason: .notification) = self.displayState {
                 self.displayState = .closed
-                self.presentCompact()
+                self.presentCurrent()
             }
             // Same transition as an explicit snooze, so the same hold rule
             // applies: an aged-out critical with actions now has a countdown
@@ -111,7 +111,7 @@ extension NotificationManager {
             // the same shape as the critical demotion above.
             if case .opened(reason: .notification) = self.displayState {
                 self.displayState = .closed
-                self.presentCompact()
+                self.presentCurrent()
             }
             self.reconcileDwell()
         }

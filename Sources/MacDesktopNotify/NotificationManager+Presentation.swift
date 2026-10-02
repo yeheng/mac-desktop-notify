@@ -13,7 +13,7 @@ extension NotificationManager {
         reduce(.summaryClicked)
         displayState = .opened(reason: .click)
         markCurrentRead()
-        presentExpanded()
+        presentCurrent()
         applyDismissRules()
         reconcileDwell()
     }
@@ -54,7 +54,7 @@ extension NotificationManager {
         delayed.cancel(.manualCollapse)
         displayState = .opened(reason: .click)
         markCurrentRead()
-        presentExpanded()
+        presentCurrent()
         applyDismissRules()
         reconcileDwell()
     }
@@ -66,14 +66,14 @@ extension NotificationManager {
             reduce(.displaySuppressed)
             delayed.cancel(.hoverExpand)
             delayed.cancel(.manualCollapse)
-            Task { await presenter?.hide() }
+            Task { await presenter?.reapply(on: self) }
         } else if let current, current.urgency == .critical {
             // A critical that arrived while suppressed must return to blocking, not a compact pill.
             displayState = .opened(reason: .notification)
-            presentExpanded()
+            presentCurrent()
         } else if hasContent {
             displayState = .closed
-            Task { await presenter?.compact() }
+            Task { await presenter?.reapply(on: self) }
         }
         applyDismissRules()
         reconcileDwell()
@@ -87,14 +87,20 @@ extension NotificationManager {
         // Keep hover expansion suppressed until the pointer leaves the zone,
         // so the panel does not pop back open from a 1px mouse jiggle.
         reduce(.panelDismissed)
-        settleDisplay(liveMessage: current != nil)
+        settleDisplay()
     }
 
     /// The one settle path for every collapse: `dismissPanel` (the message may
     /// still be live) and `advance` (the live message retired, so it is not).
     /// One place decides where the display lands, whether the dwell is armed,
     /// and which pending timer survives, so the paths cannot disagree.
-    func settleDisplay(liveMessage: Bool) {
+    ///
+    /// The on-screen half is a `reapply`, not an explicit hide/compact pick:
+    /// `closedMeansHidden` derives from the same `settlesHidden` rule this
+    /// method used to branch on (the live-message flag equals
+    /// `current != nil` on every path here), and the replay cannot race a
+    /// concurrent present into a wedge.
+    func settleDisplay() {
         delayed.cancel(.hoverExpand)
         delayed.cancel(.manualCollapse)
         displayState = .closed
@@ -103,13 +109,7 @@ extension NotificationManager {
         // Once the panel is gone there is nothing left to hover, so the dwell
         // resumes even if the pointer is still sitting where the panel was.
         reconcileDwell()
-        Task {
-            if settlesHidden(liveMessage: liveMessage) {
-                await presenter?.hide()
-            } else {
-                await presenter?.compact()
-            }
-        }
+        Task { await presenter?.reapply(on: self) }
     }
 
     /// Where the display settles once nothing is expanded.
@@ -133,7 +133,7 @@ extension NotificationManager {
         stopDwell()
         stopAgingTimers()
         presentation = nil
-        settleDisplay(liveMessage: false)
+        settleDisplay()
     }
 
     /// The only way a message becomes live. It publishes the message and its
@@ -212,38 +212,30 @@ extension NotificationManager {
         // exactly as it landed; `setDisplaySuppressed` settles it on return.
         guard !rotatedInPlace, !displaySuppressed else { return }
         if case .closed = landing {
-            presentCompact()
+            presentCurrent()
         } else {
-            presentExpanded()
+            presentCurrent()
         }
     }
 
-    /// Presents the expanded panel.
+    /// The one fire-and-forget presenter entry: re-derive suppression, then
+    /// replay. Callers used to pick `expand`/`compact`/`hide` themselves and
+    /// send it as an unordered Task — two such Tasks racing (hover-expand
+    /// against a peek push) could leave the screen permanently against the
+    /// machine. `reapply(on:)` re-reads the state at execution time, so the
+    /// order stopped mattering; every path lands here instead.
     ///
-    /// Suppression is re-derived first: the pointer may not have moved since a
-    /// fullscreen app took the screen, and without this check a push would
+    /// Suppression is re-derived first: the pointer may not have moved since
+    /// a fullscreen app took the screen, and without this check a push would
     /// expand straight over it. The probe itself is cached in the presenter,
     /// so the cost is one screen lookup, not a window-list walk.
-    func presentExpanded() {
+    func presentCurrent() {
         Task {
             if await presenter?.probeDisplaySuppressed() == true {
                 setDisplaySuppressed(true)
                 return
             }
-            await presenter?.expand()
-        }
-    }
-
-    /// Shows the compact pill, re-deriving suppression first for the same
-    /// reason as `presentExpanded`: a stale answer must not put anything on
-    /// top of a fullscreen app.
-    func presentCompact() {
-        Task {
-            if await presenter?.probeDisplaySuppressed() == true {
-                setDisplaySuppressed(true)
-                return
-            }
-            await presenter?.compact()
+            await presenter?.reapply(on: self)
         }
     }
 }

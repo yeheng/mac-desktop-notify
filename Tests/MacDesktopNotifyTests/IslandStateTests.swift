@@ -180,7 +180,42 @@ final class IslandStateTests: SettingsIsolatedTestCase {
             if presenter.expandCount > 0 { break }
             await Task.yield()
         }
-        XCTAssertEqual(presenter.expandCount, 1, "unsuppress must re-present the critical expanded")
+        // At-least-once, not exactly-once: a replay spawned while suppression
+        // held (intent: hide) may execute after the lift and re-derive from
+        // the state as it then is — expanded. That is the convergence
+        // contract; what the regression forbids is the pill demotion.
+        XCTAssertGreaterThanOrEqual(presenter.expandCount, 1, "unsuppress must re-present the critical expanded")
+        XCTAssertEqual(presenter.compactCount, 0, "the critical must not demote to a compact pill")
+    }
+
+    /// The display-behavior replay: a settings flip must land on screen
+    /// without waiting for the next event, through the same derived reapply
+    /// the state machine uses.
+    func testDisplayBehaviorChangeReplaysImmediately() async {
+        let presenter = PresenterSpy()
+        let m = NotificationManager(presenter: presenter)
+        // The singleton's in-memory value outlives the harness' key wipe, so
+        // the flip is restored the same way the other settings tests do it.
+        let oldHideWhenIdle = AppSettings.shared.hideWhenIdle
+        defer { AppSettings.shared.hideWhenIdle = oldHideWhenIdle }
+        AppSettings.shared.hideWhenIdle = false    // the summary stays up after a retire
+
+        m.push(make("hello"))
+        m.advance()                                // retires to history; the settle keeps a summary up
+        for _ in 0..<20 {
+            if presenter.compactCount > 0 { break }
+            await Task.yield()
+        }
+        let settledCompacts = presenter.compactCount
+        XCTAssertGreaterThan(settledCompacts, 0, "the summary is up before the flip")
+
+        AppSettings.shared.hideWhenIdle = true
+        await presenter.displayBehaviorChanged(on: m)
+        XCTAssertEqual(presenter.hideCount, 1, "idle-hiding must retire the summary without waiting for an event")
+
+        AppSettings.shared.hideWhenIdle = false
+        await presenter.displayBehaviorChanged(on: m)
+        XCTAssertGreaterThan(presenter.compactCount, settledCompacts, "un-hiding must bring the summary back")
     }
 
     // MARK: - Dwell invariant

@@ -35,7 +35,7 @@ extension NotificationManager {
             delayed.schedule(.hoverExpand, after: hoverDelay()) { [weak self] in
                 guard let self, self.pointer.nearIsland else { return }
                 self.displayState = .opened(reason: .hover)
-                self.presentExpanded()
+                self.presentCurrent()
                 self.applyDismissRules()
                 self.reconcileDwell()
             }
@@ -154,7 +154,7 @@ extension NotificationManager {
             // timers die with it (a stale `.hoverExpand` must not outlive this
             // collapse). The body used to duplicate `settleDisplay` inline and
             // had already drifted: it forgot the `.hoverExpand` cancel.
-            self.settleDisplay(liveMessage: self.current != nil)
+            self.settleDisplay()
         }
     }
 

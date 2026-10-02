@@ -147,6 +147,9 @@ final class ToastPresenter: NotchPresenting {
     private var observers: [NSObjectProtocol] = []
     /// Coalesced event-driven suppression probe; nil while idle.
     private var suppressionProbe: Task<Void, Never>?
+    /// Coalesced replay after a display-behavior setting flips (panel size
+    /// sliders fire a didSet per tick).
+    private var behaviorReplayTask: Task<Void, Never>?
 
     init() {
         installClickMonitors()
@@ -338,6 +341,21 @@ final class ToastPresenter: NotchPresenting {
             MainActor.assumeIsolated { self?.applySharingType() }
         })
         observers.append(appCenter.addObserver(
+            forName: AppSettings.displayBehaviorDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.behaviorReplayTask?.cancel()
+                self.behaviorReplayTask = Task {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    guard !Task.isCancelled else { return }
+                    await self.displayBehaviorChanged(on: NotificationManager.shared)
+                }
+            }
+        })
+        observers.append(appCenter.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
@@ -348,33 +366,14 @@ final class ToastPresenter: NotchPresenting {
 
     /// A display was added, removed, or resized. The stale screen anchor is
     /// dropped (the toast's display may be gone, or its geometry changed),
-    /// and the display state is re-derived from the manager - the same
-    /// replay the island runs after a reconfiguration, so what was on screen
-    /// re-lands on the pointer's display instead of waiting for the next
-    /// event.
+    /// and the display state is replayed through the shared `reapply` — the
+    /// same convergence the island runs after a reconfiguration, so what was
+    /// on screen re-lands on the pointer's display instead of waiting for the
+    /// next event.
     private func screensChanged() {
         currentScreenID = nil
-        reapplyDisplayState()
+        Task { await reapply(on: NotificationManager.shared) }
         scheduleSuppressionProbe()
-    }
-
-    /// Island parity for the replay after screen changes: suppression first,
-    /// then the display state as the manager holds it. The probe here is
-    /// deliberately without a fresh answer - the async probe below corrects
-    /// it within the same beat, as the island's cached answer does.
-    private func reapplyDisplayState() {
-        let manager = NotificationManager.shared
-        if manager.displaySuppressed {
-            Task { await hide() }
-            return
-        }
-        if manager.displayState.isOpened {
-            Task { await expand() }
-        } else if manager.closedMeansHidden {
-            Task { await hide() }
-        } else {
-            Task { await compact() }
-        }
     }
 
     /// Coalesced: several workspace events can land within one interaction,

@@ -82,6 +82,10 @@ final class NotchPresenter: NotchPresenting {
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var invalidationObservers: [NSObjectProtocol] = []
+    /// Coalesced replay after a display-behavior setting flips: the panel
+    /// size sliders fire a didSet per tick, and each island replay rebuilds
+    /// kit windows — one per settle, not one per tick.
+    private var behaviorReplayTask: Task<Void, Never>?
     /// Owns the calibration overlay windows when the debug toggle is on.
     private let calibrationOverlay = CalibrationOverlay()
 
@@ -322,28 +326,14 @@ final class NotchPresenter: NotchPresenting {
         }
     }
 
-    /// Re-applies the current display state, after the island has moved screens or
-    /// the displays themselves changed.
-    ///
-    /// Suppression is checked first, and without a probe: a screen reconfiguration
-    /// can land while a fullscreen app still owns the display, and re-applying an
-    /// expanded state here would put a `level = .screenSaver` panel on top of it.
-    /// The cached answer in `fullscreenResult` is good enough for this decision -
-    /// it is invalidated by the same observers that fire alongside this path.
-    private func reapplyDisplayState() {
-        let manager = NotificationManager.shared
-        if manager.displaySuppressed {
-            Task { await hide() }
-            return
-        }
-        if manager.displayState.isOpened {
-            Task { await expand() }
-        } else if manager.closedMeansHidden {
-            Task { await hide() }
-        } else {
-            Task { await compact() }
-        }
-    }
+    // The replay entry (`reapply(on:)`) lives on the `NotchPresenting`
+    // extension — one derivation shared with ToastPresenter and the test
+    // spy. Suppression is read from the manager's flag, not re-probed: a
+    // screen reconfiguration can land while a fullscreen app still owns the
+    // display, and the cached answer in `fullscreenResult` is good enough
+    // for that decision — it is invalidated by the same observers that fire
+    // alongside these paths, and the awaited probe still guards actual
+    // presentations.
 
     private func installMouseMonitors() {
         let mouseMask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDown]
@@ -415,7 +405,25 @@ final class NotchPresenter: NotchPresenting {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reapplyDisplayState() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                Task { await self.reapply(on: NotificationManager.shared) }
+            }
+        })
+        invalidationObservers.append(appCenter.addObserver(
+            forName: AppSettings.displayBehaviorDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.behaviorReplayTask?.cancel()
+                self.behaviorReplayTask = Task {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    guard !Task.isCancelled else { return }
+                    await self.displayBehaviorChanged(on: NotificationManager.shared)
+                }
+            }
         })
         invalidationObservers.append(appCenter.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
@@ -423,12 +431,13 @@ final class NotchPresenter: NotchPresenting {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.fullscreenResult = nil
+                guard let self else { return }
+                self.fullscreenResult = nil
                 // A display was added, removed, or resized. Instances follow the
                 // new set, and whatever was showing has to be placed again.
-                self?.syncScreens()
-                self?.reapplyDisplayState()
-                self?.syncCalibrationOverlay()
+                self.syncScreens()
+                Task { await self.reapply(on: NotificationManager.shared) }
+                self.syncCalibrationOverlay()
             }
         })
     }
@@ -451,7 +460,7 @@ final class NotchPresenter: NotchPresenting {
         let crossedDisplays = screen.displayID != activeScreenID
         activeScreenID = screen.displayID
         if crossedDisplays, manager.hasContent, !shouldSuppress {
-            reapplyDisplayState()
+            Task { await reapply(on: manager) }
         }
 
         guard !shouldSuppress else {
@@ -514,7 +523,7 @@ final class NotchPresenter: NotchPresenting {
             let result = await refreshFullscreen(for: key, screen: screen)
             guard result.changed, AppSettings.shared.hideInFullscreen else { return }
             NotificationManager.shared.setDisplaySuppressed(result.suppressed)
-            reapplyDisplayState()
+            await reapply(on: NotificationManager.shared)
         }
     }
 

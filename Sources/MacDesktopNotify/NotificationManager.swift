@@ -19,18 +19,59 @@ import Observation
 
 @MainActor
 protocol NotchPresenting: AnyObject {
+    // Surface primitives. The state machine never calls these directly —
+    // its only presenter vocabulary is `reapply(on:)` below.
+
     func expand() async
     func compact() async
     func hide() async
+    /// Make the screen match the manager's current state, whatever that is
+    /// when this runs. The derivation is supplied by the extension below —
+    /// one copy for every presenter, spy included.
+    func reapply(on manager: NotificationManager) async
     /// A fresh answer to "does a fullscreen app own the screen right now".
     /// Consulted before anything is presented, because suppression is
-    /// otherwise only re-derived when the pointer moves.
+    /// otherwise only re-derived when the pointer moves or a workspace
+    /// event lands.
     func probeDisplaySuppressed() async -> Bool
 }
 
 extension NotchPresenting {
+    /// The one settle derivation: suppressed stands down, an open state
+    /// expands, empty-or-idle history hides, everything else shows the
+    /// compact summary.
+    ///
+    /// The state reads happen HERE — at execution time, not at call time —
+    /// which is what makes the manager's fire-and-forget `Task { reapply }`
+    /// calls harmless: two reapplies landing in either order converge on the
+    /// same answer, because the last one re-derives from the state as it
+    /// actually is. The old per-site `expand`/`compact`/`hide` picks could
+    /// race a hover-expand against a peek push and wedge the screen against
+    /// the machine with no later event to correct it; this replay has no
+    /// such wedge.
+    func reapply(on manager: NotificationManager) async {
+        if manager.displaySuppressed { await hide(); return }
+        if manager.displayState.isOpened { await expand(); return }
+        if manager.closedMeansHidden { await hide(); return }
+        await compact()
+    }
+
     /// Presenters with no fullscreen knowledge report "nothing to suppress".
     func probeDisplaySuppressed() async -> Bool { false }
+
+    /// A display-behavior setting flipped (hideWhenIdle, the fullscreen
+    /// rule, panel size). The stored `displaySuppressed` flag can be stale
+    /// in either direction after a flip, so the answer is re-probed fresh;
+    /// then the layout replays, so the change lands without waiting for the
+    /// next event. `on` is explicit rather than a `.shared` default so the
+    /// test spy can replay against its own manager instance.
+    func displayBehaviorChanged(on manager: NotificationManager) async {
+        let suppressed = await probeDisplaySuppressed()
+        if suppressed != manager.displaySuppressed {
+            manager.setDisplaySuppressed(suppressed)
+        }
+        await reapply(on: manager)
+    }
 }
 
 /// A message that is being presented, bundled with the dwell budget it still has.
@@ -332,7 +373,7 @@ final class NotificationManager {
         // the return is announced with a pill they can open if they want to.
         guard presentation == nil, !displaySuppressed, unreadCount > 0 else { return }
         displayState = .closed
-        presentCompact()
+        presentCurrent()
     }
 
     /// Whether this message should be withheld because the user is away.
@@ -419,7 +460,7 @@ final class NotificationManager {
         displayState = .closed
         reduce(.cleared)
         historyStore?.delete()
-        Task { await presenter?.hide() }
+        Task { await presenter?.reapply(on: self) }
     }
 
     // MARK: - Actions

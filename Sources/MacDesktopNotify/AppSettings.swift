@@ -27,6 +27,11 @@ final class AppSettings {
     /// screens, mirroring across displays), so live windows follow the setting
     /// instead of waiting for the next presentation.
     static let summaryRoutingDidChange = Notification.Name("MacDesktopNotify.summaryRoutingDidChange")
+    /// Posted when a display-behavior setting flips (idle hiding, the
+    /// fullscreen rule, panel size). Presenters replay the on-screen display
+    /// on it (`NotchPresenting.displayBehaviorChanged`), so the change lands
+    /// immediately instead of at the next event.
+    static let displayBehaviorDidChange = Notification.Name("MacDesktopNotify.displayBehaviorDidChange")
 
     @ObservationIgnored private let defaults: UserDefaults
 
@@ -40,8 +45,18 @@ final class AppSettings {
     /// with `display=expand` / `display=peek`.
     var normalMessagesPeek: Bool { didSet { save(normalMessagesPeek, key: Keys.normalMessagesPeek) } }
     var messageDwellSeconds: Double { didSet { save(messageDwellSeconds, key: Keys.messageDwellSeconds) } }
-    var hideWhenIdle: Bool { didSet { save(hideWhenIdle, key: Keys.hideWhenIdle) } }
-    var hideInFullscreen: Bool { didSet { save(hideInFullscreen, key: Keys.hideInFullscreen) } }
+    var hideWhenIdle: Bool {
+        didSet {
+            save(hideWhenIdle, key: Keys.hideWhenIdle)
+            NotificationCenter.default.post(name: Self.displayBehaviorDidChange, object: nil)
+        }
+    }
+    var hideInFullscreen: Bool {
+        didSet {
+            save(hideInFullscreen, key: Keys.hideInFullscreen)
+            NotificationCenter.default.post(name: Self.displayBehaviorDidChange, object: nil)
+        }
+    }
     /// Trackpad haptic ticks for zone entry, click-to-open and swipe gestures.
     var enableHaptics: Bool { didSet { save(enableHaptics, key: Keys.enableHaptics) } }
     /// Excludes the island from screen capture (sharing / recording / screenshots),
@@ -82,8 +97,18 @@ final class AppSettings {
     /// `layouts/*.json`), `"default"` = builtin, anything else = `layouts/<id>.json`.
     var islandLayoutID: String { didSet { save(islandLayoutID, key: Keys.islandLayoutID) } }
 
-    var panelWidth: Double { didSet { save(panelWidth, key: Keys.panelWidth) } }
-    var panelHeight: Double { didSet { save(panelHeight, key: Keys.panelHeight) } }
+    var panelWidth: Double {
+        didSet {
+            save(panelWidth, key: Keys.panelWidth)
+            NotificationCenter.default.post(name: Self.displayBehaviorDidChange, object: nil)
+        }
+    }
+    var panelHeight: Double {
+        didSet {
+            save(panelHeight, key: Keys.panelHeight)
+            NotificationCenter.default.post(name: Self.displayBehaviorDidChange, object: nil)
+        }
+    }
     /// Geometry escape hatches (see `debugGeometryEnabled`); the calibration
     /// overlay is the only consumer that has to be told they moved.
     var notchWidthOffset: Double {
