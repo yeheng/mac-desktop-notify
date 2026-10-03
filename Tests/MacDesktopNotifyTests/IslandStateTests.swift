@@ -7,12 +7,16 @@ final class IslandStateTests: SettingsIsolatedTestCase {
         var expandCount = 0
         var compactCount = 0
         var hideCount = 0
+        var standUpCount = 0
+        var standDownCount = 0
         /// What the suppression probe should report; nil never suppresses.
         var probedSuppression: Bool?
 
         func expand() async { expandCount += 1 }
         func compact() async { compactCount += 1 }
         func hide() async { hideCount += 1 }
+        func standUp() async { standUpCount += 1 }
+        func standDown() async { standDownCount += 1 }
         func probeDisplaySuppressed() async -> Bool {
             probedSuppression ?? false
         }

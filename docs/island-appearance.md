@@ -110,7 +110,7 @@ app 监听 `themes/`、`layouts/` 与 Application Support 目录，文件变化�
 
 > 不建议用 `defaults write com.yeheng.macdesktopnotify island.themeID midnight` 切：运行中的进程缓存了这个值，不会热更新，要重启才读到。用设置里的下拉即可。
 >
-> 主题是**全局**的：四个面 + 刘海 pill + 迷你条共用一份。布局才是 per-surface。
+> 主题是**全局**的：四个面 + 刘海 pill + 迷你条 + 浮动 Toast 共用一份。布局才是 per-surface。
 
 ### 2.4 自定义字体与 Nerd Font
 
@@ -177,6 +177,8 @@ app 监听 `themes/`、`layouts/` 与 Application Support 目录，文件变化�
 | `miniBar` | 无刘海屏迷你条 | 内置胶囊摘要条 |
 
 每个面独立：文件里不写它 = 用内置；写坏了 = 只回退它。
+
+**呈现方式选「浮动 Toast」时**（设置 → 通用 → 呈现方式）：主题照常生效；Toast 点开的展开面板与灵动岛是**同一张面板**（同一个 `IslandExpandedView`），自定义 `expanded` 布局照常应用。但收起的 Toast 摘要卡是 Swift 固定视图，不读 `compactLeading` / `compactTrailing` / `miniBar` —— 摘要形态由呈现方式决定，布局只跟灵动岛走。
 
 ### 3.3 原生内容槽
 
@@ -449,13 +451,13 @@ if → frame → padding → background → clip → opacity → a11y
 
 ## 8. 完整示例
 
-内置预设**随 app 发布**（下拉里带「（内置）」），这里的文件是它们的源，也是可直接复制到配置目录的示例；同名拷贝过去就会覆盖内置版本：
+内置预设**随 app 发布**（下拉里带「（内置）」）——**直接在下拉里选即可，无须拷贝**。想在预设基础上改，再把仓库里 `Sources/MacDesktopNotify/Builtin/` 下的同名文件拷进配置目录（同名会覆盖内置版本；只有装好的 app、没有仓库时，预设也能从 `MacDesktopNotify.app/Contents/Resources/MacDesktopNotify_MacDesktopNotify.bundle` 里取）：
 
 ```bash
 CFG=~/Library/Application\ Support/MacDesktopNotify
 mkdir -p "$CFG/themes" "$CFG/layouts"
-cp themes/*.json "$CFG/themes/"
-cp layouts/*.json "$CFG/layouts/"
+cp Sources/MacDesktopNotify/Builtin/themes/*.json "$CFG/themes/"
+cp Sources/MacDesktopNotify/Builtin/layouts/*.json "$CFG/layouts/"
 # 然后在「设置 → 外观」里选主题和布局
 ```
 
@@ -650,8 +652,8 @@ cp layouts/*.json "$CFG/layouts/"
 ```bash
 CFG=~/Library/Application\ Support/MacDesktopNotify
 mkdir -p "$CFG/themes" "$CFG/layouts"
-cp themes/github-dark.json "$CFG/themes/"
-cp layouts/github.json "$CFG/layouts/"
+cp Sources/MacDesktopNotify/Builtin/themes/github-dark.json "$CFG/themes/"
+cp Sources/MacDesktopNotify/Builtin/layouts/github.json "$CFG/layouts/"
 # 然后在「设置 → 外观」里选主题 github-dark 与布局 github（不拷就是直接用内置）
 ```
 
@@ -733,11 +735,11 @@ cp layouts/github.json "$CFG/layouts/"
 ```bash
 CFG=~/Library/Application\ Support/MacDesktopNotify
 mkdir -p "$CFG/layouts"
-cp layouts/*.json "$CFG/layouts/"
+cp Sources/MacDesktopNotify/Builtin/layouts/*.json "$CFG/layouts/"
 # 下拉里会出现 classic / progress / github / nerd（不拷则标为内置）
 ```
 
-不需要软链或拷贝覆盖；想临时回到旧位置的单文件行为，选「自动」即可（它读根目录的 `island.json`）。
+不需要拷贝覆盖；想临时回到旧位置的单文件行为，选「自动」即可（它读配置目录根的 `island.json`）。
 
 ---
 
@@ -875,7 +877,7 @@ Sources/MacDesktopNotify/Island/
 ├── IslandSurfaceView.swift     # surface 入口 + 原生 slot + 环境注入
 └── BuiltinConfigs.swift        # app bundle 里的内置 layouts/themes 定位
 
-Sources/MacDesktopNotify/Builtin/   # 随包发布的内置预设（仓库根 layouts/、themes/ 为软链）
+Sources/MacDesktopNotify/Builtin/   # 随包发布的内置预设（文档拷贝示例从这里取）
 ├── layouts/                    # classic / progress / github / nerd
 └── themes/                     # midnight / solar / github-dark / nerd-font
 ```

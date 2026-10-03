@@ -95,6 +95,13 @@ final class NotchPresenter: NotchPresenting {
     /// Built in `init` — a property initializer cannot read `metrics`.
     private let calibrationOverlay: CalibrationOverlay
 
+    init() {
+        // Built here, not in a property initializer: constructing it needs
+        // `metrics`, which a stored property's initializer cannot read yet.
+        calibrationOverlay = CalibrationOverlay(metrics: metrics)
+        syncScreens()
+    }
+
     /// Sub-pixel jitter below this is not worth acting on.
     ///
     /// Mouse-moved can fire well over a hundred times a second, so the filter runs
@@ -127,20 +134,48 @@ final class NotchPresenter: NotchPresenting {
     /// reader can observe a pre-change array after the change landed.
     private var screensSnapshot: [NSScreen] = []
 
-    init() {
-        calibrationOverlay = CalibrationOverlay(metrics: metrics)
-        syncScreens()
+    // No deinit: the presenter outlives the process's useful life only while
+    // it is the active one, so teardown is explicit — `standDown` below —
+    // and this object has nothing left to clean when it finally dies.
+
+    func standUp() async {
         installMouseMonitors()
         installInvalidationObservers()
         installCalibrationObserver()
         syncCalibrationOverlay()
+        await reapply(on: NotificationManager.shared)
     }
 
-    // No deinit: Swift 6 will not let it touch this actor's state, and the
-    // presenter is retained by the app delegate for the whole run, so it never
-    // fires in practice. A real teardown would need the monitor tokens held in a
-    // nonisolated container, which is not worth building for an object that
-    // outlives the process's useful life.
+    func standDown() async {
+        await hide()
+        miniBars.tearDown()
+        calibrationOverlay.removeAll()
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+            self.globalMouseMonitor = nil
+        }
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+            self.localMouseMonitor = nil
+        }
+        for observer in invalidationObservers {
+            NotificationCenter.default.removeObserver(observer)
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        invalidationObservers.removeAll()
+        if let calibrationObserver {
+            NotificationCenter.default.removeObserver(calibrationObserver)
+            self.calibrationObserver = nil
+        }
+        behaviorReplayTask?.cancel()
+        behaviorReplayTask = nil
+        fullscreenProbe = nil
+        fullscreenResult = nil
+        activeScreenID = nil
+        // The pill no longer measures anything: the metrics store is this
+        // presenter's, and a later standUp must not be told the old widths.
+        metrics.reset()
+    }
 
     func expand() async {
         await applyToScreens(

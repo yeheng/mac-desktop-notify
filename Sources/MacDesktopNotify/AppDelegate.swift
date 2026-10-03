@@ -14,9 +14,11 @@ extension Notification.Name {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
-    /// Path A: one active presentation, chosen at launch. The manager holds
-    /// the presenter weakly, so this retained reference is what keeps it alive.
-    private var presenter: (any NotchPresenting)?
+    /// Every presentation style, registered together; the manager holds it
+    /// weakly, so this retained reference is what keeps the active style
+    /// alive. Itself a `NotchPresenting`, which is why the manager never sees
+    /// the switching at all.
+    private var router: PresentationRouter?
     private var presenceMonitor: PresenceMonitor?
     private var settingsController: SettingsWindowController?
     private var historyController: HistoryWindowController?
@@ -34,12 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let presenter: any NotchPresenting = switch AppSettings.shared.presentationStyle {
-        case .island: NotchPresenter()
-        case .toast: ToastPresenter()
-        }
-        self.presenter = presenter                 // retain (manager holds it weakly)
-        NotificationManager.shared.attach(presenter)
+        let router = PresentationRouter.makeDefault()
+        self.router = router                    // retain (manager holds it weakly)
+        NotificationManager.shared.attach(router)
+        observePresentationStyleChanges()
         NotificationManager.shared.restoreHistory(using: .default)
         NotificationManager.shared.attachActionHandler(
             NotificationActionHandler(ackStore: .default)
@@ -141,6 +141,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let controller = OnboardingWindowController()
             onboardingController = controller
             controller.show()
+        }
+
+        // Last, so the first activation sees every store already started:
+        // a style that replays history against an empty log would flash a
+        // blank screen for one frame.
+        Task { await router.standUp() }
+    }
+
+    /// Registers the presentation-style observer. Split out of the launch
+    /// block because it is the only observer that also fires during launch
+    /// (the picker writes the setting on read) and the names it listens for
+    /// belong to the router conversation, not the app's.
+    private func observePresentationStyleChanges() {
+        NotificationCenter.default.addObserver(
+            forName: AppSettings.presentationStyleDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.router?.activate() }
         }
     }
 

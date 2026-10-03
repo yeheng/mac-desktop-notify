@@ -208,6 +208,22 @@ final class MiniSummaryBars {
         visibleDisplayIDs.removeAll()
     }
 
+    /// Drops every window and unregisters the layout observers: the island
+    /// presenter stood down and must not relayout windows it no longer owns
+    /// (and must not hold an unread notice that arrives while it is out).
+    func tearDown() {
+        hideAll()
+        windows.removeAll()
+        if let unreadObserver {
+            NotificationCenter.default.removeObserver(unreadObserver)
+            self.unreadObserver = nil
+        }
+        if let statusObserver {
+            NotificationCenter.default.removeObserver(statusObserver)
+            self.statusObserver = nil
+        }
+    }
+
     /// Drops bars whose display no longer exists (unplug, reconfigure). The
     /// displayID is not coming back — and if the physical screen is ever
     /// re-plugged, `show` simply builds a fresh window for it.

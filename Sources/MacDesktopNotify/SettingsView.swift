@@ -357,7 +357,7 @@ private struct GeneralSettingsContent: View {
                     Text(style.title).tag(style)
                 }
             }
-            SectionFooter("\(settings.presentationStyle.detail) 更改在重启应用后生效。")
+            SectionFooter(settings.presentationStyle.detail)
             Toggle("悬停时展开面板", isOn: $settings.hoverToExpand)
             Toggle("鼠标离开时自动收起", isOn: $settings.autoCollapseOnLeave)
             Toggle("无活跃消息时自动隐藏", isOn: $settings.hideWhenIdle)

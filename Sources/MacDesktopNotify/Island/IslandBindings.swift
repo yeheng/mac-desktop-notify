@@ -144,4 +144,12 @@ final class CompactIslandMetrics: @unchecked Sendable {
         case .trailing: trailingWidth = width
         }
     }
+
+    /// Forgets both widths. Called when the presenter stands down: the next
+    /// presenter to own the pill starts from zero rather than deriving an
+    /// activation frame from widths measured by a presenter that is gone.
+    func reset() {
+        leadingWidth = 0
+        trailingWidth = 0
+    }
 }

@@ -22,6 +22,23 @@ protocol NotchPresenting: AnyObject {
     // Surface primitives. The state machine never calls these directly —
     // its only presenter vocabulary is `reapply(on:)` below.
 
+    /// Takes over the screen: installs everything this presenter owns
+    /// (event monitors, observers, windows) and re-presents the manager's
+    /// current state.
+    ///
+    /// The counterpart is `standDown`. They exist because a presenter is no
+    /// longer created once at launch and retained for the process's life —
+    /// the user can switch presentation style at runtime, and the one leaving
+    /// has to give the screen back or its windows stay up over the new one.
+    func standUp() async
+
+    /// Surrenders the screen: withdraws every window this presenter owns and
+    /// unregisters every monitor/observer it installed.
+    ///
+    /// Must be safe to call on a presenter that never stood up, and twice in a
+    /// row. The router does both.
+    func standDown() async
+
     func expand() async
     func compact() async
     func hide() async

@@ -151,12 +151,38 @@ final class ToastPresenter: NotchPresenting {
     /// sliders fire a didSet per tick).
     private var behaviorReplayTask: Task<Void, Never>?
 
-    init() {
-        installClickMonitors()
-        installObservers()
-    }
+    init() {}
 
     // MARK: - NotchPresenting
+
+    func standUp() async {
+        installClickMonitors()
+        installObservers()
+        await reapply(on: NotificationManager.shared)
+    }
+
+    func standDown() async {
+        summaryPanel?.orderOut(nil)
+        expandedPanel?.orderOut(nil)
+        if let globalClickMonitor {
+            NSEvent.removeMonitor(globalClickMonitor)
+            self.globalClickMonitor = nil
+        }
+        if let localClickMonitor {
+            NSEvent.removeMonitor(localClickMonitor)
+            self.localClickMonitor = nil
+        }
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        observers.removeAll()
+        suppressionProbe?.cancel()
+        suppressionProbe = nil
+        behaviorReplayTask?.cancel()
+        behaviorReplayTask = nil
+        currentScreenID = nil
+    }
 
     func expand() async {
         guard let screen = targetScreen else { return }

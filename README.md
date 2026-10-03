@@ -9,7 +9,7 @@
 ## 特性
 
 - 🖥️ **Vibe Island 风格 UI** — 常驻摘要态、悬停/点击展开、消息自动展开和内容切换动画；自动弹出只显示当前消息单卡，悬停/点击进入完整消息中心
-- 🍞 **浮动 Toast 呈现** — 不依赖刘海的第二种呈现：消息卡片出现在屏幕右上角，点击展开面板、点击外部收起，任何显示器都可用；设置 → 通用 → 呈现方式 切换（重启后生效）。消息流、历史、已读、动作回执、勿扰感知等能力两种呈现完全共享，切换的只是像素落点
+- 🍞 **浮动 Toast 呈现** — 不依赖刘海的第二种呈现：消息卡片出现在屏幕右上角，点击展开面板、点击外部收起，任何显示器都可用；设置 → 通用 → 呈现方式 切换（即时生效）。消息流、历史、已读、动作回执、勿扰感知等能力两种呈现完全共享，切换的只是像素落点
 - 🔗 **URL Scheme 推送** — 通过 `notch-notify://` 协议从任何语言/脚本发送通知
 - 🔌 **本地 API** — HTTP / WebSocket / Unix Socket 三种对接方式，仅本机监听，推送结果同步返回
 - 💾 **历史持久化** — 消息与已读状态原子写入磁盘，重启后仍在（防抖合并写，可在设置关闭）
@@ -515,7 +515,7 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 
 灵动岛的**外壳**（刘海 pill 两面、展开面板、无刘海迷你条）可以按主题和 JSON 布局定制。在「设置 → 外观」里选主题与布局；文件存在即生效，删文件即回退，无需重启。定制的是外壳，不是消息正文，也不是行为（点击 / URL / 脚本 / 窗口几何留在 Swift）。
 
-📖 **完整指南：[docs/island-appearance.md](docs/island-appearance.md)** — 全部 token 默认值与范围、11 种节点逐键参考、通用修饰键、8 绑定 + 12 谓词、示例布局/主题、上限与诊断、排错清单。下面只留速查。
+📖 **完整指南：[docs/island-appearance.md](docs/island-appearance.md)** — 全部 token 默认值与范围、11 种节点逐键参考、通用修饰键、9 绑定 + 13 谓词、示例布局/主题、上限与诊断、排错清单。下面只留速查。
 
 ### 文件位置
 
@@ -608,8 +608,8 @@ a11y:       { label, hidden }
 ```bash
 CFG=~/Library/Application\ Support/MacDesktopNotify
 mkdir -p "$CFG/themes" "$CFG/layouts"
-cp themes/*.json "$CFG/themes/"      # 想改哪个就先拷出来覆盖
-cp layouts/*.json "$CFG/layouts/"
+cp Sources/MacDesktopNotify/Builtin/themes/*.json "$CFG/themes/"   # 想改哪个就先拷出来覆盖（只选用、不改，下拉里直接选即可）
+cp Sources/MacDesktopNotify/Builtin/layouts/*.json "$CFG/layouts/"
 # 然后在「设置 → 外观」里选主题和布局
 ```
 
@@ -649,7 +649,7 @@ Sources/MacDesktopNotify/
 │   ├── IslandNodeView.swift             # 递归渲染器（具体类型，无 AnyView）
 │   ├── IslandSurfaceView.swift          # surface 入口 + 原生 slot
 │   └── BuiltinConfigs.swift             # app bundle 里的内置 layouts/themes 定位
-├── Builtin/                             # 随包发布的内置预设（仓库根 layouts/、themes/ 为软链）
+├── Builtin/                             # 随包发布的内置预设（预设源文件在此）
 │   ├── layouts/                         # classic / progress / github / nerd
 │   └── themes/                          # midnight / solar / github-dark / nerd-font
 ├── IslandHaptics.swift                  # 触控板触觉反馈（触发区进入、点击、手势确认）

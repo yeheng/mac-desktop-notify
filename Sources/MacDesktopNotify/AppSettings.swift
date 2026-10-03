@@ -15,6 +15,9 @@ final class AppSettings {
     static let panelHotkeyDidChange = Notification.Name("MacDesktopNotify.panelHotkeyDidChange")
     /// Posted when any API setting flips; APIListenerService restarts on it.
     static let apiSettingsDidChange = Notification.Name("MacDesktopNotify.apiSettingsDidChange")
+    /// Posted when the presentation style flips, so `PresentationRouter` can
+    /// switch presenters without the app being relaunched.
+    static let presentationStyleDidChange = Notification.Name("MacDesktopNotify.presentationStyleDidChange")
 
     private func notifyAPIChange() {
         NotificationCenter.default.post(name: Self.apiSettingsDidChange, object: nil)
@@ -87,10 +90,19 @@ final class AppSettings {
         }
     }
     var contentFontSize: Double { didSet { save(contentFontSize, key: Keys.contentFontSize) } }
-    /// Which presenter draws notifications. Path A: one active presentation,
-    /// chosen at launch by the app delegate - flipping this takes effect on
-    /// the next launch, not live, so the two presenters never coexist.
-    var presentationStyle: PresentationStyle { didSet { save(presentationStyle.rawValue, key: Keys.presentationStyle) } }
+    /// Which presenter draws notifications. The styles no longer fork at
+    /// launch: `PresentationRouter` keeps every style registered and switches
+    /// the one owning the screen when this flips (live, no relaunch).
+    var presentationStyle: PresentationStyle {
+        didSet {
+            save(presentationStyle.rawValue, key: Keys.presentationStyle)
+            // Only on a real move: reloading the same value must not tear a
+            // presenter down and stand it back up.
+            if presentationStyle != oldValue {
+                NotificationCenter.default.post(name: Self.presentationStyleDidChange, object: nil)
+            }
+        }
+    }
     /// Selected `themes/<id>.json`; `"default"` means the builtin literals.
     var islandThemeID: String { didSet { save(islandThemeID, key: Keys.islandThemeID) } }
     /// Selected layout. `"auto"` = the legacy `island.json` (or the first
