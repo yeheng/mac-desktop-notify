@@ -7,18 +7,8 @@ import SwiftUI
 /// manage read/delete state per message without the panel collapsing under
 /// them mid-gesture.
 @MainActor
-final class HistoryWindowController: NSObject, NSWindowDelegate {
-    private var window: NSWindow?
-    private var keyMonitor: Any?
-
-    func show() {
-        if let window {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-
-        let hostingView = NSHostingView(rootView: HistoryView())
+final class HistoryWindowController: UtilityWindowController {
+    override func makeWindow() -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 540),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -26,21 +16,9 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
             defer: false
         )
         window.title = "历史信息"
-        window.contentView = hostingView
+        window.contentView = NSHostingView(rootView: HistoryView())
         window.contentMinSize = NSSize(width: 460, height: 320)
-        window.center()
-        window.delegate = self
-        window.isReleasedWhenClosed = false
-        self.window = window
-        keyMonitor = WindowShortcuts.install(for: window)
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        WindowShortcuts.remove(keyMonitor)
-        keyMonitor = nil
-        window = nil
+        return window
     }
 }
 
@@ -51,6 +29,22 @@ private enum HistoryRowStatus {
     case current, unread, past
 }
 
+/// The filter chips above the list. An enum, not the strings it used to be:
+/// a typo in `"紧急"` compiled fine and silently failed the filter.
+private enum HistoryFilter: String, CaseIterable, Identifiable {
+    case all, unread, critical
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: "全部"
+        case .unread: "未读"
+        case .critical: "紧急"
+        }
+    }
+}
+
 /// Flat newest-first list of everything in history. Unlike the panel there is
 /// no grouping here: the window is the "show me each message" view, so every
 /// entry gets its own row with its own 已读/删除 buttons. Tapping a row
@@ -59,7 +53,7 @@ private struct HistoryView: View {
     private var manager: NotificationManager { .shared }
     @State private var expandedID: UUID?
     @State private var searchText = ""
-    @State private var filter = "全部"
+    @State private var filter = HistoryFilter.all
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Newest first, matching the panel's ordering.
@@ -67,8 +61,8 @@ private struct HistoryView: View {
         manager.history.reversed().filter { item in
             (searchText.isEmpty || item.title.localizedStandardContains(searchText)
                 || item.bodyMarkdown.localizedStandardContains(searchText))
-                && (filter != "未读" || !manager.isRead(item))
-                && (filter != "紧急" || item.urgency == .critical)
+                && (filter != .unread || !manager.isRead(item))
+                && (filter != .critical || item.urgency == .critical)
         }
     }
 
@@ -80,7 +74,7 @@ private struct HistoryView: View {
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("搜索历史消息")
                 Picker("筛选消息", selection: $filter) {
-                    ForEach(["全部", "未读", "紧急"], id: \.self) { Text($0) }
+                    ForEach(HistoryFilter.allCases) { Text($0.label) }
                 }
                 .labelsHidden()
                 .frame(width: 95)
@@ -176,7 +170,7 @@ private struct HistoryView: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
             if !manager.history.isEmpty {
-                Button("显示全部消息") { searchText = ""; filter = "全部" }
+                Button("显示全部消息") { searchText = ""; filter = .all }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

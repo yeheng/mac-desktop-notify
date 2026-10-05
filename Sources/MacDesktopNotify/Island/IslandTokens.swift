@@ -258,6 +258,7 @@ struct ResolvedIslandTokens: Equatable, Sendable {
 // MARK: - Applying a theme file
 
 extension ResolvedIslandTokens {
+
     /// Applies a theme file's `tokens` object on top of `self`.
     ///
     /// Truncate, never reject: an unknown key is ignored, a field with the
@@ -266,23 +267,37 @@ extension ResolvedIslandTokens {
     /// partially applied token set.
     func applying(_ raw: [String: Any], colorScheme: ColorScheme) -> ResolvedIslandTokens {
         var tokens = self
+        // Which `TokenKey` writes which resolved property — the single place
+        // the mapping lives. A local (not a static) because it is read once
+        // per theme apply and value-type key paths need no global-actor dance.
+        let colorKeyPaths: [TokenKey: WritableKeyPath<ResolvedIslandTokens, Color>] = [
+            .panelFill: \.panelFill,
+            .panelBorder: \.panelBorder,
+            .divider: \.divider,
+            .textPrimary: \.textPrimary,
+            .textSubtle: \.textSubtle,
+            .textTimestamp: \.textTimestamp,
+            .cardFill: \.cardFill,
+            .cardFillHover: \.cardFillHover,
+            .historyRowFill: \.historyRowFill,
+            .historyRowFillHover: \.historyRowFillHover,
+            .miniBarFill: \.miniBarFill,
+            .badgeFill: \.badgeFill,
+            .accent: \.accent,
+            .critical: \.critical,
+        ]
         for (name, value) in raw {
             guard let key = TokenKey(rawValue: name) else { continue }
             switch key {
-            case .panelFill: if let spec = IslandColorSpec.parse(value) { tokens.panelFill = spec.resolve(colorScheme) }
-            case .panelBorder: if let spec = IslandColorSpec.parse(value) { tokens.panelBorder = spec.resolve(colorScheme) }
-            case .divider: if let spec = IslandColorSpec.parse(value) { tokens.divider = spec.resolve(colorScheme) }
-            case .textPrimary: if let spec = IslandColorSpec.parse(value) { tokens.textPrimary = spec.resolve(colorScheme) }
-            case .textSubtle: if let spec = IslandColorSpec.parse(value) { tokens.textSubtle = spec.resolve(colorScheme) }
-            case .textTimestamp: if let spec = IslandColorSpec.parse(value) { tokens.textTimestamp = spec.resolve(colorScheme) }
-            case .cardFill: if let spec = IslandColorSpec.parse(value) { tokens.cardFill = spec.resolve(colorScheme) }
-            case .cardFillHover: if let spec = IslandColorSpec.parse(value) { tokens.cardFillHover = spec.resolve(colorScheme) }
-            case .historyRowFill: if let spec = IslandColorSpec.parse(value) { tokens.historyRowFill = spec.resolve(colorScheme) }
-            case .historyRowFillHover: if let spec = IslandColorSpec.parse(value) { tokens.historyRowFillHover = spec.resolve(colorScheme) }
-            case .miniBarFill: if let spec = IslandColorSpec.parse(value) { tokens.miniBarFill = spec.resolve(colorScheme) }
-            case .badgeFill: if let spec = IslandColorSpec.parse(value) { tokens.badgeFill = spec.resolve(colorScheme) }
-            case .accent: if let spec = IslandColorSpec.parse(value) { tokens.accent = spec.resolve(colorScheme) }
-            case .critical: if let spec = IslandColorSpec.parse(value) { tokens.critical = spec.resolve(colorScheme) }
+            case .panelFill, .panelBorder, .divider, .textPrimary, .textSubtle,
+                 .textTimestamp, .cardFill, .cardFillHover, .historyRowFill,
+                 .historyRowFillHover, .miniBarFill, .badgeFill, .accent, .critical:
+                // One body via the key-path table below: fourteen copies of the
+                // same line were one silent mis-assignment away from shipping.
+                if let spec = IslandColorSpec.parse(value),
+                   let path = colorKeyPaths[key] {
+                    tokens[keyPath: path] = spec.resolve(colorScheme)
+                }
 
             case .panelRadius: if let n = Self.number(value) { tokens.panelRadius = CGFloat(Self.clamp(n, to: IslandTokenLimits.radius)) }
             case .cardRadius: if let n = Self.number(value) { tokens.cardRadius = CGFloat(Self.clamp(n, to: IslandTokenLimits.radius)) }

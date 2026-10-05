@@ -10,20 +10,26 @@ extension NotificationManager {
     /// history — the script-backfill path's only write into the model. A
     /// retired/deleted message is a no-op: the backfill targeted a moment
     /// that has passed.
+    ///
+    /// One write path: the transform is applied to the log's copy and nowhere
+    /// else, then the live card is copied back from the log (the log keeps
+    /// the live message too). Applying the transform to both copies ran it
+    /// twice — an unwritten "must be idempotent" contract that the first
+    /// non-idempotent transform (`occurrences += 1`) would have broken.
     func update(id: UUID, _ transform: (inout NotchNotification) -> Void) {
-        var changed = false
-        var liveChanged = false
-        if presentation?.item.id == id, var live = presentation {
-            transform(&live.item)
+        guard messages.update(id: id, transform) else { return }
+        if presentation?.item.id == id, var live = presentation,
+           let updated = messages.history.first(where: { $0.id == id }) {
+            live.item = updated
             presentation = live
-            changed = true
-            liveChanged = true
+            // A rewritten live card must be re-ruled: the fields the dismiss and
+            // dwell rules read have changed under them.
+            armLiveRules()
         }
-        changed = messages.update(id: id, transform) || changed
-        // A rewritten live card must be re-ruled: the fields the dismiss and
-        // dwell rules read have changed under them.
-        if liveChanged { armLiveRules() }
-        if changed { schedulePersist() }
+        schedulePersist()
+        // A backfill can rewrite the island text the compact surfaces show,
+        // with no unread-count change alongside.
+        notifyCompactStatusChanged()
     }
 
     // MARK: - Persistence
@@ -156,6 +162,9 @@ extension NotificationManager {
         unreadCount = messages.unreadCount
         if unreadCount != previous {
             NotificationCenter.default.post(name: Self.unreadCountDidChange, object: nil)
+            // The bare count is part of the status line ("N 条未读" appearing
+            // or vanishing with no live card alongside).
+            notifyCompactStatusChanged()
         }
     }
 

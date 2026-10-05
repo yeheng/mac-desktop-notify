@@ -13,6 +13,16 @@ enum PushRejection: Error, Equatable, CustomStringConvertible {
         case .invalidScriptName: "script 名非法（仅字母数字与 -_，最长 64）"
         }
     }
+
+    /// The request field the sender should fix, for wire error payloads. The
+    /// HTTP door used to hardcode `"title"` for every rejection, which told a
+    /// client with a bad script name to go fix its title.
+    var field: String? {
+        switch self {
+        case .missingTitle: "title"
+        case .invalidScriptName: "script"
+        }
+    }
 }
 
 /// The single push-validation path shared by every ingress (URL scheme

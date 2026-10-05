@@ -22,6 +22,10 @@ struct MarqueeText: View {
 
     @State private var textWidth: CGFloat = 0
     @State private var start = Date()
+    /// Scroll time banked when a pause began. Pausing removes the TimelineView
+    /// branch, so `now - start` would otherwise swallow the whole pause and
+    /// resume with the phase jumped to wherever the text never actually got.
+    @State private var bankedElapsed: TimeInterval = 0
 
     var body: some View {
         // `textWidth == 0` means "not measured yet". Reserve `maxWidth` for that
@@ -41,7 +45,20 @@ struct MarqueeText: View {
         .clipped()
         .mask { edgeFade(active: overflows) }
         .background(alignment: .leading) { measurement }
-        .onChange(of: text) { _, _ in start = Date() }
+        .onChange(of: text) { _, _ in
+            start = Date()
+            bankedElapsed = 0
+        }
+        // Freeze in place: bank the elapsed time when the pause starts, and on
+        // resume shift `start` back so the phase continues from where the text
+        // actually stopped.
+        .onChange(of: paused) { _, isPaused in
+            if isPaused {
+                bankedElapsed = Date().timeIntervalSince(start)
+            } else {
+                start = Date().addingTimeInterval(-bankedElapsed)
+            }
+        }
     }
 
     private var label: Text {

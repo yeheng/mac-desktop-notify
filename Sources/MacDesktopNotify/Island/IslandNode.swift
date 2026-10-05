@@ -72,15 +72,16 @@ enum IslandColorSource: Equatable, Sendable {
 }
 
 /// Where a string comes from: a literal, or one of the textual bindings.
-enum IslandTextSource: Equatable, Sendable {
+/// One type with two semantic aliases — text and icon values are shaped
+/// identically, resolved identically (`IslandBindings` treats them the same),
+/// and the parser once carried a byte-identical function per alias.
+enum IslandStringValue: Equatable, Sendable {
     case literal(String)
     case binding(IslandBindingKey)
 }
 
-enum IslandIconSource: Equatable, Sendable {
-    case literal(String)
-    case binding(IslandBindingKey)
-}
+typealias IslandTextSource = IslandStringValue
+typealias IslandIconSource = IslandStringValue
 
 enum IslandFontWeight: String, CaseIterable, Sendable {
     case regular
@@ -249,9 +250,5 @@ struct IslandNode: Equatable, Sendable {
         case .vstack, .hstack, .zstack: !children.isEmpty
         default: true
         }
-    }
-
-    var nodeCount: Int {
-        1 + children.reduce(0) { $0 + $1.nodeCount }
     }
 }

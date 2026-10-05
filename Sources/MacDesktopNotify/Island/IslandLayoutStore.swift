@@ -153,16 +153,25 @@ final class IslandLayoutStore {
 
     // MARK: - Change detection
 
-    private func reloadIfChanged() {
+    /// Internal for tests: the watcher calls this through its closure, and
+    /// the hot-add regression drives the same entry point directly.
+    func reloadIfChanged() {
         guard signature() != lastSignature else { return }
         reload()
     }
 
     /// mtimes of the legacy file and every named layout, so a `history.json`
     /// write in the same directory does not force a re-parse.
+    ///
+    /// The ID list is discovered from disk on every call, not read from the
+    /// cached `layoutIDs`: the cache only refreshes inside `reload()`, so a
+    /// signature built from it never notices a newly added file — the watcher
+    /// fired, the signature matched, and the reload the new file needed was
+    /// skipped. Bundled IDs cannot change at runtime, so scanning the user
+    /// directory is the whole story.
     private func signature() -> String {
         let legacy = modificationDate(of: legacyLayoutFile)?.timeIntervalSince1970 ?? -1
-        let named = layoutIDs.map { id -> String in
+        let named = BuiltinConfigs.ids(in: layoutsDirectory).map { id -> String in
             let url = layoutsDirectory.appendingPathComponent("\(id).json")
             return "\(id):\(modificationDate(of: url)?.timeIntervalSince1970 ?? -1)"
         }

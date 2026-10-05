@@ -93,23 +93,19 @@ private struct ToastSummaryView: View {
         // activation zone to watch, so opening is an explicit click (or ⌃⌥N).
         .onTapGesture { manager.summaryClicked() }
         // Status and count changes shift the card's width; the presenter
-        // re-derives the window frame from the content's fitting size.
-        .onChange(of: manager.compactStatus) { _, _ in
-            NotificationCenter.default.post(name: NotificationManager.compactStatusDidChange, object: nil)
-        }
+        // re-derives the window frame from the content's fitting size. The
+        // manager posts compactStatusDidChange at its state writers — the
+        // view only renders.
         .accessibilityElement(children: .combine)
         .accessibilityLabel("通知：\(headline)")
         .modifier(IslandContextMenu(expanded: false))
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
     }
 
-    /// The one line the collapsed toast says. The live island status beats
-    /// everything; then the message on screen, then the newest unread, then
-    /// the bare count - the same precedence the island pill follows.
+    /// The one line the collapsed toast says — the manager's single headline
+    /// precedence (island text, then title, then the bare status).
     private var headline: String {
-        if let text = manager.current?.island?.text { return text }
-        if let title = (manager.current ?? manager.latestUnread)?.title { return title }
-        return manager.compactStatus
+        manager.compactHeadline
     }
 }
 
@@ -149,7 +145,8 @@ final class ToastPresenter: NotchPresenting {
     private var suppressionProbe: Task<Void, Never>?
     /// Coalesced replay after a display-behavior setting flips (panel size
     /// sliders fire a didSet per tick).
-    private var behaviorReplayTask: Task<Void, Never>?
+    /// Coalesced replay after a display-behavior setting flip.
+    private let behaviorReplay = Debouncer(delay: .milliseconds(250))
 
     init() {}
 
@@ -179,8 +176,7 @@ final class ToastPresenter: NotchPresenting {
         observers.removeAll()
         suppressionProbe?.cancel()
         suppressionProbe = nil
-        behaviorReplayTask?.cancel()
-        behaviorReplayTask = nil
+        behaviorReplay.cancel()
         currentScreenID = nil
     }
 
@@ -333,7 +329,6 @@ final class ToastPresenter: NotchPresenting {
     /// when the fullscreen session ended.
     private func installObservers() {
         let workspace = NSWorkspace.shared.notificationCenter
-        let appCenter = NotificationCenter.default
         let workspaceNames: [Notification.Name] = [
             NSWorkspace.didActivateApplicationNotification,
             NSWorkspace.activeSpaceDidChangeNotification,
@@ -341,52 +336,26 @@ final class ToastPresenter: NotchPresenting {
             NSWorkspace.didTerminateApplicationNotification
         ]
         for name in workspaceNames {
-            observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.scheduleSuppressionProbe() }
+            observers.append(addObserverOnMain(workspace, forName: name) { [weak self] in
+                self?.scheduleSuppressionProbe()
             })
         }
-        observers.append(appCenter.addObserver(
-            forName: NotificationManager.unreadCountDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.relayoutVisible() }
+        observers.append(addObserverOnMain(forName: NotificationManager.unreadCountDidChange) { [weak self] in
+            self?.relayoutVisible()
         })
-        observers.append(appCenter.addObserver(
-            forName: NotificationManager.compactStatusDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.relayoutVisible() }
+        observers.append(addObserverOnMain(forName: NotificationManager.compactStatusDidChange) { [weak self] in
+            self?.relayoutVisible()
         })
-        observers.append(appCenter.addObserver(
-            forName: AppSettings.screenRecordingDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.applySharingType() }
+        observers.append(addObserverOnMain(forName: AppSettings.screenRecordingDidChange) { [weak self] in
+            self?.applySharingType()
         })
-        observers.append(appCenter.addObserver(
-            forName: AppSettings.displayBehaviorDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.behaviorReplayTask?.cancel()
-                self.behaviorReplayTask = Task {
-                    try? await Task.sleep(for: .milliseconds(250))
-                    guard !Task.isCancelled else { return }
-                    await self.displayBehaviorChanged(on: NotificationManager.shared)
-                }
+        observers.append(addObserverOnMain(forName: AppSettings.displayBehaviorDidChange) { [weak self] in
+            self?.behaviorReplay.arm { [weak self] in
+                await self?.displayBehaviorChanged(on: NotificationManager.shared)
             }
         })
-        observers.append(appCenter.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.screensChanged() }
+        observers.append(addObserverOnMain(forName: NSApplication.didChangeScreenParametersNotification) { [weak self] in
+            self?.screensChanged()
         })
     }
 

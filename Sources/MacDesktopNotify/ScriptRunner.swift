@@ -9,39 +9,6 @@ import os
 private let scriptLogLineLimit = 200
 private let scriptLogLineLengthLimit = 2000
 
-// MARK: - ScriptValue：JSON 值（严格并发下不用 Any）
-
-/// 引擎层一切出入参的载体。Swift 6 严格并发下 `Any` 不可 Sendable，
-/// 一个显式 JSON 值枚举让引擎边界全静态。
-enum ScriptValue: Sendable, Equatable {
-    case null
-    case bool(Bool)
-    case number(Double)
-    case string(String)
-    case array([ScriptValue])
-    case object([String: ScriptValue])
-
-    var dictionary: [String: ScriptValue]? {
-        if case .object(let dict) = self { return dict }
-        return nil
-    }
-
-    var stringValue: String? {
-        if case .string(let s) = self { return s }
-        return nil
-    }
-
-    var doubleValue: Double? {
-        if case .number(let d) = self { return d }
-        return nil
-    }
-
-    var boolValue: Bool? {
-        if case .bool(let b) = self { return b }
-        return nil
-    }
-}
-
 struct ScriptOutcome: Sendable, Equatable {
     /// 脚本返回值；undefined / 无 return 为 nil。
     var result: ScriptValue?
@@ -59,37 +26,6 @@ struct FetchResponse: Sendable, Equatable {
 enum NotifyOp: Sendable {
     case push([String: ScriptValue])
     case clear(group: String?)
-}
-
-// MARK: - ScriptValue Codable（exec 的任意 JSON input/出参）
-
-extension ScriptValue: Encodable {
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .null: try container.encodeNil()
-        case .bool(let b): try container.encode(b)
-        case .number(let d): try container.encode(d)
-        case .string(let s): try container.encode(s)
-        case .array(let items): try container.encode(items)
-        case .object(let dict): try container.encode(dict)
-        }
-    }
-}
-
-extension ScriptValue: Decodable {
-    /// exec 的 input 是任意 JSON；直接解成 ScriptValue，不经 Any（严格并发）。
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() { self = .null }
-        else if let b = try? container.decode(Bool.self) { self = .bool(b) }
-        else if let d = try? container.decode(Double.self) { self = .number(d) }
-        else if let s = try? container.decode(String.self) { self = .string(s) }
-        else if let a = try? container.decode([ScriptValue].self) { self = .array(a) }
-        else if let o = try? container.decode([String: ScriptValue].self) { self = .object(o) }
-        else { throw DecodingError.dataCorrupted(
-            .init(codingPath: decoder.codingPath, debugDescription: "不支持的 JSON 值")) }
-    }
 }
 
 // MARK: - ScriptEngine
@@ -160,16 +96,21 @@ final class ScriptEngine: @unchecked Sendable {
             // 超时的线程被放弃（JSC 无法外部中断），但**逻辑槽位在超时那一刻
             // 就释放**，另外单独记一个僵尸线程。
             let execution = Execution(cont: cont, ledger: ledger)
-            Thread.detachNewThread { [self] in
-                execution.finish(runSync(source: source, input: input, deadline: deadline))
-            }
-            Task {
+            // 看门狗先建、后接线、再开跑：脚本先完成时 finish() 能取消它，
+            // 而不是让它空睡满整个预算。接线的顺序保证 finish 永远见得到它。
+            let watchdog = Task {
                 try? await Task.sleep(for: budget)
+                // 脚本先完成：看门狗已被取消，醒来只做退出。
+                guard !Task.isCancelled else { return }
                 if execution.timeout() {
                     Self.logger.warning(
                         "脚本超时，线程被放弃（僵尸线程 \(self.ledger.zombieCount)）：\(source.prefix(120), privacy: .public)"
                     )
                 }
+            }
+            execution.setWatchdog(watchdog)
+            Thread.detachNewThread { [self] in
+                execution.finish(runSync(source: source, input: input, deadline: deadline))
             }
         }
     }
@@ -225,6 +166,11 @@ final class ScriptEngine: @unchecked Sendable {
         private var activeReleased = false
         private var countedAsZombie = false
         private let ledger: ExecutionLedger
+        /// Set before the script thread starts; cancelled when the script
+        /// finishes so a fast script does not leave the watchdog sleeping out
+        /// its whole budget. Task cancellation itself is thread-safe — the
+        /// handle is still touched only under `lock`.
+        private var watchdog: Task<Void, Never>?
 
         init(cont: CheckedContinuation<ScriptOutcome, Never>, ledger: ExecutionLedger) {
             self.cont = cont
@@ -254,8 +200,18 @@ final class ScriptEngine: @unchecked Sendable {
 
         /// 线程结束：正常完成时释放逻辑槽位；若看门狗已判超时，则线程终于
         /// 退出，把僵尸计数减回去。
+        /// Wires the watchdog under the lock, before the script thread starts,
+        /// so `finish` always sees it.
+        func setWatchdog(_ task: Task<Void, Never>) {
+            lock.lock()
+            watchdog = task
+            lock.unlock()
+        }
+
         func finish(_ outcome: ScriptOutcome) {
             lock.lock()
+            watchdog?.cancel()
+            watchdog = nil
             guard let cont else {
                 if countedAsZombie {
                     countedAsZombie = false
@@ -476,9 +432,10 @@ final class ScriptRunner {
         guard engine.tryAcquireSlot(maxConcurrent: Self.maxConcurrent) else {
             return ScriptOutcome(result: nil, logs: [], error: "busy")
         }
-        let source: String
+        // One release on every load-failure path: from `runAcquired` onward the
+        // execution itself owns the slot, so nothing here can double-release.
         do {
-            source = try store.load(name)
+            return await engine.runAcquired(source: try store.load(name), input: input, budget: budget)
         } catch ScriptStore.ScriptStoreError.readFailed(let reason) {
             engine.releaseSlot()
             return ScriptOutcome(result: nil, logs: [], error: "脚本无法读取：\(name)（\(reason)）")
@@ -486,7 +443,6 @@ final class ScriptRunner {
             engine.releaseSlot()
             return ScriptOutcome(result: nil, logs: [], error: "脚本未找到：\(name)")
         }
-        return await engine.runAcquired(source: source, input: input, budget: budget)
     }
 
     /// 脚本的 input：消息的已解析字段（设计 §1 契约）。

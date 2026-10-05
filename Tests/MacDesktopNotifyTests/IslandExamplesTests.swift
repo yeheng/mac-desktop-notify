@@ -33,10 +33,6 @@ final class IslandExamplesTests: XCTestCase {
                 "\(file.lastPathComponent) must be diagnostic-free"
             )
             XCTAssertFalse(document.surfaces.isEmpty, "\(file.lastPathComponent) must opt in at least one surface")
-            XCTAssertLessThanOrEqual(
-                document.surfaces.values.map(\.nodeCount).max() ?? 0,
-                IslandLayoutParser.maxNodesPerSurface
-            )
         }
     }
 

@@ -219,6 +219,26 @@ final class IslandStoreTests: SettingsIsolatedTestCase {
         XCTAssertNil(store.node(for: .expanded), "a surface not in the file stays builtin")
     }
 
+    /// A brand-new file dropped into `layouts/` must be discovered by the
+    /// next reload decision. The signature once read the id list from the
+    /// store's cache — which only refreshes inside `reload()` — so a new file
+    /// changed nothing, the reload was skipped, and the doc's “下拉选项随文件
+    /// 增删即时更新” never happened until a restart.
+    func testReloadIfChangedPicksUpNewLayoutFile() throws {
+        AppSettings.shared.islandLayoutID = IslandLayoutStore.autoID
+        try writeLayout("alpha.json", #"{"surfaces":{"expanded":{"type":"spacer"}}}"#)
+        let store = makeLayoutStore()
+        store.reload()
+
+        // Simulate the watcher firing after a new file lands: reloadIfChanged
+        // must see the directory's new member, not just the cached id list.
+        try writeLayout("beta.json", #"{"surfaces":{"miniBar":{"type":"spacer"}}}"#)
+        store.reloadIfChanged()
+
+        XCTAssertEqual(store.layoutIDs, ["alpha", "beta"], "the new file is discovered without a manual reload")
+        XCTAssertNotNil(store.node(for: .expanded), "auto still resolves onto the first named layout after the re-parse")
+    }
+
     func testAutoFallsBackToFirstNamedLayout() throws {
         AppSettings.shared.islandLayoutID = IslandLayoutStore.autoID
         try writeLayout("alpha.json", #"{"surfaces":{"expanded":{"type":"spacer"}}}"#)

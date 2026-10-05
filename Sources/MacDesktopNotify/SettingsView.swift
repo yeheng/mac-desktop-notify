@@ -590,36 +590,30 @@ private struct AppearanceSettingsContent: View {
         IslandLayoutStore.shared.builtinLayoutIDs.contains(id) ? "\(id)（内置）" : id
     }
 
+    /// The two DSL stores' diagnostics render identically, so one section
+    /// builder serves both — the copies used to drift in styling.
     @ViewBuilder
-    private var themeDiagnostics: some View {
-        if !IslandThemeStore.shared.diagnostics.isEmpty {
+    private func diagnosticsSection(header: String, messages: [String]) -> some View {
+        if !messages.isEmpty {
             Section {
-                ForEach(IslandThemeStore.shared.diagnostics, id: \.self) { message in
+                ForEach(messages, id: \.self) { message in
                     Text(message)
                         .font(.system(size: 11))
                         .foregroundStyle(.orange)
                         .textSelection(.enabled)
                 }
             } header: {
-                Text("主题诊断")
+                Text(header)
             }
         }
     }
 
-    @ViewBuilder
+    private var themeDiagnostics: some View {
+        diagnosticsSection(header: "主题诊断", messages: IslandThemeStore.shared.diagnostics)
+    }
+
     private var layoutDiagnostics: some View {
-        if !IslandLayoutStore.shared.diagnostics.isEmpty {
-            Section {
-                ForEach(IslandLayoutStore.shared.diagnostics, id: \.self) { message in
-                    Text(message)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                        .textSelection(.enabled)
-                }
-            } header: {
-                Text("布局诊断")
-            }
-        }
+        diagnosticsSection(header: "布局诊断", messages: IslandLayoutStore.shared.diagnostics)
     }
 }
 

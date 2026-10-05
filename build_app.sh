@@ -23,11 +23,10 @@ echo "📦 创建 App Bundle..."
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 mkdir -p "${APP_BUNDLE}/Contents/Resources"
 
-# 查找可执行文件 (SPM 在自定义 build-path 下会放在 arch-specific 目录中)
-EXE_PATH=$(find "${BUILD_DIR}" -maxdepth 3 -type f -name "${APP_NAME}" | grep -E "release/[^/]+$|release/${APP_NAME}$" | head -n 1)
-if [[ -z "${EXE_PATH}" ]]; then
-    EXE_PATH=$(find "${BUILD_DIR}" -maxdepth 3 -type f -name "${APP_NAME}" | grep release | head -n 1)
-fi
+# 查找可执行文件（SPM --build-path 的产物在 out/Products/<Config>/ 下，且
+# build/release 是指向它的符号链接；不带 -L 的 find 看不到链接指向的内容，
+# -maxdepth 3 也够不到 out/Products/Release 这一层）。
+EXE_PATH=$(find -L "${BUILD_DIR}" -maxdepth 4 -type f -name "${APP_NAME}" | grep -E "Products/Release" | head -n 1)
 if [[ -z "${EXE_PATH}" ]]; then
     echo "❌ 找不到可执行文件"
     exit 1
@@ -40,7 +39,7 @@ chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 # SPM 把内置的 layouts/themes 打成可执行文件旁的 resource bundle；手工拼装的
 # .app 必须把它搬进 Contents/Resources。少了它内置预设会全部消失（BuiltinConfigs
 # 已做非致命兜底，不会像 Bundle.module 那样 fatalError），但这显然不是想要的包。
-RESOURCE_BUNDLE=$(find "${BUILD_DIR}" -maxdepth 3 -type d -name "${APP_NAME}_${APP_NAME}.bundle" | head -n 1)
+RESOURCE_BUNDLE=$(find -L "${BUILD_DIR}" -maxdepth 4 -type d -name "${APP_NAME}_${APP_NAME}.bundle" | grep -E "Products/Release" | head -n 1)
 if [[ -z "${RESOURCE_BUNDLE}" ]]; then
     echo "❌ 找不到内置配置 resource bundle：${APP_NAME}_${APP_NAME}.bundle"
     exit 1
@@ -48,7 +47,7 @@ fi
 echo "   内置配置: ${RESOURCE_BUNDLE}"
 rm -rf "${APP_BUNDLE}/Contents/Resources/${APP_NAME}_${APP_NAME}.bundle"
 cp -R "${RESOURCE_BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
-if [[ ! -d "${APP_BUNDLE}/Contents/Resources/${APP_NAME}_${APP_NAME}.bundle/layouts" ]]; then
+if [[ ! -d "${APP_BUNDLE}/Contents/Resources/${APP_NAME}_${APP_NAME}.bundle/Contents/Resources/layouts" ]]; then
     echo "❌ 内置配置复制失败，.app 将没有内置 layouts/themes"
     exit 1
 fi

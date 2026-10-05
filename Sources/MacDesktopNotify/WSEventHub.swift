@@ -69,6 +69,13 @@ final class WSEventHub {
     }
 
     func broadcast(_ json: [String: Any]) {
-        for session in sessions { session.send(json: json) }
+        // One serialization for every subscriber, not one per session — N
+        // listeners each paid for an identical JSONSerialization run before.
+        guard let data = try? JSONSerialization.data(withJSONObject: json) else {
+            // A subscriber that misses an event has no other symptom.
+            Diagnostics.degrade("WS 事件序列化失败", reason: "\(json.keys.sorted())")
+            return
+        }
+        for session in sessions { session.send(jsonData: data) }
     }
 }

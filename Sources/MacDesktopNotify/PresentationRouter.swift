@@ -36,6 +36,9 @@ final class PresentationRouter: NotchPresenting {
     /// stand-down and stand-up: the second would then find the first
     /// presenter's windows on screen and overlay them.
     private var activationTask: Task<Void, Never>?
+    /// Identifies the flight `activationTask` currently holds, so a completed
+    /// switch can release the slot without touching a newer one's task.
+    private var activationGeneration = 0
 
     init(presenters: [PresentationStyle: any NotchPresenting]) {
         self.presenters = presenters
@@ -57,8 +60,17 @@ final class PresentationRouter: NotchPresenting {
         }
         desiredStyle = requested
         activationTask?.cancel()
+        activationGeneration += 1
+        let generation = activationGeneration
         activationTask = Task { [weak self] in
             await self?.performSwitch(to: requested)
+            // This flight is over. If no newer flight started, release the
+            // slot: a completed task left in `activationTask` forever made the
+            // fast path's `activationTask == nil` clause dead, and every
+            // settings-pane open spawned a no-op switch flight.
+            if self?.activationGeneration == generation {
+                self?.activationTask = nil
+            }
         }
     }
 

@@ -5,6 +5,14 @@ extension Notification.Name {
     /// Opens the Settings window: the notch panel's context menu posts it,
     /// the delegate (which owns the window controller) observes it.
     static let openSettings = Notification.Name("MacDesktopNotify.openSettings")
+    /// Ask the app delegate to run its modal clear-all confirmation. The
+    /// panel's own inline confirmationDialog dies with the panel window when
+    /// a hover-out or outside-click collapse races the confirmation; the
+    /// delegate's NSAlert lives in its own window and cannot.
+    static let requestClearAll = Notification.Name("MacDesktopNotify.requestClearAll")
+    /// Same modal-confirmation escape hatch as `requestClearAll`, scoped to
+    /// the history section only: the current message survives it.
+    static let requestClearHistory = Notification.Name("MacDesktopNotify.requestClearHistory")
     /// Opens the standalone history browser from the island's context menu.
     static let openHistoryWindow = Notification.Name("MacDesktopNotify.openHistoryWindow")
     /// Reruns onboarding from Settings → 关于。
@@ -19,7 +27,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// alive. Itself a `NotchPresenting`, which is why the manager never sees
     /// the switching at all.
     private var router: PresentationRouter?
-    private var presenceMonitor: PresenceMonitor?
     private var settingsController: SettingsWindowController?
     private var historyController: HistoryWindowController?
     private var onboardingController: OnboardingWindowController?
@@ -30,6 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Throttled per urgency: a chatty normal sender must not silence a critical
     /// that lands inside the same window.
     private var lastSoundAt: [UrgencyLevel: Date] = [:]
+    /// 「静默 1 小时」/「取消静默」——标题随 `isSilenced` 翻转。
+    private var silenceMenuItem: NSMenuItem?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -55,7 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let presence = PresenceMonitor()
-        presenceMonitor = presence                 // retain; the manager also holds it
+        // The manager retains it (`attachPresenceMonitor`); a second strong
+        // reference here would be bookkeeping with no owner.
         NotificationManager.shared.attachPresenceMonitor(presence)
         presence.start()
 
@@ -69,70 +79,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Custom island appearance: themes/ and island.json, watched for edits.
         IslandThemeStore.shared.start()
         IslandLayoutStore.shared.start()
-        // The observers below pair `queue: .main` with `MainActor.assumeIsolated`:
-        // delivery already lands on the main thread, so handlers run inline
-        // instead of one Task hop later. Keep the queue with the assertion —
-        // `queue: nil` would deliver on the posting thread and trap.
-        NotificationCenter.default.addObserver(
-            forName: AppSettings.apiSettingsDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.scheduleAPIRestart() }
+        // addObserverOnMain runs handlers inline on the main actor (see its
+        // contract) — same delivery the explicit queue+assertion pairs used
+        // to spell out at every site.
+        addObserverOnMain(forName: AppSettings.apiSettingsDidChange) { [weak self] in
+            self?.scheduleAPIRestart()
         }
-        NotificationCenter.default.addObserver(
-            forName: AppSettings.panelHotkeyDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.syncPanelHotkey() }
+        addObserverOnMain(forName: AppSettings.panelHotkeyDidChange) { [weak self] in
+            self?.syncPanelHotkey()
         }
 
         // "重新运行首次引导" from Settings → 关于 lands here.
-        NotificationCenter.default.addObserver(
-            forName: .reopenOnboarding,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                if self.onboardingController == nil {
-                    self.onboardingController = OnboardingWindowController()
-                }
-                self.onboardingController?.show()
+        addObserverOnMain(forName: .reopenOnboarding) { [weak self] in
+            guard let self else { return }
+            if self.onboardingController == nil {
+                self.onboardingController = OnboardingWindowController()
             }
+            self.onboardingController?.show()
         }
 
         // The panel's trash button and right-click menu route destructive/global
         // actions through the same paths as the menu bar items: one
         // confirmation dialog, one settings window.
-        NotificationCenter.default.addObserver(
-            forName: .requestClearAll,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.requestClearAll(reason: "面板") }
+        addObserverOnMain(forName: .requestClearAll) { [weak self] in
+            self?.requestClearAll(reason: "面板")
         }
-        NotificationCenter.default.addObserver(
-            forName: .requestClearHistory,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.requestClearHistory() }
+        addObserverOnMain(forName: .requestClearHistory) { [weak self] in
+            self?.requestClearHistory()
         }
-        NotificationCenter.default.addObserver(
-            forName: .openSettings,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.settingsController?.show() }
+        addObserverOnMain(forName: .openSettings) { [weak self] in
+            self?.settingsController?.show()
         }
-        NotificationCenter.default.addObserver(
-            forName: .openHistoryWindow,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.historyController?.show() }
+        addObserverOnMain(forName: .openHistoryWindow) { [weak self] in
+            self?.historyController?.show()
         }
 
         // The app is inert until something calls it. A first run that ends with
@@ -154,12 +133,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// (the picker writes the setting on read) and the names it listens for
     /// belong to the router conversation, not the app's.
     private func observePresentationStyleChanges() {
-        NotificationCenter.default.addObserver(
-            forName: AppSettings.presentationStyleDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.router?.activate() }
+        addObserverOnMain(forName: AppSettings.presentationStyleDidChange) { [weak self] in
+            self?.router?.activate()
         }
     }
 
@@ -227,15 +202,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Coalesced listener restart: several API settings can flip within one
     /// settings interaction, and rebinding twice per flip is pure churn.
-    private var apiRestartTask: Task<Void, Never>?
+    private let apiRestart = Debouncer(delay: .milliseconds(300))
 
     private func scheduleAPIRestart() {
-        apiRestartTask?.cancel()
-        apiRestartTask = Task {
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            APIListenerService.shared.restart()
-        }
+        apiRestart.arm { APIListenerService.shared.restart() }
     }
 
     // MARK: - Sound
@@ -314,19 +284,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
         silenceMenuItem = silence
         // Refresh silence state whenever the menu is about to show.
-        // Same pairing as the observers in `applicationDidFinishLaunching`:
-        // `queue: .main` + `MainActor.assumeIsolated`, inline delivery, no hop.
-        NotificationCenter.default.addObserver(
-            forName: NotificationManager.unreadCountDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updateStatusIcon() }
+        addObserverOnMain(forName: NotificationManager.unreadCountDidChange) { [weak self] in
+            self?.updateStatusIcon()
         }
         updateStatusIcon()
     }
-
-    @MainActor private var silenceMenuItem: NSMenuItem?
 
     @objc private func toggleSilence() {
         let manager = NotificationManager.shared

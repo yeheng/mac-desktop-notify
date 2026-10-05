@@ -258,6 +258,50 @@ final class AppSettings {
         }
     }
 
+    /// Test seam, paired with `resetAllForTesting`: wiping the defaults domain
+    /// covers disk, but this singleton's in-memory properties keep whatever a
+    /// previous test wrote — cfprefsd only answers on the next construction.
+    /// This restores factory defaults in the live instance. One assignment per
+    /// setting, mirroring `init`: a new setting needs its line here the same
+    /// way it needs its init line. Production never calls it.
+    func resetForTests() {
+        resetAllForTesting()
+        hoverToExpand = true
+        hoverDelayMilliseconds = 150
+        autoCollapseOnLeave = true
+        autoExpandOnMessage = true
+        normalMessagesPeek = false
+        messageDwellSeconds = 5
+        hideWhenIdle = true
+        hideInFullscreen = false
+        enableHaptics = true
+        excludeFromScreenRecording = true
+        miniSummaryOnNotchlessScreens = true
+        mirrorSummaryOnAllDisplays = false
+        contentFontSize = 12
+        presentationStyle = .island
+        islandThemeID = "default"
+        islandLayoutID = "auto"
+        panelWidth = 720
+        panelHeight = 360
+        notchWidthOffset = 0
+        notchHeightOffset = 0
+        showUrgency = true
+        showHistoryCount = true
+        soundEnabled = true
+        launchAtLogin = false
+        persistHistory = true
+        quietMode = .off
+        ageOutCriticals = true
+        onboardingCompleted = false
+        showNotchCalibration = false
+        globalPanelHotkeyEnabled = true
+        apiUnixSocketEnabled = true
+        apiHttpEnabled = false
+        apiHttpPort = 4770
+        panelHotkeyUnavailable = false
+    }
+
     func resetDisplayDefaults() {
         contentFontSize = 12
         panelWidth = 720

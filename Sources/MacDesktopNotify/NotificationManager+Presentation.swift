@@ -124,6 +124,7 @@ extension NotificationManager {
         stopDwell()
         stopAgingTimers()
         presentation = nil
+        notifyCompactStatusChanged()
         settleDisplay()
     }
 
@@ -133,6 +134,7 @@ extension NotificationManager {
     private func beginPresenting(_ item: NotchNotification, as state: NotchDisplayState) {
         presentation = Presentation(item: item, remaining: nil, policy: resolvePolicy(for: item))
         displayState = state
+        notifyCompactStatusChanged()
         armLiveRules()
     }
 
@@ -202,11 +204,7 @@ extension NotificationManager {
         // content swaps in place. A suppressed display parks the message
         // exactly as it landed; `setDisplaySuppressed` settles it on return.
         guard !rotatedInPlace, !displaySuppressed else { return }
-        if case .closed = landing {
-            presentCurrent()
-        } else {
-            presentCurrent()
-        }
+        presentCurrent()
     }
 
     /// The one fire-and-forget presenter entry: re-derive suppression, then

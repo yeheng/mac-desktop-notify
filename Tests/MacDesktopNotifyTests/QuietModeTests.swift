@@ -233,10 +233,4 @@ final class QuietModeTests: SettingsIsolatedTestCase {
         XCTAssertEqual(returns, 0, "clearing a source that was never set is not a return")
         XCTAssertFalse(monitor.isAway)
     }
-
-    func testSourcesAreDescribed() {
-        XCTAssertEqual(AwaySource.screenLocked.title, "屏幕已锁定")
-        XCTAssertEqual(AwaySource.screensaver.title, "屏幕保护程序运行中")
-        XCTAssertEqual(AwaySource.systemSleep.title, "系统睡眠中")
-    }
 }

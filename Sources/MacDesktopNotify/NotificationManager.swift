@@ -104,7 +104,7 @@ extension NotchPresenting {
 /// `NotificationManager+Dwell.dwellHeldForActions`) already aged out once: the hold
 /// is a one-shot privilege, otherwise the release would re-hold itself on the
 /// very next reconcile.
-struct Presentation: Equatable, Sendable {
+struct Presentation: Sendable {
     /// `var` solely so the script-backfill path (`update(id:)`) can rewrite the
     /// live card's fields in place; nothing else mutates it after presentation.
     var item: NotchNotification
@@ -146,10 +146,11 @@ final class NotificationManager {
     /// views (the status item icon redraws from this).
     static let unreadCountDidChange = Notification.Name("MacDesktopNotify.unreadCountDidChange")
 
-    /// Posted by the mini bar's view when its status line changes without an
-    /// unread-count change alongside (an island text update via group
-    /// replacement) - the bar's window frame is derived from the content's
-    /// fitting size, so it must relayout or the new text clips.
+    /// Posted by the manager whenever the compact status line's inputs change
+    /// (the live card — island text included — or the unread count). The mini
+    /// bar and the toast relayout their windows from it. State writers post
+    /// this; views only render — the mini bar used to announce its own status
+    /// change from `.onChange`, poking window frames from inside a view update.
     static let compactStatusDidChange = Notification.Name("MacDesktopNotify.compactStatusDidChange")
 
     /// Writes are debounced so a burst of pushes costs one save, not one per message.
@@ -273,6 +274,25 @@ final class NotificationManager {
             return current.urgency == .critical ? "需要注意" : "新消息"
         }
         return unreadCount > 0 ? "\(unreadCount) 条未读" : ""
+    }
+
+    /// The one headline a compact surface says: island text verbatim, then the
+    /// live message's (or newest unread's) title, then the bare status. The
+    /// toast used to re-derive this precedence locally under a comment claiming
+    /// it matched the pill — one accessor beats copies that drift.
+    var compactHeadline: String {
+        if let text = current?.island?.text { return text }
+        if let title = (current ?? latestUnread)?.title { return title }
+        return compactStatus
+    }
+
+    /// Whether the panel shows the message center (the full list) instead of
+    /// the live message's card: anything that opened the panel for another
+    /// reason than a notification push, or an open with nothing live behind
+    /// it. One definition — the panel body, the panel header, and the island
+    /// binding all used to spell this out themselves.
+    var showsFullList: Bool {
+        displayState.openReason != .notification || current == nil
     }
 
     func isRead(_ notification: NotchNotification) -> Bool {
@@ -474,6 +494,7 @@ final class NotificationManager {
         presentation = nil
         displayState = .closed
         reduce(.cleared)
+        notifyCompactStatusChanged()
         historyStore?.delete()
         Task { await presenter?.reapply(on: self) }
     }
@@ -534,5 +555,15 @@ final class NotificationManager {
 
     private func cancelTimers() {
         delayed.cancelAll()
+    }
+
+    // MARK: - Status change fan-out
+
+    /// Announces that the compact status line may have moved. Called by the
+    /// state writers whose writes `compactStatus` reads — the mutation posts,
+    /// views never do. Over-posting is harmless: observers only re-run window
+    /// layout, and an unchanged status yields the same frame.
+    func notifyCompactStatusChanged() {
+        NotificationCenter.default.post(name: Self.compactStatusDidChange, object: nil)
     }
 }

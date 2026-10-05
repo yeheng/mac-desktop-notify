@@ -34,7 +34,7 @@ struct IslandBindings: Equatable, Sendable {
         settings: AppSettings
     ) {
         let current = manager.current
-        let showsFullList = manager.displayState.openReason != .notification || current == nil
+        let showsFullList = manager.showsFullList
         status = manager.compactStatus
         islandText = current?.island?.text
         panelTitle = showsFullList ? "通知中心" : "当前通知"
@@ -108,7 +108,9 @@ struct IslandBindings: Equatable, Sendable {
     func color(_ source: IslandColorSource, tokens: ResolvedIslandTokens, scheme: ColorScheme) -> Color? {
         switch source {
         case .literal(let color): color.color
-        case .adaptive(let light, let dark): (scheme == .dark ? dark : light).color
+        // The light/dark rule lives once, in `IslandColorSpec.resolve` — the
+        // adaptive case used to re-derive it here.
+        case .adaptive(let light, let dark): IslandColorSpec.adaptive(light: light, dark: dark).resolve(scheme)
         case .token(let key): tokens.color(for: key)
         case .binding(.urgency): showUrgency ? tokens.urgencyColor(urgency) : .secondary
         case .binding: nil

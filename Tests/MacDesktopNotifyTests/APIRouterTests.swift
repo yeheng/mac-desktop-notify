@@ -191,6 +191,18 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertEqual(r3.status, 405)
     }
 
+    /// The WS door must carry the same fields the HTTP door does. It once
+    /// shipped without `clickUrl` — the pipeline was written twice, and only
+    /// one copy learned the field.
+    func testWSCommandPushCarriesClickURL() async {
+        let response = await router.handleWSCommand(json([
+            "op": "push", "ref": "r1", "title": "ws-click",
+            "clickUrl": "https://ci.example.com/42",
+        ]))
+        XCTAssertEqual(decoded(response)["ok"] as? Bool, true)
+        XCTAssertEqual(manager.current?.clickURL?.host, "ci.example.com")
+    }
+
     func testWSCommandPushAndClear() async {
         let response = await router.handleWSCommand(json(["op": "push", "ref": "r1", "title": "ws-push"]))
         let payload = decoded(response)

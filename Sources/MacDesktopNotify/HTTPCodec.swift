@@ -51,7 +51,11 @@ enum HTTPCodec {
             let queryString = String(target[target.index(after: qIndex)...])
             for pair in queryString.split(separator: "&") {
                 let kv = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-                guard let key = String(kv[0]).removingPercentEncoding else { continue }
+                // One decode policy for keys and values alike: a failed
+                // percent-decode falls back to the raw text. Keys used to be
+                // dropped while values fell back — two answers to the same
+                // question in four lines.
+                let key = String(kv[0]).removingPercentEncoding ?? String(kv[0])
                 let value = kv.count > 1 ? String(kv[1]) : ""
                 query[key] = value.removingPercentEncoding ?? value
             }

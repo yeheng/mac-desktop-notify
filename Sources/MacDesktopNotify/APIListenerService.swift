@@ -132,9 +132,7 @@ final class APIListenerService {
         // A nil server means NWListener rejected the parameters outright,
         // before any port was touched — report and stay off like every other
         // listener failure, instead of the old `try!` crash at construction.
-        guard let server = HTTPServer(parameters: HTTPServerTransport.localhostTCP(port: port), router: { request in
-            await router.handle(request)
-        }) else {
+        guard let server = HTTPServer(parameters: HTTPServerTransport.localhostTCP(port: port), router: router.handle) else {
             isHttpListening = false
             httpError = "无法创建 HTTP 监听器"
             return
@@ -219,9 +217,7 @@ final class APIListenerService {
             // instead of reporting only "unix socket 无法监听".
             Diagnostics.degrade("socket 目录创建失败", error)
         }
-        guard let server = HTTPServer(parameters: HTTPServerTransport.unixSocket(path: socketPath), router: { request in
-            await router.handle(request)
-        }) else {
+        guard let server = HTTPServer(parameters: HTTPServerTransport.unixSocket(path: socketPath), router: router.handle) else {
             isSocketListening = false
             socketError = "无法创建 Unix socket 监听器"
             return

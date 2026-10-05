@@ -14,14 +14,6 @@ enum AwaySource: Hashable, Sendable {
     case screenLocked
     case screensaver
     case systemSleep
-
-    var title: String {
-        switch self {
-        case .screenLocked: "屏幕已锁定"
-        case .screensaver: "屏幕保护程序运行中"
-        case .systemSleep: "系统睡眠中"
-        }
-    }
 }
 
 /// Watches the machine for signals that the user has stepped away.
@@ -118,35 +110,25 @@ final class PresenceMonitor {
         return session["CGSSessionScreenIsLocked"] as? Bool ?? false
     }
 
-    // Both helpers register with `queue: .main` and bridge into the actor with
-    // `MainActor.assumeIsolated`: delivery already lands on the main thread, so
-    // the handler runs inline instead of one Task hop later. The queue and the
-    // assertion are a contract — if the registration ever drops to `queue: nil`
-    // (synchronous delivery on the posting thread), the trap is the loud
-    // failure you want.
+    // Both helpers register through `addObserverOnMain`: delivery lands on the
+    // main thread and the handler runs inline instead of one Task hop later.
     private func observeDistributed(_ name: String, _ source: AwaySource, active: Bool) {
-        let token = distributed.addObserver(
-            forName: NSNotification.Name(name),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.setActive(active, for: source) }
+        let token = addObserverOnMain(distributed, forName: NSNotification.Name(name)) { [weak self] in
+            self?.setActive(active, for: source)
         }
         distributedObservers.append(token)
     }
 
     private func observeWorkspace(_ name: NSNotification.Name, _ source: AwaySource, active: Bool) {
-        let token = workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+        let token = addObserverOnMain(workspace, forName: name) { [weak self] in
             // Wake needs a re-read: the machine may resume into a locked session,
             // and nothing else will tell us.
             if name == NSWorkspace.didWakeNotification {
-                MainActor.assumeIsolated {
-                    self?.setActive(active, for: source)
-                    self?.refreshFromSystem()
-                }
+                self?.setActive(active, for: source)
+                self?.refreshFromSystem()
                 return
             }
-            MainActor.assumeIsolated { self?.setActive(active, for: source) }
+            self?.setActive(active, for: source)
         }
         workspaceObservers.append(token)
     }

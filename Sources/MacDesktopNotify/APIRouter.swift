@@ -56,6 +56,68 @@ final class APIRouter: Sendable {
         }
     }
 
+    // MARK: - Shared core: one pipeline per operation, both doors map into it
+
+    /// The sender-controlled fields of a push, after wire decode. HTTP's body
+    /// and the WS command frame both map into this shape, so validation and
+    /// delivery run exactly once — the WS door once shipped without `clickUrl`
+    /// because the pipeline was written twice.
+    private struct PushPayload {
+        let title: String?
+        let body: String?
+        let urgency: String?
+        let timeout: Double?
+        let group: String?
+        let actions: [PushValidator.ActionDTO]?
+        let blocks: [PushValidator.BlockDTO]?
+        let island: PushValidator.IslandDTO?
+        let script: String?
+        let clickUrl: String?
+    }
+
+    private enum PushResult {
+        case delivered(outcome: PushOutcome, id: UUID)
+        case rejected(PushRejection)
+    }
+
+    /// The one push pipeline. Blocks win over body when non-empty (the sender
+    /// chose structure explicitly); the funnel owns the script backfill, so
+    /// this door cannot forget it.
+    private func performPush(_ payload: PushPayload) async -> PushResult {
+        let actions = PushValidator.actions(from: payload.actions ?? [])
+        let bodyText = PushValidator.body(fromBlocks: payload.blocks) ?? payload.body
+        switch PushValidator.makeNotification(
+            title: payload.title ?? "", body: bodyText, urgencyRaw: payload.urgency,
+            timeout: payload.timeout, group: payload.group, actions: actions,
+            script: payload.script, island: PushValidator.normalizedIsland(payload.island),
+            clickUrl: payload.clickUrl
+        ) {
+        case .success(let notification):
+            // Only jump to MainActor when calling manager.
+            let outcome = await MainActor.run { NotificationIngress.deliver(notification, to: manager) }
+            return .delivered(outcome: outcome, id: notification.id)
+        case .failure(let rejection):
+            return .rejected(rejection)
+        }
+    }
+
+    /// The one clear pipeline: a group the validator normalizes clears just
+    /// that group, anything else clears everything. HTTP's absent-body and the
+    /// WS frame's absent-group are the same "clear all" answer.
+    private func performClear(group: String?) async {
+        if let group = PushValidator.normalizedGroup(group) {
+            await MainActor.run { manager.clear(group: group) }
+        } else {
+            await MainActor.run { manager.clear() }
+        }
+    }
+
+    /// The one exec pipeline. The clamp lives here so both doors time out alike.
+    private func performExec(_ script: String, input: ScriptValue?, timeoutMs: Int?) async -> ScriptOutcome {
+        let ms = min(max(timeoutMs ?? 10_000, 100), 10_000)
+        return await exec(script, input ?? .object([:]), .milliseconds(ms))
+    }
+
     // MARK: - Endpoints
 
     private struct PushDTO: Decodable {
@@ -86,22 +148,15 @@ final class APIRouter: Sendable {
               let dto = try? JSONDecoder().decode(PushDTO.self, from: body) else {
             return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
         }
-        let actions = PushValidator.actions(from: dto.actions ?? [])
-        // blocks wins when non-empty: the sender chose structure explicitly.
-        let bodyText = PushValidator.body(fromBlocks: dto.blocks) ?? dto.body
-        switch PushValidator.makeNotification(
-            title: dto.title ?? "", body: bodyText, urgencyRaw: dto.urgency,
-            timeout: dto.timeout, group: dto.group, actions: actions,
-            script: dto.script, island: PushValidator.normalizedIsland(dto.island),
-            clickUrl: dto.clickUrl
-        ) {
-        case .success(let notification):
-            // Only jump to MainActor when calling manager. The funnel owns the
-            // script backfill, so this door cannot forget it.
-            let outcome = await MainActor.run { NotificationIngress.deliver(notification, to: manager) }
-            return .ok(PushResponse(outcome: outcome.label, id: notification.id.uuidString))
-        case .failure(let rejection):
-            return .error(status: 400, reason: rejection.description, field: "title")
+        let payload = PushPayload(
+            title: dto.title, body: dto.body, urgency: dto.urgency, timeout: dto.timeout,
+            group: dto.group, actions: dto.actions, blocks: dto.blocks, island: dto.island,
+            script: dto.script, clickUrl: dto.clickUrl)
+        switch await performPush(payload) {
+        case .delivered(let outcome, let id):
+            return .ok(PushResponse(outcome: outcome.label, id: id.uuidString))
+        case .rejected(let rejection):
+            return .error(status: 400, reason: rejection.description, field: rejection.field)
         }
     }
 
@@ -125,8 +180,7 @@ final class APIRouter: Sendable {
               let dto = try? JSONDecoder().decode(ExecDTO.self, from: body) else {
             return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
         }
-        let ms = min(max(dto.timeoutMs ?? 10_000, 100), 10_000)
-        let outcome = await exec(dto.script, dto.input ?? .object([:]), .milliseconds(ms))
+        let outcome = await performExec(dto.script, input: dto.input, timeoutMs: dto.timeoutMs)
         if let error = outcome.error {
             return .ok(ExecResponse(ok: false, result: nil, error: error, logs: outcome.logs))
         }
@@ -141,17 +195,13 @@ final class APIRouter: Sendable {
         // must parse: garbage or a type mismatch is a 400, never a silent
         // clear-all (spec §8 — same error shape as the push path).
         guard let body = request.body, !body.isEmpty else {
-            await MainActor.run { manager.clear() }
+            await performClear(group: nil)
             return .ok(ClearResponse(ok: true))
         }
         guard let dto = try? JSONDecoder().decode(ClearDTO.self, from: body) else {
             return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
         }
-        if let group = PushValidator.normalizedGroup(dto.group) {
-            await MainActor.run { manager.clear(group: group) }
-        } else {
-            await MainActor.run { manager.clear() }
-        }
+        await performClear(group: dto.group)
         return .ok(ClearResponse(ok: true))
     }
 
@@ -221,6 +271,7 @@ final class APIRouter: Sendable {
         let blocks: [PushValidator.BlockDTO]?
         let island: PushValidator.IslandDTO?
         let script: String?
+        let clickUrl: String?
         let input: ScriptValue?
         let timeoutMs: Int?
     }
@@ -257,45 +308,34 @@ final class APIRouter: Sendable {
         }
         switch dto.op {
         case "push":
-            // The frame DTO already carries the whole push payload, so this
-            // is the same validation the HTTP endpoint runs — one decode,
-            // where the old path decoded (WSCommandDTO), re-parsed
-            // (JSONSerialization), re-encoded, and decoded again (PushDTO):
-            let actions = PushValidator.actions(from: dto.actions ?? [])
-            // blocks wins when non-empty: the sender chose structure explicitly.
-            let bodyText = PushValidator.body(fromBlocks: dto.blocks) ?? dto.body
-            switch PushValidator.makeNotification(
-                title: dto.title ?? "", body: bodyText, urgencyRaw: dto.urgency,
-                timeout: dto.timeout, group: dto.group, actions: actions,
-                script: dto.script, island: PushValidator.normalizedIsland(dto.island)
-            ) {
-            case .success(let notification):
-                let outcome = await MainActor.run { NotificationIngress.deliver(notification, to: manager) }
+            // The frame maps into the same payload the HTTP door builds, so
+            // both doors run one validation pipeline (see PushPayload).
+            let payload = PushPayload(
+                title: dto.title, body: dto.body, urgency: dto.urgency, timeout: dto.timeout,
+                group: dto.group, actions: dto.actions, blocks: dto.blocks, island: dto.island,
+                script: dto.script, clickUrl: dto.clickUrl)
+            switch await performPush(payload) {
+            case .delivered(let outcome, let id):
                 return encodeFrame(WSResultFrame(
                     ref: dto.ref,
                     ok: true,
                     outcome: outcome.label,
-                    id: notification.id.uuidString
+                    id: id.uuidString
                 ), ref: dto.ref)
-            case .failure(let rejection):
+            case .rejected(let rejection):
                 return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: rejection.description))
             }
         case "clear":
-            // Absent or unnormalizable group means "clear everything" — the
-            // same rule the HTTP endpoint applies to its body. A group of the
-            // wrong type fails the frame decode above, never a silent clear.
-            if let group = PushValidator.normalizedGroup(dto.group) {
-                await MainActor.run { manager.clear(group: group) }
-            } else {
-                await MainActor.run { manager.clear() }
-            }
+            // One clear pipeline with the HTTP door: an unnormalizable group
+            // means "clear everything"; a wrong-typed group failed the frame
+            // decode above, never a silent clear.
+            await performClear(group: dto.group)
             return encodeFrame(WSResultFrame(ref: dto.ref, ok: true))
         case "exec":
             guard let name = dto.script else {
                 return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: "缺少 script"))
             }
-            let ms = min(max(dto.timeoutMs ?? 10_000, 100), 10_000)
-            let outcome = await exec(name, dto.input ?? .object([:]), .milliseconds(ms))
+            let outcome = await performExec(name, input: dto.input, timeoutMs: dto.timeoutMs)
             if let error = outcome.error {
                 return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: error, logs: outcome.logs))
             }

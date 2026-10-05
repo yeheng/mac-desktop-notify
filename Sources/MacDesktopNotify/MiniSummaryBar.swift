@@ -81,13 +81,6 @@ private struct MiniSummaryView: View {
         // needs no handling here: the bar sits inside the activation zone the
         // pointer monitor already watches, so hover-expand works unchanged.
         .onTapGesture { manager.summaryClicked() }
-        // Island text changes arrive with a group replacement, which can leave
-        // the unread count untouched - and the window frame only re-derives on
-        // unreadCountDidChange. Announce the text change so the bar relayouts
-        // instead of clipping the new status line.
-        .onChange(of: manager.compactStatus) { _, _ in
-            NotificationCenter.default.post(name: NotificationManager.compactStatusDidChange, object: nil)
-        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("通知：\(summary)")
         .modifier(IslandContextMenu(expanded: false))
@@ -154,22 +147,15 @@ final class MiniSummaryBars {
         // The window frame is derived from the SwiftUI content's fitting size,
         // so anything that changes the content — an unread badge appearing,
         // the count growing, the island status text changing — has to re-run
-        // layout. Nothing else does: unread changes trigger no presentation
-        // transition, so without this observer the bar keeps its old width
-        // and clips the badge.
-        unreadObserver = NotificationCenter.default.addObserver(
-            forName: NotificationManager.unreadCountDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.relayoutVisible() }
+        // layout. The manager posts both: unread changes trigger no
+        // presentation transition, and a backfill can rewrite the island text
+        // with no unread change alongside — without these the bar keeps its
+        // old width and clips.
+        unreadObserver = addObserverOnMain(forName: NotificationManager.unreadCountDidChange) { [weak self] in
+            self?.relayoutVisible()
         }
-        statusObserver = NotificationCenter.default.addObserver(
-            forName: NotificationManager.compactStatusDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.relayoutVisible() }
+        statusObserver = addObserverOnMain(forName: NotificationManager.compactStatusDidChange) { [weak self] in
+            self?.relayoutVisible()
         }
     }
 

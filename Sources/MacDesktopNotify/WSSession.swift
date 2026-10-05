@@ -22,6 +22,12 @@ final class WSSession {
     private var messageData = Data()
     /// Opcode of the fragmented message in progress; nil when none is open.
     private var fragmentOpcode: UInt8?
+    /// Complete commands awaiting the router, dispatched strictly in arrival
+    /// order. One command runs at a time: a client that sends push then clear
+    /// must observe that order, and a `Task` per message resumed after an
+    /// `await` gives no such guarantee — the clear could land before the push.
+    private var pendingCommands: [Data] = []
+    private var dispatchingCommand = false
 
     /// Whether the session is already torn down. The hub consults it in
     /// `register`, so a handshake it rejected is never added to the fan-out.
@@ -97,7 +103,14 @@ final class WSSession {
             case 0xA:        // a pong we never asked for: nothing to do
                 break
             case 0x8:        // close → echo the client's code, then done
-                close(with: frame.payload)
+                // RFC 6455 §5.5.1: a close payload is empty or a status code.
+                // One byte is a protocol error — echoing it back would answer
+                // a violation with the same violation.
+                if frame.payload.count == 1 {
+                    close(code: 1002)
+                } else {
+                    close(with: frame.payload)
+                }
                 return
             default:         // 0x3–0x7 and 0xB–0xF are reserved by RFC 6455
                 close(code: 1002)
@@ -140,11 +153,27 @@ final class WSSession {
         let payload = messageData
         messageData = Data()
         fragmentOpcode = nil
-        Task { @MainActor [router] in
-            let responseData = await router.handleWSCommand(payload)
-            send(data: WSCodec.encode(opcode: 0x1, payload: responseData))
-        }
+        dispatch(payload)
         return true
+    }
+
+    /// Queues one finished command and starts the dispatcher if idle.
+    private func dispatch(_ payload: Data) {
+        pendingCommands.append(payload)
+        dispatchNextCommand()
+    }
+
+    private func dispatchNextCommand() {
+        guard !dispatchingCommand, let payload = pendingCommands.first else { return }
+        pendingCommands.removeFirst()
+        dispatchingCommand = true
+        let router = self.router
+        Task { @MainActor [weak self] in
+            let responseData = await router.handleWSCommand(payload)
+            self?.send(data: WSCodec.encode(opcode: 0x1, payload: responseData))
+            self?.dispatchingCommand = false
+            self?.dispatchNextCommand()
+        }
     }
 
     /// Sends one JSON object as a text frame. Safe to call from the hub.
@@ -159,6 +188,13 @@ final class WSSession {
 
     func send(text: String) {
         send(data: WSCodec.encode(opcode: 0x1, payload: Data(text.utf8)))
+    }
+
+    /// Sends an already-serialized JSON payload as one text frame. Internal
+    /// because the hub serializes an event once and fans the same bytes out to
+    /// every session (see `broadcast`); framing stays this session's job.
+    func send(jsonData: Data) {
+        send(data: WSCodec.encode(opcode: 0x1, payload: jsonData))
     }
 
     private func send(data: Data) {

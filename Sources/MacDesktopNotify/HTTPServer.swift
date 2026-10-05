@@ -116,9 +116,10 @@ final class HTTPServer: @unchecked Sendable {
 ///
 /// `Sendable` by confinement: the handler's mutable state (`buffer`, `head`)
 /// is only ever touched from the server's serial `queue`. Two exceptions run
-/// elsewhere and touch only thread-safe `NWConnection` APIs: `sendAndClose`
-/// executes on the main actor, and an accepted upgrade hops to the main actor
-/// to let the hook hand the connection over.
+/// elsewhere and touch only thread-safe `NWConnection` APIs: the response
+/// task's `sendAndClose` runs on the global executor (never touching handler
+/// state), and an accepted upgrade hops to the main actor to let the hook
+/// hand the connection over.
 ///
 /// Lifetime: nothing outside the connection retains a handler, so the
 /// receive loop captures `self` strongly — the handler lives as long as its
@@ -139,13 +140,34 @@ private final class ConnectionHandler: @unchecked Sendable {
         self.router = router
     }
 
+    /// How long a connection may sit between partial reads before the server
+    /// gives up on it. Loopback clients are well-behaved, but a stalled or
+    /// hostile writer otherwise holds its fd and handler forever — the 8K/32K
+    /// caps bound memory, not time.
+    static let readTimeout: TimeInterval = 30
+
     func start() {
         connection.stateUpdateHandler = { [weak self] state in
             if case .failed = state { self?.connection.cancel() }
         }
         connection.start(queue: queue)
+        armReadDeadline()
         receive()
     }
+
+    /// One timer per exchange, re-armed on every successful read. A complete
+    /// request routes to its answer on another task, so from there the
+    /// connection's fate no longer depends on the deadline.
+    private func armReadDeadline() {
+        deadline?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.connection.cancel()
+        }
+        deadline = work
+        queue.asyncAfter(deadline: .now() + Self.readTimeout, execute: work)
+    }
+
+    private var deadline: DispatchWorkItem?
 
     private func receive() {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [self] data, _, isComplete, error in
@@ -154,6 +176,8 @@ private final class ConnectionHandler: @unchecked Sendable {
                 self.connection.cancel()
                 return
             }
+            // Progress re-arms the window; a stalled writer eats the deadline.
+            if let data, !data.isEmpty { armReadDeadline() }
             self.pump()
             // A well-formed client keeps the connection open until our
             // response closes it; isComplete on an idle connection means

@@ -4,22 +4,8 @@ import SwiftUI
 /// Owns the onboarding window lifecycle, separate from settings so the guide
 /// can appear once at launch without dragging the whole settings UI along.
 @MainActor
-final class OnboardingWindowController: NSObject, NSWindowDelegate {
-    private var window: NSWindow?
-    private var keyMonitor: Any?
-
-    var isActive: Bool { window != nil }
-
-    func show() {
-        if let window {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-
-        let hostingView = NSHostingView(rootView: OnboardingView { [weak self] in
-            self?.close()
-        })
+final class OnboardingWindowController: UtilityWindowController {
+    override func makeWindow() -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 420),
             styleMask: [.titled, .closable],
@@ -27,23 +13,9 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
             defer: false
         )
         window.title = "NotchNotify 引导"
-        window.contentView = hostingView
-        window.center()
-        window.delegate = self
-        window.isReleasedWhenClosed = false
-        self.window = window
-        keyMonitor = WindowShortcuts.install(for: window)
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    func close() {
-        window?.close()
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        WindowShortcuts.remove(keyMonitor)
-        keyMonitor = nil
-        window = nil
+        window.contentView = NSHostingView(rootView: OnboardingView { [weak self] in
+            self?.close()
+        })
+        return window
     }
 }

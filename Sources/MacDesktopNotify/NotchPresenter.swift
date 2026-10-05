@@ -5,61 +5,12 @@ import os
 
 /// The calibration overlay content: the detected notch frame plus the hover
 /// activation zone around it, both in screen coordinates.
-private struct CalibrationOverlayView: View {
-    let notchFrame: NSRect
-    let activationFrame: NSRect
-
-    var body: some View {
-        ZStack {
-            GeometryReader { proxy in
-                // Convert AppKit screen coordinates (origin bottom-left) to
-                // SwiftUI local coordinates (origin top-left of this view, which
-                // spans the whole screen).
-                let height = proxy.size.height
-                let notch = CGRect(
-                    x: notchFrame.minX,
-                    y: height - notchFrame.maxY,
-                    width: notchFrame.width,
-                    height: notchFrame.height
-                )
-                let activation = CGRect(
-                    x: activationFrame.minX,
-                    y: height - activationFrame.maxY,
-                    width: activationFrame.width,
-                    height: activationFrame.height
-                )
-
-                ZStack(alignment: .topLeading) {
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(Color.red, lineWidth: 1.5)
-                        .frame(width: notch.width, height: notch.height)
-                        .offset(x: notch.minX, y: notch.minY)
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(Color.yellow, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
-                        .frame(width: activation.width, height: activation.height)
-                        .offset(x: activation.minX, y: activation.minY)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("刘海区域")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.red)
-                        Text("悬停触发区")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.yellow)
-                    }
-                    .offset(x: activation.minX + 8, y: activation.minY + activation.height + 6)
-                }
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
 /// Identifies the one question the fullscreen probe answers.
 ///
 /// The window list can only change because the frontmost app changed or the
 /// screen changed, so that pair — not the clock alone — decides when the answer
 /// has to be recomputed.
-private struct FullscreenKey: Equatable {
+private struct FullscreenKey: Hashable {
     let pid: pid_t
     let screenID: CGDirectDisplayID
 }
@@ -90,7 +41,8 @@ final class NotchPresenter: NotchPresenting {
     /// Coalesced replay after a display-behavior setting flips: the panel
     /// size sliders fire a didSet per tick, and each island replay rebuilds
     /// kit windows — one per settle, not one per tick.
-    private var behaviorReplayTask: Task<Void, Never>?
+    /// Coalesced replay after a display-behavior setting flip.
+    private let behaviorReplay = Debouncer(delay: .milliseconds(250))
     /// Owns the calibration overlay windows when the debug toggle is on.
     /// Built in `init` — a property initializer cannot read `metrics`.
     private let calibrationOverlay: CalibrationOverlay
@@ -113,10 +65,12 @@ final class NotchPresenter: NotchPresenting {
     /// Guarded because global monitors do not promise to run on the main thread.
     private let lastSeenPointer = OSAllocatedUnfairLock<NSPoint?>(initialState: nil)
 
-    /// The cached fullscreen answer, together with the key it was computed for.
-    /// Nil means the answer must be recomputed.
-    private var fullscreenResult: (key: FullscreenKey, suppressed: Bool)?
-    private var fullscreenProbedAt: Date = .distantPast
+    /// Cached fullscreen answers, per key. A key with no entry has never been
+    /// probed — that is "no evidence of fullscreen", not somebody else's
+    /// answer. (The single-slot predecessor returned the previous key's
+    /// answer across a display or frontmost-app switch, and the pointer path
+    /// suppressed a normal display with it once.)
+    private var fullscreenResults: [FullscreenKey: (suppressed: Bool, probedAt: Date)] = [:]
     /// A probe in flight, keyed by what it is probing for. Callers that arrive
     /// while one is running await the same task instead of starting another.
     private var fullscreenProbe: (key: FullscreenKey, task: Task<(suppressed: Bool, changed: Bool), Never>)?
@@ -167,10 +121,9 @@ final class NotchPresenter: NotchPresenting {
             NotificationCenter.default.removeObserver(calibrationObserver)
             self.calibrationObserver = nil
         }
-        behaviorReplayTask?.cancel()
-        behaviorReplayTask = nil
+        behaviorReplay.cancel()
         fullscreenProbe = nil
-        fullscreenResult = nil
+        fullscreenResults.removeAll()
         activeScreenID = nil
         // The pill no longer measures anything: the metrics store is this
         // presenter's, and a later standUp must not be told the old widths.
@@ -264,8 +217,8 @@ final class NotchPresenter: NotchPresenting {
         guard AppSettings.shared.hideInFullscreen else { return false }
         guard let screen = targetScreen else { return false }
         let key = fullscreenKey(for: screen)
-        if let cached = fullscreenResult, cached.key == key,
-           Date().timeIntervalSince(fullscreenProbedAt) < Self.fullscreenStaleness {
+        if let cached = fullscreenResults[key],
+           Date().timeIntervalSince(cached.probedAt) < Self.fullscreenStaleness {
             return cached.suppressed
         }
         return await refreshFullscreen(for: key, screen: screen).suppressed
@@ -372,7 +325,7 @@ final class NotchPresenter: NotchPresenting {
     // extension — one derivation shared with ToastPresenter and the test
     // spy. Suppression is read from the manager's flag, not re-probed: a
     // screen reconfiguration can land while a fullscreen app still owns the
-    // display, and the cached answer in `fullscreenResult` is good enough
+    // display, and the cached answer in `fullscreenResults` is good enough
     // for that decision — it is invalidated by the same observers that fire
     // alongside these paths, and the awaited probe still guards actual
     // presentations.
@@ -408,15 +361,12 @@ final class NotchPresenter: NotchPresenting {
 
     /// Anything that can change the fullscreen answer without the pointer moving.
     ///
-    /// Every registration pairs `queue: .main` with `MainActor.assumeIsolated`
-    /// so handlers run inline on delivery — no Task hop. The queue and the
-    /// assertion are a contract: `queue: nil` would deliver on the posting
-    /// thread and trap. (The NSEvent monitors in `installMouseMonitors` are a
-    /// different beast — global taps fire off-main, and their Task bridges are
-    /// load-bearing; do not "simplify" them the same way.)
+    /// `addObserverOnMain` runs every handler inline on delivery — no Task hop.
+    /// (The NSEvent monitors in `installMouseMonitors` are a different beast —
+    /// global taps fire off-main, and their Task bridges are load-bearing; do
+    /// not "simplify" them the same way.)
     private func installInvalidationObservers() {
         let workspace = NSWorkspace.shared.notificationCenter
-        let appCenter = NotificationCenter.default
         let names: [Notification.Name] = [
             NSWorkspace.didActivateApplicationNotification,
             NSWorkspace.activeSpaceDidChangeNotification,
@@ -424,63 +374,33 @@ final class NotchPresenter: NotchPresenting {
             NSWorkspace.didTerminateApplicationNotification
         ]
         for name in names {
-            invalidationObservers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.fullscreenResult = nil }
+            invalidationObservers.append(addObserverOnMain(workspace, forName: name) { [weak self] in
+                self?.fullscreenResults.removeAll()
             })
         }
-        invalidationObservers.append(appCenter.addObserver(
-            forName: AppSettings.screenRecordingDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.applySharingType() }
+        invalidationObservers.append(addObserverOnMain(forName: AppSettings.screenRecordingDidChange) { [weak self] in
+            self?.applySharingType()
         })
-        invalidationObservers.append(appCenter.addObserver(
-            forName: AppSettings.notchGeometryDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.syncCalibrationOverlay() }
+        invalidationObservers.append(addObserverOnMain(forName: AppSettings.notchGeometryDidChange) { [weak self] in
+            self?.syncCalibrationOverlay()
         })
-        invalidationObservers.append(appCenter.addObserver(
-            forName: AppSettings.summaryRoutingDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                Task { await self.reapply(on: NotificationManager.shared) }
+        invalidationObservers.append(addObserverOnMain(forName: AppSettings.summaryRoutingDidChange) { [weak self] in
+            guard let self else { return }
+            Task { await self.reapply(on: NotificationManager.shared) }
+        })
+        invalidationObservers.append(addObserverOnMain(forName: AppSettings.displayBehaviorDidChange) { [weak self] in
+            self?.behaviorReplay.arm { [weak self] in
+                await self?.displayBehaviorChanged(on: NotificationManager.shared)
             }
         })
-        invalidationObservers.append(appCenter.addObserver(
-            forName: AppSettings.displayBehaviorDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.behaviorReplayTask?.cancel()
-                self.behaviorReplayTask = Task {
-                    try? await Task.sleep(for: .milliseconds(250))
-                    guard !Task.isCancelled else { return }
-                    await self.displayBehaviorChanged(on: NotificationManager.shared)
-                }
-            }
-        })
-        invalidationObservers.append(appCenter.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.fullscreenResult = nil
-                // A display was added, removed, or resized. Instances follow the
-                // new set, and whatever was showing has to be placed again.
-                self.syncScreens()
-                Task { await self.reapply(on: NotificationManager.shared) }
-                self.syncCalibrationOverlay()
-            }
+        invalidationObservers.append(addObserverOnMain(forName: NSApplication.didChangeScreenParametersNotification) { [weak self] in
+            guard let self else { return }
+            self.fullscreenResults.removeAll()
+            // A display was added, removed, or resized. Instances follow the
+            // new set, and whatever was showing has to be placed again.
+            self.syncScreens()
+            Task { await self.reapply(on: NotificationManager.shared) }
+            self.syncCalibrationOverlay()
         })
     }
 
@@ -533,8 +453,8 @@ final class NotchPresenter: NotchPresenting {
         guard AppSettings.shared.hideInFullscreen else { return false }
 
         let key = fullscreenKey(for: screen)
-        if let cached = fullscreenResult, cached.key == key {
-            let fresh = Date().timeIntervalSince(fullscreenProbedAt) < Self.fullscreenStaleness
+        if let cached = fullscreenResults[key] {
+            let fresh = Date().timeIntervalSince(cached.probedAt) < Self.fullscreenStaleness
             // With nothing on screen there is nothing to suppress, so an ageing
             // answer is left alone rather than paid for on every pointer move.
             if !fresh, NotificationManager.shared.hasContent {
@@ -544,9 +464,9 @@ final class NotchPresenter: NotchPresenting {
         }
 
         scheduleFullscreenRefresh(for: key, screen: screen)
-        // No answer for this key yet: return the last snapshot rather than
-        // guessing, and let the refresh correct it.
-        return fullscreenResult?.suppressed ?? false
+        // No answer for this key yet: "no evidence of fullscreen" is the only
+        // honest default. The refresh corrects it the moment it lands.
+        return false
     }
 
     private func fullscreenKey(for screen: NSScreen) -> FullscreenKey {
@@ -588,9 +508,8 @@ final class NotchPresenter: NotchPresenting {
             let suppressed = await Task.detached(priority: .utility) {
                 Self.probeFullscreen(pid: pid, screenFrame: frame)
             }.value
-            let changed = fullscreenResult?.key != key || fullscreenResult?.suppressed != suppressed
-            fullscreenResult = (key, suppressed)
-            fullscreenProbedAt = Date()
+            let changed = fullscreenResults[key]?.suppressed != suppressed
+            fullscreenResults[key] = (suppressed, Date())
             return (suppressed, changed)
         }
         fullscreenProbe = (key, task)
@@ -599,84 +518,12 @@ final class NotchPresenter: NotchPresenting {
         return result
     }
 
-    // MARK: - Notch calibration overlay
-
-    /// Draws the detected notch frame and hover activation zone on every screen,
-    /// so a user (or a new macOS release) can verify the geometry the island is
-    /// actually using. Off by default; toggled in Settings → 外观 → 高级.
-    @MainActor
-    private final class CalibrationOverlay {
-        /// One window per display, plus the hosting view that draws it: the
-        /// geometry is baked into `CalibrationOverlayView` at construction, so
-        /// re-rendering means replacing `rootView` and re-framing means the
-        /// screen rect. Both happen on every update — otherwise a resolution
-        /// change or a slider drag leaves the frame it was born with on screen,
-        /// which is the one thing this overlay exists to disprove.
-        private var windows: [CGDirectDisplayID: NSWindow] = [:]
-        private var hosts: [CGDirectDisplayID: NSHostingView<CalibrationOverlayView>] = [:]
-        private let metrics: CompactIslandMetrics
-
-        init(metrics: CompactIslandMetrics) {
-            self.metrics = metrics
-        }
-
-        func update(screens: [NSScreen]) {
-            let current = Set(screens.map(\.displayID))
-            for id in windows.keys where !current.contains(id) {
-                windows.removeValue(forKey: id)?.orderOut(nil)
-                hosts.removeValue(forKey: id)
-            }
-            for screen in screens {
-                let notch = IslandGeometry.notchFrame(for: screen)
-                let activation = IslandGeometry.compactActivationFrame(
-                    notchFrame: notch,
-                    leadingContentWidth: metrics.leadingWidth,
-                    trailingContentWidth: metrics.trailingWidth
-                )
-                let overlay = CalibrationOverlayView(notchFrame: notch, activationFrame: activation)
-
-                if let host = hosts[screen.displayID], let window = windows[screen.displayID] {
-                    host.rootView = overlay
-                    window.setFrame(screen.frame, display: true)
-                    continue
-                }
-
-                let window = NSWindow(
-                    contentRect: screen.frame,
-                    styleMask: [.borderless],
-                    backing: .buffered,
-                    defer: false
-                )
-                let host = NSHostingView(rootView: overlay)
-                window.contentView = host
-                window.isOpaque = false
-                window.backgroundColor = .clear
-                window.level = .screenSaver
-                window.ignoresMouseEvents = true
-                window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-                window.setFrame(screen.frame, display: true)
-                window.orderFrontRegardless()
-                windows[screen.displayID] = window
-                hosts[screen.displayID] = host
-            }
-        }
-
-        func removeAll() {
-            for window in windows.values { window.orderOut(nil) }
-            windows.removeAll()
-            hosts.removeAll()
-        }
-    }
 
     /// Observes the calibration toggle: overlay follows the setting, not the
     /// other way around, so a crashed overlay never leaves itself on screen.
     private func installCalibrationObserver() {
-        calibrationObserver = NotificationCenter.default.addObserver(
-            forName: AppSettings.calibrationDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.syncCalibrationOverlay() }
+        calibrationObserver = addObserverOnMain(forName: AppSettings.calibrationDidChange) { [weak self] in
+            self?.syncCalibrationOverlay()
         }
     }
 
@@ -692,8 +539,8 @@ final class NotchPresenter: NotchPresenting {
 
     /// The one place `CGWindowListCopyWindowInfo` is called. `nonisolated` and
     /// static on purpose: the call is a synchronous IPC round-trip with
-    /// WindowServer and can block for tens of milliseconds, so it must never run
-    /// on the main actor. Internal so `ToastPresenter` shares the single
+    /// WindowServer and can block for tens of milliseconds, so it must never
+    /// run on the main actor. Internal so `ToastPresenter` shares the single
     /// implementation instead of growing a second window-list walk.
     nonisolated static func probeFullscreen(pid: pid_t, screenFrame: CGRect) -> Bool {
         guard let windows = CGWindowListCopyWindowInfo(
@@ -705,8 +552,9 @@ final class NotchPresenter: NotchPresenting {
         return hasFullscreenWindow(windows, pid: pid, screenFrame: screenFrame)
     }
 
-    /// The rule itself, split out from the IPC call: a window of `pid` at layer
-    /// 0 that covers the screen. Pure, so it is testable without a window server.
+    /// The rule itself, split out from the IPC call: a window of `pid` at
+    /// layer 0 that covers the screen. Pure, so it is testable without a
+    /// window server.
     nonisolated static func hasFullscreenWindow(
         _ windows: [[String: Any]],
         pid: pid_t,

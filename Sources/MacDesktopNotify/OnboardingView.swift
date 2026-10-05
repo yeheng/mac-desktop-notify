@@ -12,17 +12,11 @@ struct OnboardingView: View {
     @State private var testFeedback: String?
 
     /// The levels come from `AttentionPreset` (AppSettings.swift): onboarding
-    /// and Settings -> 通知 offer the same three choices, writing the same
-    /// underlying settings, so neither can drift from the other.
-    typealias Preset = AttentionPreset
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("欢迎使用 NotchNotify")
                     .font(.system(size: 20, weight: .bold, design: .rounded))
-                Spacer()
-
             }
             .padding(.bottom, 4)
 
@@ -69,7 +63,7 @@ struct OnboardingView: View {
         }
     }
 
-    private func finish(preset: Preset?) {
+    private func finish(preset: AttentionPreset?) {
         preset?.apply(to: settings)
         settings.onboardingCompleted = true
         onDismiss()
@@ -106,7 +100,7 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(.borderless)
             }
-            Text("通知出现在屏幕顶部。点击摘要栏打开消息中心；在设置允许时，鼠标靠近也可展开。拖动卡片顶部上滑可收起当前消息，消息仍保留在历史中。")
+            Text("通知出现在屏幕顶部。点击摘要栏打开消息中心；在设置允许时，鼠标靠近也可展开。点击面板上的收起按钮或按 Esc 可收起当前消息，消息仍保留在历史中。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -126,12 +120,12 @@ struct OnboardingView: View {
 
     // MARK: - Step 3: pick a level
 
-    @State private var selectedPreset: Preset = .balanced
+    @State private var selectedPreset: AttentionPreset = .balanced
 
     private var presetStep: some View {
         VStack(alignment: .leading, spacing: 12) {
             stepHeader("第 3 步 · 选一个档位", "随时可以在设置里改。")
-            ForEach(Preset.allCases, id: \.rawValue) { preset in
+            ForEach(AttentionPreset.allCases, id: \.rawValue) { preset in
                 Button {
                     selectedPreset = preset
                 } label: {
@@ -165,45 +159,3 @@ struct OnboardingView: View {
     }
 }
 
-/// A copyable code line. The copy button exists because a snippet you cannot
-/// copy in one click is a picture of code, not code.
-struct CodeSnippetView: View {
-    let code: String
-    var subtitle: String? = nil
-    @State private var copied = false
-
-    var body: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Text(code)
-                    .font(.system(size: 12, design: .monospaced))
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-            }
-            Spacer(minLength: 8)
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(code, forType: .string)
-                copied = true
-                Task {
-                    try? await Task.sleep(for: .seconds(1.2))
-                    copied = false
-                }
-            } label: {
-                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .buttonStyle(.borderless)
-            .help(copied ? "已复制" : "复制")
-            .accessibilityLabel(copied ? "已复制" : "复制代码")
-        }
-        .padding(10)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}

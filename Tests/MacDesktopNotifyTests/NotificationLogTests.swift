@@ -500,4 +500,18 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.current?.title, "a")
         XCTAssertEqual(m.history.count, 1)
     }
+
+    /// The live card and its history entry are one message: the transform must
+    /// run once, not once per copy. A non-idempotent transform is the contract
+    /// this guards — the double-apply predecessor silently doubled it.
+    func testUpdateAppliesTransformExactlyOnceToLiveCard() {
+        let m = NotificationManager()
+        m.push(make("a"))
+        let id = m.current!.id
+
+        m.update(id: id) { $0.occurrences += 1 }
+
+        XCTAssertEqual(m.current?.occurrences, 2)
+        XCTAssertEqual(m.history.first(where: { $0.id == id })?.occurrences, 2)
+    }
 }

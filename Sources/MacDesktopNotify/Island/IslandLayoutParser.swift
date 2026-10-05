@@ -152,7 +152,7 @@ private struct Walker {
             return IslandNode(kind: .zstack(alignment: axis), modifiers: modifiers, children: kids)
 
         case "text":
-            guard let value = text(dict["value"], path: "\(path).value") else {
+            guard let value = stringValue(dict["value"], path: "\(path).value") else {
                 report(path, "text 缺少可用的 value")
                 return nil
             }
@@ -168,7 +168,7 @@ private struct Walker {
             ), modifiers: modifiers, children: [])
 
         case "image":
-            guard let system = icon(dict["system"], path: "\(path).system") else {
+            guard let system = stringValue(dict["system"], path: "\(path).system") else {
                 report(path, "image 缺少可用的 system")
                 return nil
             }
@@ -269,6 +269,13 @@ private struct Walker {
         return frame.isEmpty ? nil : frame
     }
 
+
+    /// The parser's arithmetic is CGFloat; the limits live as the Double values
+    /// the theme clamps use. Derived view, not a second source.
+    private func cgRange(_ range: ClosedRange<Double>) -> ClosedRange<CGFloat> {
+        CGFloat(range.lowerBound)...CGFloat(range.upperBound)
+    }
+
     private mutating func padding(_ raw: Any?, path: String) -> IslandPadding? {
         guard let raw else { return nil }
         guard let dict = raw as? [String: Any] else {
@@ -276,12 +283,12 @@ private struct Walker {
             return nil
         }
         let padding = IslandPadding(
-            top: number(dict["top"], path: "\(path).padding.top", range: 0...64),
-            bottom: number(dict["bottom"], path: "\(path).padding.bottom", range: 0...64),
-            leading: number(dict["leading"], path: "\(path).padding.leading", range: 0...64),
-            trailing: number(dict["trailing"], path: "\(path).padding.trailing", range: 0...64),
-            horizontal: number(dict["horizontal"], path: "\(path).padding.horizontal", range: 0...64),
-            vertical: number(dict["vertical"], path: "\(path).padding.vertical", range: 0...64)
+            top: number(dict["top"], path: "\(path).padding.top", range: cgRange(IslandTokenLimits.padding)),
+            bottom: number(dict["bottom"], path: "\(path).padding.bottom", range: cgRange(IslandTokenLimits.padding)),
+            leading: number(dict["leading"], path: "\(path).padding.leading", range: cgRange(IslandTokenLimits.padding)),
+            trailing: number(dict["trailing"], path: "\(path).padding.trailing", range: cgRange(IslandTokenLimits.padding)),
+            horizontal: number(dict["horizontal"], path: "\(path).padding.horizontal", range: cgRange(IslandTokenLimits.padding)),
+            vertical: number(dict["vertical"], path: "\(path).padding.vertical", range: cgRange(IslandTokenLimits.padding))
         )
         let isEmpty = padding.top == nil && padding.bottom == nil && padding.leading == nil
             && padding.trailing == nil && padding.horizontal == nil && padding.vertical == nil
@@ -296,7 +303,7 @@ private struct Walker {
         }
         let background = IslandBackground(
             fill: color(dict["fill"], path: "\(path).background.fill"),
-            radius: number(dict["radius"], path: "\(path).background.radius", range: 0...48),
+            radius: number(dict["radius"], path: "\(path).background.radius", range: cgRange(IslandTokenLimits.radius)),
             clip: clip(dict["clip"], path: "\(path).background.clip"),
             stroke: color(dict["stroke"], path: "\(path).background.stroke"),
             strokeWidth: number(dict["strokeWidth"], path: "\(path).background.strokeWidth", range: 0...20)
@@ -312,7 +319,7 @@ private struct Walker {
             report("\(path).a11y", "a11y 必须是对象")
             return nil
         }
-        let label = text(dict["label"], path: "\(path).a11y.label")
+        let label = stringValue(dict["label"], path: "\(path).a11y.label")
         let hidden = dict["hidden"] as? Bool
         if label == nil, hidden == nil { return nil }
         return IslandA11y(label: label, hidden: hidden)
@@ -344,7 +351,10 @@ private struct Walker {
         return result
     }
 
-    private mutating func text(_ raw: Any?, path: String) -> IslandTextSource? {
+    /// Text and icon values parse identically (one shared `IslandStringValue`
+    /// type), so one function serves both — the byte-identical twins this
+    /// replaces were 30 lines of drift waiting to happen.
+    private mutating func stringValue(_ raw: Any?, path: String) -> IslandStringValue? {
         guard let raw else { return nil }
         guard let string = raw as? String else {
             report(path, "必须是字符串")
@@ -360,6 +370,7 @@ private struct Walker {
         }
         return .literal(Self.bounded(string))
     }
+
 
     private mutating func icon(_ raw: Any?, path: String) -> IslandIconSource? {
         guard let raw else { return nil }
