@@ -1,0 +1,10 @@
+{
+  "identifier": "toast",
+  "description": "Notification renderer event access only",
+  "windows": [
+    "toast"
+  ],
+  "permissions": [
+    "core:event:default"
+  ]
+}
