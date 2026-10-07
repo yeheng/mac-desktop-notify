@@ -13,6 +13,16 @@ export function appearanceFields(themes: StyleEntry[] = [], layouts: StyleEntry[
     <p class="muted">切换在下一个消息 tick 生效；窗口按需创建和销毁。</p>
     <div class="check-grid">${check('bezel_enabled', '伴生闪现（成功/错误居中提示）')}${check('tray_badge_enabled', '菜单栏未读徽章')}</div>
   </section>
+  <section class="settings-card"><h2>窗体样式</h2>
+    ${select('window_style', '主窗口窗体', [
+      ['sidebar', '全高侧栏（备忘录式）'],
+      ['standard', '标准标题栏（文稿式）'],
+      ['toolbar', '统一工具栏（访达式）'],
+      ['compact', '紧凑面板（检查器式）'],
+      ['overlay', '无栏覆盖（沉浸式）'],
+    ])}
+    <p class="muted">样式本体全部由 CSS 定义，切换立即在本窗口生效；主题包可用 chromeHeight / chromeFill / chromeHairline 覆盖任意预设。</p>
+  </section>
   <section class="settings-card"><h2>主题与布局</h2>
     ${select('theme_id', '样式主题', [['default', '默认'], ['midnight', '午夜'], ['minimal', '极简'], ['glass', '玻璃'], ...themes.filter(t => !['default', 'midnight', 'minimal', 'glass'].includes(t.id)).map(t => [t.id, entry(themes, t.id)] as [string, string])])}
     ${select('layout_id', '面板布局', [['default', '内置布局'], ['midnight', '午夜示例'], ...layouts.filter(l => !['default', 'midnight'].includes(l.id)).map(l => [l.id, entry(layouts, l.id)] as [string, string])])}

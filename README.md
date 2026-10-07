@@ -4,6 +4,8 @@ macOS 菜单栏通知应用。消息通过独立、透明、置顶的原生 NSWi
 
 这是自定义桌面 toast，不进入 macOS 系统通知中心；配色、圆角、位置、进度和按钮由应用控制。需要 macOS 14 或更新版本，以支持隐藏 WebView 持续接收通知。
 
+通知中心主窗口为无系统装饰窗体，标题栏由前端绘制：macOS 显示红绿灯（悬停显字形、失焦变灰），Windows 显示标题栏按钮，全平台支持拖拽移动与双击最大化，macOS 窗体圆角由 CSS 实现。主窗口提供五种窗体样式预设（**设置 → 窗体样式**：全高侧栏 / 标准标题栏 / 统一工具栏 / 紧凑面板 / 无栏覆盖），预设本体全部由 CSS 定义，JS 只切换 `data-window-style` 属性；主题包可用 `chromeHeight` / `chromeFill` / `chromeHairline` token 覆盖任意预设（实现见 `src/chrome/`，设计见 `docs/design/plans/2026-10-07-native-chrome-transition-animation-plan.md`）。
+
 ## 启动桌面应用
 
 ```sh

@@ -64,6 +64,11 @@ pub struct Tokens {
     pub pill_height: u32,
     pub panel_fill: String,
     pub panel_max_height: u32,
+    /// Chrome overrides for the main window's titlebar. `None` keeps the
+    /// window-style preset's own value; a theme pack opts in per token.
+    pub chrome_height: Option<u32>,
+    pub chrome_fill: Option<String>,
+    pub chrome_hairline: Option<String>,
 }
 
 impl Default for Tokens {
@@ -108,6 +113,9 @@ impl Default for Tokens {
             pill_height: 32,
             panel_fill: "#000000e6".into(),
             panel_max_height: 420,
+            chrome_height: None,
+            chrome_fill: None,
+            chrome_hairline: None,
         }
     }
 }
@@ -191,6 +199,11 @@ fn coerce(name: &str, value: &Value) -> Option<Value> {
             .as_str()
             .filter(|s| hex_color(s, true))
             .map(|s| json!(s)),
+        "chromeFill" | "chromeHairline" => value
+            .as_str()
+            .filter(|s| hex_color(s, true))
+            .map(|s| json!(s)),
+        "chromeHeight" => coerce_number(value, 24.0, 64.0, true),
         "headerLabel" => value
             .as_str()
             .filter(|s| s.chars().count() <= 80)

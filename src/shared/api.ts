@@ -17,13 +17,15 @@ export interface ToastStyle {
   line_height: number; text_align: 'left' | 'center'; show_body: boolean; show_progress: boolean;
   show_tags: boolean; show_history: boolean; actions_layout: 'inline' | 'stacked';
 }
+/** Main-window chrome preset; geometry lives in CSS keyed on data-window-style. */
+export type WindowStyle = 'sidebar' | 'standard' | 'toolbar' | 'compact' | 'overlay';
 export interface Settings {
   toast: ToastStyle;
   theme: string; accent: string; width: number; radius: number; font_size: number; position: string;
   reduced_motion: boolean; muted_sources: string[]; muted_groups: string[];
   quiet_start: number | null; quiet_end: number | null; merge_window_ms: number;
   source_per_minute: number; global_per_minute: number; queue_limit: number; retention_days: number;
-  presenter: 'toast' | 'card' | 'island'; bezel_enabled: boolean; tray_badge_enabled: boolean;
+  presenter: 'toast' | 'card' | 'island'; window_style: WindowStyle; bezel_enabled: boolean; tray_badge_enabled: boolean;
   theme_id: string; layout_id: string;
 }
 export interface Page { items: Notification[]; total: number; next_cursor: unknown; watermark: number; groups: { source: string; group_key: string; matched: number; total: number; unread: number }[] }
@@ -64,7 +66,7 @@ export function packTokens(pack: ThemeInfo): Record<string, TokenValue> {
 export interface SettingsStyle { theme?: ThemeInfo; layout?: { id: string; name: string; source: string; surfaces: Record<string, unknown>; diagnostics?: string[] } }
 
 /** Token keys whose values are lengths and get a px suffix in CSS. */
-const TOKEN_SIZES = new Set(['cardRadius', 'titleSize', 'bodySize', 'padding', 'gap', 'borderWidth', 'bezelIconSize', 'pillHeight', 'panelMaxHeight']);
+const TOKEN_SIZES = new Set(['cardRadius', 'titleSize', 'bodySize', 'padding', 'gap', 'borderWidth', 'bezelIconSize', 'pillHeight', 'panelMaxHeight', 'chromeHeight']);
 const kebab = (key: string) => key.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`);
 
 /** Token table → `--mdn-*` CSS variables; one pass, sheets do zero lookup. */
@@ -79,6 +81,9 @@ export function applyThemeTokens(pack: ThemeInfo, mode: string) {
 
 export function theme(s: Settings) {
   document.documentElement.dataset.theme = s.theme;
+  // One attribute is all JS does for window chrome; every preset is pure CSS.
+  // Absent value (legacy fixtures) falls back to CSS's own default preset.
+  if (s.window_style) document.documentElement.dataset.windowStyle = s.window_style;
   document.documentElement.style.setProperty('--accent', s.accent);
   document.documentElement.style.setProperty('--card-radius', `${s.radius}px`);
   document.documentElement.style.setProperty('--notification-font', `${s.font_size}px`);

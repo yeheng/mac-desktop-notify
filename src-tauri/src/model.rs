@@ -235,6 +235,8 @@ pub struct Settings {
     pub retention_days: u32,
     /// Which main presenter window owns the `showing` surface.
     pub presenter: String,
+    /// Main-window chrome preset; the look itself is pure CSS.
+    pub window_style: String,
     /// Companion surfaces that stack on top of the main presenter.
     pub bezel_enabled: bool,
     pub tray_badge_enabled: bool,
@@ -262,6 +264,7 @@ impl Default for Settings {
             queue_limit: 100,
             retention_days: 30,
             presenter: "toast".into(),
+            window_style: "sidebar".into(),
             bezel_enabled: false,
             tray_badge_enabled: true,
             theme_id: "default".into(),
@@ -285,6 +288,8 @@ impl Settings {
             return Err(ApiError::invalid("invalid theme"));
         }
         if !["toast", "card", "island"].contains(&self.presenter.as_str())
+            || !["sidebar", "standard", "toolbar", "compact", "overlay"]
+                .contains(&self.window_style.as_str())
             || !crate::theme::valid_id(&self.theme_id)
             || !crate::theme::valid_id(&self.layout_id)
             || self.quiet_start.is_some() != self.quiet_end.is_some()

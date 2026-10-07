@@ -121,3 +121,55 @@ html:has(.presenter-window),.presenter-window { background:transparent!important
 /* Style pack diagnostics surfaced in the settings UI. */
 .diagnostics { display:grid; gap:4px; margin:10px 0 0; padding:10px 12px; border-radius:10px; background:color-mix(in srgb, #c89743 12%, transparent); font-size:11px; overflow-wrap:anywhere; }
 .diagnostics:empty { display:none; }
+
+/* ---- Native window chrome (JS-built, src/chrome): five macOS-style window
+   presets, each defined purely in CSS on html[data-window-style]. JS only
+   flips that one attribute (settings → theme()); theme packs override any
+   preset through the --mdn-chrome-* token slot. ---- */
+:root[data-platform=win] { font-family:'Segoe UI Variable Text','Segoe UI','PingFang SC','Microsoft YaHei UI','Microsoft YaHei',sans-serif; }
+:root[data-platform=mac] { --win-radius:10px; }
+:root:not([data-platform=mac]) { --win-radius:0px; }
+/* Presets: bar geometry, surface, and how the title sits. */
+:root[data-window-style=standard] { --titlebar-h-base:28px; --titlebar-fill:var(--surface); --titlebar-line:var(--border); --sidebar-gap:28px; --workspace-gap:38px; }
+:root[data-window-style=toolbar] { --titlebar-h-base:52px; --titlebar-fill:color-mix(in srgb,var(--surface) 74%,transparent); --titlebar-blur:blur(22px) saturate(1.8); --titlebar-line:var(--border); --sidebar-gap:28px; --workspace-gap:38px; }
+:root[data-window-style=compact] { --titlebar-h-base:26px; --titlebar-fill:var(--surface); --titlebar-line:var(--border); --sidebar-gap:20px; --workspace-gap:30px; --title-inset:52px; --title-size:11px; }
+:root[data-window-style=overlay] { --titlebar-h-base:32px; --titlebar-fill:transparent; --titlebar-line:transparent; --sidebar-gap:8px; --workspace-gap:12px; --title-display:none; }
+:root[data-window-style=sidebar],:root:not([data-window-style]) { --titlebar-h-base:52px; --titlebar-fill:transparent; --titlebar-line:transparent; --sidebar-gap:28px; --workspace-gap:38px; --title-display:none; }
+/* Pack override slot: a theme's chromeHeight / chromeFill / chromeHairline wins. */
+:root[data-window-style] { --titlebar-h:var(--mdn-chrome-height,var(--titlebar-h-base)); }
+/* The window itself paints our rounded page; body only carries the layout. */
+html:has(body.chrome-window),body.chrome-window { background:transparent!important; }
+body.chrome-window { height:100vh; overflow:hidden; }
+body.chrome-window #app { height:100%; min-height:0; display:flex; align-items:stretch; overflow:clip; background:var(--background); border-radius:var(--win-radius); }
+html:not([data-platform=mac]) body.chrome-window.is-maximized #app { border-radius:0; }
+/* Sidebar becomes a flex pane (fixed positioning would escape the corner clip). */
+body.chrome-window .sidebar { position:static; flex:none; min-height:0; padding-top:calc(var(--titlebar-h,52px) + var(--sidebar-gap,28px)); }
+body.chrome-window .workspace { margin-left:0; flex:1; min-width:0; min-height:0; overflow-y:auto; padding-top:calc(var(--titlebar-h,52px) + var(--workspace-gap,38px)); }
+.titlebar { position:fixed; top:0; left:0; right:0; height:var(--titlebar-h,52px); z-index:40; display:flex; align-items:center; user-select:none; -webkit-user-select:none; background:var(--mdn-chrome-fill,var(--titlebar-fill,transparent)); border-bottom:1px solid var(--mdn-chrome-hairline,var(--titlebar-line,transparent)); -webkit-backdrop-filter:var(--titlebar-blur,none); backdrop-filter:var(--titlebar-blur,none); }
+.window-title { position:absolute; left:0; right:0; margin:0 auto; text-align:center; font-size:var(--title-size,13px); font-weight:600; color:var(--text); opacity:.55; pointer-events:none; display:var(--title-display,block); }
+html[data-platform=mac][data-window-style=compact] .window-title { left:var(--title-inset,52px); margin:0; text-align:left; }
+html:not([data-platform=mac]) .window-title { left:16px; margin:0; text-align:left; opacity:.6; }
+/* macOS traffic lights: 12px dots, glyphs revealed on group hover (AppKit behavior). */
+.traffic-lights { position:absolute; left:14px; top:calc((var(--titlebar-h,52px) - 12px)/2); display:flex; gap:8px; }
+html[data-window-style=overlay] .traffic-lights { left:10px; padding:5px 7px; border-radius:99px; background:color-mix(in srgb,var(--surface) 55%,transparent); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); }
+.traffic-light { width:12px; height:12px; padding:0; display:grid; place-items:center; border-radius:50%; cursor:default; border:.5px solid rgba(0,0,0,.16); background:var(--light-fill); }
+.traffic-light.close { --light-fill:#ff5f57; } .traffic-light.minimize { --light-fill:#febc2e; } .traffic-light.zoom { --light-fill:#28c840; }
+.traffic-light:hover,.traffic-light:focus-visible { background:var(--light-fill); }
+.traffic-light .glyph,.traffic-light .glyph svg { display:grid; place-items:center; color:rgba(0,0,0,.55); }
+.traffic-light .glyph svg { opacity:0; }
+.traffic-lights:hover .traffic-light .glyph svg,.traffic-light:focus-visible .glyph svg { opacity:1; }
+.titlebar.window-inactive .traffic-light { --light-fill:color-mix(in srgb,var(--text) 20%,var(--surface)); border-color:transparent; }
+.titlebar.window-inactive .traffic-light .glyph svg { opacity:0; }
+/* Windows caption row: 46×full-height buttons, hover tint, red close. */
+.caption-buttons { position:absolute; top:0; right:0; display:flex; height:var(--titlebar-h,52px); }
+.caption-btn { width:46px; height:100%; padding:0; border:0; border-radius:0; background:transparent; color:var(--text); display:grid; place-items:center; }
+.caption-btn:focus-visible { outline-offset:-3px; }
+.caption-btn:hover { background:color-mix(in srgb,var(--text) 9%,transparent); }
+.caption-btn:active { background:color-mix(in srgb,var(--text) 14%,transparent); }
+.caption-btn.close:hover,.caption-btn.close:active { background:#c42b1c; color:#fff; }
+.caption-btn .glyph,.caption-btn .glyph svg { display:grid; place-items:center; }
+body.chrome-window.is-maximized .caption-btn.maximize .glyph:first-child { display:none; }
+body.chrome-window:not(.is-maximized) .caption-btn.maximize .glyph:last-child { display:none; }
+/* The narrow-viewport rules predate chrome's flex panes; keep them from
+   reintroducing the old fixed-sidebar margin. */
+@media(max-width:900px) { body.chrome-window .workspace { margin-left:0; padding:calc(var(--titlebar-h,52px) + var(--workspace-gap,38px)) 22px 28px; } }

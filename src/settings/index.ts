@@ -78,9 +78,10 @@ export async function renderSettings(root: HTMLElement) {
     box.replaceChildren(...diags.map(d => element('p', '', `⚠ ${d}`)));
   }
   renderDiagnostics(currentStyle);
-  // Theme/layout selection applies immediately: the form reloads from the
-  // active theme so stale appearance values never bleed into the next one.
-  for (const name of ['theme_id', 'layout_id', 'presenter', 'bezel_enabled', 'tray_badge_enabled']) {
+  // Theme/layout/window-style selection applies immediately: the form reloads
+  // from the active theme so stale appearance values never bleed into the next
+  // one, and the main window itself previews the chrome preset live.
+  for (const name of ['theme_id', 'layout_id', 'presenter', 'window_style', 'bezel_enabled', 'tray_badge_enabled']) {
     (form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | null)?.addEventListener('change', async () => {
       try {
         const result = await call<Settings & { style?: SettingsStyle }>('settings.set', read());
