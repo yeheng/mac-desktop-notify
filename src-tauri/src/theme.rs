@@ -64,11 +64,6 @@ pub struct Tokens {
     pub pill_height: u32,
     pub panel_fill: String,
     pub panel_max_height: u32,
-    /// Chrome overrides for the main window's titlebar. `None` keeps the
-    /// window-style preset's own value; a theme pack opts in per token.
-    pub chrome_height: Option<u32>,
-    pub chrome_fill: Option<String>,
-    pub chrome_hairline: Option<String>,
 }
 
 impl Default for Tokens {
@@ -113,9 +108,6 @@ impl Default for Tokens {
             pill_height: 32,
             panel_fill: "#000000e6".into(),
             panel_max_height: 420,
-            chrome_height: None,
-            chrome_fill: None,
-            chrome_hairline: None,
         }
     }
 }
@@ -199,11 +191,6 @@ fn coerce(name: &str, value: &Value) -> Option<Value> {
             .as_str()
             .filter(|s| hex_color(s, true))
             .map(|s| json!(s)),
-        "chromeFill" | "chromeHairline" => value
-            .as_str()
-            .filter(|s| hex_color(s, true))
-            .map(|s| json!(s)),
-        "chromeHeight" => coerce_number(value, 24.0, 64.0, true),
         "headerLabel" => value
             .as_str()
             .filter(|s| s.chars().count() <= 80)
@@ -240,6 +227,10 @@ fn complete(partial: Value, origin: &str) -> (Tokens, Vec<String>) {
     if let Some(map) = partial.as_object() {
         for (key, value) in map {
             if key == "name" {
+                continue;
+            }
+            // Explicit null means "not set" (e.g. an Option token) — not an error.
+            if value.is_null() {
                 continue;
             }
             match coerce(key, value) {
@@ -565,6 +556,23 @@ mod tests {
         let before = serde_json::to_value(&settings).unwrap();
         theme.derive(&mut settings);
         assert_eq!(before, serde_json::to_value(&settings).unwrap());
+    }
+
+    #[test]
+    fn explicit_null_tokens_mean_unset_not_errors() {
+        let dir = tempdir();
+        std::fs::create_dir_all(dir.join("themes")).unwrap();
+        std::fs::write(
+            dir.join("themes").join("midnight.json"),
+            r#"{"name":"X","titleSize":null}"#,
+        )
+        .unwrap();
+        let theme = Theme::load(Some(&dir), "midnight");
+        assert_eq!(
+            theme.tokens.title_size, 15,
+            "null falls back to the default"
+        );
+        assert_eq!(theme.diagnostics, Vec::<String>::new());
     }
 
     #[test]

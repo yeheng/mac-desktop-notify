@@ -1,5 +1,3 @@
-use serde::Serialize;
-
 #[cfg(target_os = "macos")]
 mod macos;
 
@@ -38,36 +36,6 @@ pub async fn show_toast(
     }
 }
 
-/// Notch geometry of the screen a presenter window lives on.
-#[derive(Debug, Default, Serialize)]
-pub struct SurfaceMetrics {
-    pub notch: bool,
-    /// Notch width in logical points (0 when the screen has no notch).
-    pub width: f64,
-}
-
-#[tauri::command]
-pub async fn surface_metrics(
-    window: tauri::WebviewWindow,
-) -> std::result::Result<SurfaceMetrics, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let native_window = window.clone();
-        window
-            .run_on_main_thread(move || {
-                let _ = tx.send(macos::surface_metrics(&native_window).map_err(|e| e.to_string()));
-            })
-            .map_err(|e| e.to_string())?;
-        rx.await.map_err(|e| e.to_string())?
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = window;
-        Ok(SurfaceMetrics::default())
-    }
-}
-
 #[tauri::command]
 pub async fn resize_surface(
     window: tauri::WebviewWindow,
@@ -76,13 +44,13 @@ pub async fn resize_surface(
     position: String,
     shadow: bool,
 ) -> std::result::Result<(), String> {
-    if !["toast", "card", "island", "bezel"].contains(&window.label()) {
-        return Err("presenter windows only".into());
+    if window.label() != "toast" {
+        return Err("toast window only".into());
     }
     if height == 0 {
         return show_toast(window, shadow, false).await;
     }
-    // The island pill and bezel live below the old toast width floor.
+    // The toast window anchors below the old toast width floor.
     let width = width.clamp(4, 900);
     let height = height.clamp(1, 900);
     let monitor = window

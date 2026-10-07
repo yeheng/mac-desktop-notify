@@ -17,16 +17,13 @@ export interface ToastStyle {
   line_height: number; text_align: 'left' | 'center'; show_body: boolean; show_progress: boolean;
   show_tags: boolean; show_history: boolean; actions_layout: 'inline' | 'stacked';
 }
-/** Main-window chrome preset; geometry lives in CSS keyed on data-window-style. */
-export type WindowStyle = 'sidebar' | 'standard' | 'toolbar' | 'compact' | 'overlay';
 export interface Settings {
   toast: ToastStyle;
   theme: string; accent: string; width: number; radius: number; font_size: number; position: string;
   reduced_motion: boolean; muted_sources: string[]; muted_groups: string[];
   quiet_start: number | null; quiet_end: number | null; merge_window_ms: number;
   source_per_minute: number; global_per_minute: number; queue_limit: number; retention_days: number;
-  presenter: 'toast' | 'card' | 'island'; window_style: WindowStyle; bezel_enabled: boolean; tray_badge_enabled: boolean;
-  theme_id: string; layout_id: string;
+  tray_badge_enabled: boolean; theme_id: string;
 }
 export interface Page { items: Notification[]; total: number; next_cursor: unknown; watermark: number; groups: { source: string; group_key: string; matched: number; total: number; unread: number }[] }
 export const call = <T>(op: string, data: unknown = {}): Promise<T> => invoke('command', { op, data });
@@ -63,10 +60,10 @@ export function packTokens(pack: ThemeInfo): Record<string, TokenValue> {
   }
   return tokens;
 }
-export interface SettingsStyle { theme?: ThemeInfo; layout?: { id: string; name: string; source: string; surfaces: Record<string, unknown>; diagnostics?: string[] } }
+export interface SettingsStyle { theme?: ThemeInfo }
 
 /** Token keys whose values are lengths and get a px suffix in CSS. */
-const TOKEN_SIZES = new Set(['cardRadius', 'titleSize', 'bodySize', 'padding', 'gap', 'borderWidth', 'bezelIconSize', 'pillHeight', 'panelMaxHeight', 'chromeHeight']);
+const TOKEN_SIZES = new Set(['cardRadius', 'titleSize', 'bodySize', 'padding', 'gap', 'borderWidth', 'bezelIconSize', 'pillHeight', 'panelMaxHeight']);
 const kebab = (key: string) => key.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`);
 
 /** Token table → `--mdn-*` CSS variables; one pass, sheets do zero lookup. */
@@ -81,9 +78,6 @@ export function applyThemeTokens(pack: ThemeInfo, mode: string) {
 
 export function theme(s: Settings) {
   document.documentElement.dataset.theme = s.theme;
-  // One attribute is all JS does for window chrome; every preset is pure CSS.
-  // Absent value (legacy fixtures) falls back to CSS's own default preset.
-  if (s.window_style) document.documentElement.dataset.windowStyle = s.window_style;
   document.documentElement.style.setProperty('--accent', s.accent);
   document.documentElement.style.setProperty('--card-radius', `${s.radius}px`);
   document.documentElement.style.setProperty('--notification-font', `${s.font_size}px`);
@@ -91,22 +85,5 @@ export function theme(s: Settings) {
   const pack = (s as Settings & { style?: SettingsStyle }).style?.theme;
   if (pack) applyThemeTokens(pack, s.theme);
 }
-/**
- * Wrap overflowing text in a two-copy track for a seamless CSS marquee.
- * Both copies carry the trailing gap so translating -50% lands exactly on
- * the second copy.
- */
-export function marqueeText(target: HTMLElement, text: string, overflow: boolean) {
-  if (!overflow) {
-    target.classList.remove('marquee');
-    target.textContent = text;
-    return;
-  }
-  target.classList.add('marquee');
-  const track = element('span', 'marquee-track');
-  track.append(element('span', 'marquee-copy', text), element('span', 'marquee-copy', text));
-  target.replaceChildren(track);
-}
-
 export const labels: Record<string, string> = { info: '消息', success: '成功', warning: '警告', error: '错误', queued: '等待展示', showing: '正在展示', closed: '已结束', suppressed: '已降噪', expired: '已过期', muted: '已静音', quiet_hours: '勿扰时段', rate_limited: '频率限制', queue_full: '队列已满', merged: '已合并提醒', interrupted: '展示中断', cancelled: '已取消', timed_out: '展示结束', dismissed: '用户关闭', action_invoked: '用户操作' };
 export const date = (at: number) => new Date(at).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });

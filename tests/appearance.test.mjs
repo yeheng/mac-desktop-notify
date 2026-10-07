@@ -112,28 +112,24 @@ test('toast grouping isolates sources and explicit keys and retains per-message 
   await win.happyDOM.close();
 });
 
-test('presenter and theme selection apply immediately and reload derived appearance', async () => {
+test('theme selection applies immediately and reloads derived appearance', async () => {
   const { win, root } = setup(); const savedPayloads = [];
   window.__TAURI_INTERNALS__ = { invoke: async (_cmd, { op, data }) => {
     if (op === 'settings.get') return structuredClone(fixture);
     if (op === 'runtime.info') return { status: 'listening' };
     if (op === 'sources.list' || op === 'endpoints.list') return [];
     if (op === 'themes.list') return [{ id: 'default', name: '默认' }, { id: 'midnight', name: '午夜' }];
-    if (op === 'layouts.list') return [{ id: 'default', name: '内置布局' }];
     if (op === 'settings.set') { savedPayloads.push(data); const next = structuredClone(data); next.toast = { ...next.toast, title_size: 15 }; return next; }
     throw Error(op);
   }};
   await renderSettings(root);
   const form = root.querySelector('form');
   // `style` decoration from settings.get never leaks back into a save payload.
-  form.elements.namedItem('presenter').value = 'island';
-  form.elements.namedItem('presenter').dispatchEvent(new win.Event('change', { bubbles: true }));
-  form.elements.namedItem('bezel_enabled').checked = true;
-  form.elements.namedItem('bezel_enabled').dispatchEvent(new win.Event('change', { bubbles: true }));
+  form.elements.namedItem('tray_badge_enabled').checked = true;
+  form.elements.namedItem('tray_badge_enabled').dispatchEvent(new win.Event('change', { bubbles: true }));
   await settle();
-  assert.equal(savedPayloads.length, 2);
-  assert.equal(savedPayloads[0].presenter, 'island');
-  assert.equal(savedPayloads[1].bezel_enabled, true);
+  assert.equal(savedPayloads.length, 1);
+  assert.equal(savedPayloads[0].tray_badge_enabled, true);
   assert.ok(!('style' in savedPayloads[0]));
   // The theme switch reloads the derived appearance into the form.
   form.elements.namedItem('theme_id').value = 'midnight';

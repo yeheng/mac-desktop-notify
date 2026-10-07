@@ -1,6 +1,6 @@
-import { renderSettings } from '../settings';
+import { renderSettings } from '../settings/index.ts';
 import { listen } from '@tauri-apps/api/event';
-import { button, call, date, element, labels, Notification, Page, Settings, showError, theme } from '../shared/api';
+import { button, call, date, element, labels, type Notification, type Page, type Settings, showError, theme } from '../shared/api.ts';
 
 export function startHistory(root: HTMLElement) {
   root.innerHTML = `
@@ -26,6 +26,10 @@ export function startHistory(root: HTMLElement) {
   const filters = $<HTMLFormElement>('filters');
   let items: Notification[] = []; let cursor: unknown = null; let group: { source: string; group_key: string } | null = null; let generation = 0;
   let settingsVisible = false;
+  // Cards are tracked per id so single-row actions update one node instead of
+  // rebuilding the whole list (keeps scroll, hover, and focus where they are).
+  const cards = new Map<string, HTMLElement>();
+  let filterTimer: ReturnType<typeof setTimeout> | undefined;
   function query() {
     const data: Record<string, unknown> = {};
     for (const [k, v] of new FormData(filters)) {
@@ -38,11 +42,13 @@ export function startHistory(root: HTMLElement) {
     return { ...data, ...group, limit: 30 };
   }
   async function load(more = false) {
+    clearTimeout(filterTimer);
     const epoch = ++generation;
     const page = await call<Page>('notification.list', { ...query(), ...(more ? { cursor } : {}) });
     if (epoch !== generation) return;
     items = more ? [...items, ...page.items] : page.items; cursor = page.next_cursor;
-    $('notifications').replaceChildren(...items.map(renderNotification));
+    cards.clear();
+    $('notifications').replaceChildren(...items.map(renderCard));
     $('result-count').textContent = `${page.total} 条消息 · 已显示 ${items.length} 条`;
     $('load-more').hidden = !cursor;
     const groups = $('groups'); groups.replaceChildren(button('全部分组', async () => { group = null; await load(); }, group ? 'group-item' : 'group-item selected'));
@@ -56,7 +62,36 @@ export function startHistory(root: HTMLElement) {
       const empty = element('div', 'empty-state'); empty.append(element('span', 'empty-icon', '▤'), element('h2', '', '这里很安静'), element('p', '', '收到的通知会保存在这里。你也可以发送一条测试通知。')); $('notifications').append(empty);
     }
   }
-  function renderNotification(n: Notification) {
+  /** Optimistically patch one item and re-render just its card; revert on failure. */
+  function patchCard(id: string, change: Partial<Notification>) {
+    const n = items.find(x => x.id === id);
+    if (!n) return () => {};
+    const before = { ...n };
+    Object.assign(n, change);
+    // Capture the live node before renderCard: it overwrites the map entry.
+    const old = cards.get(id);
+    const next = renderCard(n);
+    old?.replaceWith(next);
+    return () => {
+      Object.assign(n, before);
+      const current = cards.get(id);
+      const reverted = renderCard(n);
+      current?.replaceWith(reverted);
+    };
+  }
+  async function markRead(n: Notification) {
+    if (n.read_at) return;
+    const revert = patchCard(n.id, { read_at: Date.now() });
+    try { await call('notification.mark_read', { ids: [n.id] }); }
+    catch (e) { revert(); showError(e); }
+  }
+  async function archive(n: Notification) {
+    if (n.archived_at) return;
+    const revert = patchCard(n.id, { archived_at: Date.now() });
+    try { await call('notification.archive', { ids: [n.id] }); }
+    catch (e) { revert(); showError(e); }
+  }
+  function renderCard(n: Notification) {
     const card = element('article', `history-card ${n.read_at ? '' : 'unread'} ${n.level}`);
     const marker = element('div', 'level-marker', n.level === 'success' ? '✓' : n.level === 'error' ? '!' : '•');
     const content = element('div', 'card-content'); const top = element('div', 'card-top');
@@ -67,9 +102,11 @@ export function startHistory(root: HTMLElement) {
     for (const tag of n.tags) bottom.append(element('span', 'tag', `#${tag}`));
     if (n.merge_count > 1) bottom.append(element('span', 'muted', `合并提醒 ×${n.merge_count}`));
     content.append(bottom); const actions = element('div', 'row-actions');
-    if (!n.read_at) actions.append(button('已读', async () => { await call('notification.mark_read', { ids: [n.id] }); await load(); }, 'text-button'));
-    if (!n.archived_at) actions.append(button('归档', async () => { await call('notification.archive', { ids: [n.id] }); await load(); }, 'text-button'));
-    card.append(marker, content, actions); return card;
+    if (!n.read_at) actions.append(button('已读', () => markRead(n), 'text-button'));
+    if (!n.archived_at) actions.append(button('归档', () => archive(n), 'text-button'));
+    card.append(marker, content, actions);
+    cards.set(n.id, card);
+    return card;
   }
   async function detail(id: string) {
     const n = await call<Notification>('notification.get', { id });
@@ -88,6 +125,13 @@ export function startHistory(root: HTMLElement) {
     const dialog = $<HTMLDialogElement>('detail'); if (!dialog.open) dialog.showModal();
   }
   filters.onsubmit = e => { e.preventDefault(); void load().catch(showError); };
+  // Live filtering: selects and checkboxes apply on change, text and date
+  // inputs debounce; the 筛选 button stays for explicit reloads.
+  filters.onchange = () => { void load().catch(showError); };
+  filters.oninput = () => {
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => { void load().catch(showError); }, 350);
+  };
   filters.onreset = () => { group = null; setTimeout(() => { void load().catch(showError); }, 0); };
   $('refresh').onclick = () => { void load().catch(showError); };
   $('load-more').onclick = () => { void load(true).catch(showError); };

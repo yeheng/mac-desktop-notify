@@ -6,10 +6,10 @@ const previewObservers = new WeakMap<HTMLElement, ResizeObserver>();
 
 export async function renderSettings(root: HTMLElement) {
   previewObservers.get(root)?.disconnect();
-  const [raw, info, sources, endpoints, themes, layouts] = await Promise.all([
+  const [raw, info, sources, endpoints, themes] = await Promise.all([
     call<Settings & { style?: SettingsStyle }>('settings.get'), call<{ http: string; socket: string; status: string; error?: string }>('runtime.info'),
     call<string[]>('sources.list'), call<{ id: string; source: string; url: string }[]>('endpoints.list'),
-    call<StyleEntry[]>('themes.list', {}).catch(() => []), call<StyleEntry[]>('layouts.list', {}).catch(() => [])
+    call<StyleEntry[]>('themes.list', {}).catch(() => [])
   ]);
   // `style` (theme/layout payload) is read-only decoration; submitting it back
   // would be rejected as an unknown settings field.
@@ -17,7 +17,7 @@ export async function renderSettings(root: HTMLElement) {
   let currentStyle = stylePack;
   root.innerHTML = `
     <form id="settings-form" class="appearance-layout">
-      <div class="appearance-sections">${appearanceFields(themes, layouts)}
+      <div class="appearance-sections">${appearanceFields(themes)}
       <section class="settings-card"><h2>降噪与保留</h2>
         <label>同键合并窗口（毫秒）<input name="merge_window_ms" type="number" min="0" max="60000"/></label>
         <label>每来源每分钟最多提醒<input name="source_per_minute" type="number" min="1" max="600"/></label>
@@ -73,15 +73,14 @@ export async function renderSettings(root: HTMLElement) {
   function renderDiagnostics(style: SettingsStyle | undefined) {
     const box = root.querySelector<HTMLElement>('#style-diagnostics');
     if (!box) return;
-    const diags = [...(style?.theme?.diagnostics ?? []), ...(style?.layout?.diagnostics ?? [])];
+    const diags = style?.theme?.diagnostics ?? [];
     box.hidden = diags.length === 0;
     box.replaceChildren(...diags.map(d => element('p', '', `⚠ ${d}`)));
   }
   renderDiagnostics(currentStyle);
-  // Theme/layout/window-style selection applies immediately: the form reloads
-  // from the active theme so stale appearance values never bleed into the next
-  // one, and the main window itself previews the chrome preset live.
-  for (const name of ['theme_id', 'layout_id', 'presenter', 'window_style', 'bezel_enabled', 'tray_badge_enabled']) {
+  // Theme selection applies immediately: the form reloads from the active
+  // theme so stale appearance values never bleed into the next one.
+  for (const name of ['theme_id', 'tray_badge_enabled']) {
     (form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | null)?.addEventListener('change', async () => {
       try {
         const result = await call<Settings & { style?: SettingsStyle }>('settings.set', read());

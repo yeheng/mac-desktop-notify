@@ -48,110 +48,29 @@
 .toast-group .toast-card + .toast-card { border-top:1px solid var(--toast-border-color); }
 .toast-group .toast-card[data-accent=true] { border-left:2px solid var(--toast-level-color); }
 
-/* Presenter windows (card / island / bezel) share the toast window's transparent chrome. */
-html:has(.presenter-window),.presenter-window { background:transparent!important; }
-.presenter-window #app { min-height:0; }
-
-/* Card: single large card, full body height. */
-.card-stack { padding:1px; }
-.card-stack .toast-card .toast-body { max-height:none; }
-
-/* Island pill: menu-bar-height status line sized by its own window. */
-.island-pill { display:flex; align-items:center; gap:8px; width:100%; height:var(--mdn-pill-height,32px); padding:0 14px; border-radius:calc(var(--mdn-pill-height,32px)/2); color:#fff; background:var(--mdn-pill-fill,#000000d9); font-size:12px; font-weight:600; cursor:default; overflow:hidden; }
-.island-glyph { flex:none; display:grid; place-items:center; width:18px; height:18px; border-radius:6px; font-size:11px; background:#ffffff26; }
-.island-title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.island-count { flex:none; font-size:11px; opacity:.75; }
-.island-pill.is-critical .island-glyph { background:#df6e7b33; color:#ffb3ba; }
-
-/* Marquee: two equal copies scroll one copy-width per loop. */
-.island-title.marquee { text-overflow:clip; }
-.marquee-track { display:inline-flex; white-space:nowrap; animation:marquee-scroll 9s linear infinite; }
-.marquee-copy { padding-right:56px; }
-@keyframes marquee-scroll { from { transform:translateX(0); } to { transform:translateX(-50%); } }
-@media(prefers-reduced-motion:reduce) { .marquee-track { animation:none; } }
-.reduced-motion .marquee-track { animation:none; }
-
-/* Island expansion panel: header actions / message / unread list / footer. */
-.island-panel-host { width:min(680px,calc(100vw - 24px)); margin-top:8px; }
-.island-panel { display:flex; flex-direction:column; max-height:min(var(--mdn-panel-max-height,420px),460px); border-radius:18px; color:#fff; background:var(--mdn-panel-fill,#000000e6); overflow:hidden; animation:toast-fade .15s ease-out; }
-.panel-header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px 6px; }
-.panel-heading { font-size:12px; font-weight:650; opacity:.85; }
-.panel-actions { display:flex; gap:6px; }
-.island-panel button { color:#fff; border-color:#ffffff2e; background:#ffffff14; }
-.island-panel button:hover { background:#ffffff26; }
-.panel-message { padding:6px 10px; overflow:auto; min-height:0; }
-.panel-message .toast-card { max-height:none; }
-.panel-empty { color:var(--muted); font-size:12px; padding:10px 6px; margin:0; }
-.panel-list { list-style:none; margin:0; padding:4px 8px 6px; display:grid; gap:2px; overflow:auto; min-height:0; }
-.panel-row { display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:10px; font-size:12px; cursor:pointer; min-width:0; }
-.panel-row:hover { background:#ffffff17; }
-.panel-row-glyph { flex:none; display:grid; place-items:center; width:18px; height:18px; border-radius:6px; font-size:10px; background:#ffffff1f; }
-.panel-row.success .panel-row-glyph { color:#7fd6b3; } .panel-row.error .panel-row-glyph { color:#ff9aa4; } .panel-row.warning .panel-row-glyph { color:#e8c37e; }
-.panel-row-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.panel-row-source { flex:none; max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; opacity:.6; }
-.panel-row-time { flex:none; font-size:10px; opacity:.5; }
-.panel-row.muted-row { cursor:default; color:var(--muted); justify-content:center; }
-.panel-row.muted-row:hover { background:none; }
-.panel-footer { justify-content:flex-end; padding:6px 10px 10px; }
-
-/* Bezel: transient center flash. */
-.bezel-block { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; width:100%; height:120px; border-radius:20px; color:#fff; background:var(--mdn-bezel-fill,#000000c4); animation:toast-fade .15s ease-out; }
-.bezel-glyph { display:grid; place-items:center; width:var(--mdn-bezel-icon-size,48px); height:var(--mdn-bezel-icon-size,48px); border-radius:14px; font-size:26px; font-weight:700; background:#ffffff1f; }
-.bezel-title { max-width:240px; font-size:13px; font-weight:600; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.bezel-block.success .bezel-glyph { color:#7fd6b3; } .bezel-block.error .bezel-glyph { color:#ff9aa4; } .bezel-block.warning .bezel-glyph { color:#e8c37e; }
-
-/* Layout DSL nodes: position-only; behavior and content stay in TS. */
-.dsl-stack { display:flex; min-width:0; min-height:0; }
-.dsl-stack.dsl-v { flex-direction:column; } .dsl-stack.dsl-h { flex-direction:row; }
-.dsl-stack.dsl-z { position:relative; } .dsl-stack.dsl-z > *:not(:first-child) { position:absolute; inset:0; }
-.dsl-text { font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; color:inherit; }
-.dsl-icon { flex:none; display:grid; place-items:center; width:20px; height:20px; border-radius:6px; background:#ffffff1f; color:inherit; } .dsl-icon svg { width:14px; height:14px; }
-.dsl-dot { flex:none; width:10px; height:10px; border-radius:50%; background:var(--accent); }
-.dsl-badge { flex:none; font-size:11px; padding:2px 8px; border-radius:10px; background:#ffffff26; }
-.dsl-divider { width:100%; height:1px; background:#ffffff2a; }
-.dsl-spacer { flex:1; }
-.dsl-slot { min-width:0; min-height:0; display:flex; flex-direction:column; }
-.dsl-slot .toast-card, .dsl-slot .panel-list { width:100%; }
-.dsl-message { white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; line-height:1.6; overflow:auto; min-height:0; }
-.dsl-card { display:block; overflow:hidden; }
-/* A DSL host keeps its geometry classes but hands visuals to the tree. */
-.dsl-host { padding:0!important; background:transparent!important; border:0!important; box-shadow:none!important; display:flex; flex-direction:column; }
-.island-pill.dsl-host { height:auto!important; min-height:var(--mdn-pill-height,32px); border-radius:0!important; }
-
 /* Style pack diagnostics surfaced in the settings UI. */
 .diagnostics { display:grid; gap:4px; margin:10px 0 0; padding:10px 12px; border-radius:10px; background:color-mix(in srgb, #c89743 12%, transparent); font-size:11px; overflow-wrap:anywhere; }
 .diagnostics:empty { display:none; }
 
-/* ---- Native window chrome (JS-built, src/chrome): five macOS-style window
-   presets, each defined purely in CSS on html[data-window-style]. JS only
-   flips that one attribute (settings → theme()); theme packs override any
-   preset through the --mdn-chrome-* token slot. ---- */
+/* ---- Native window chrome (JS-built, src/chrome): the frameless main window
+   draws its own titlebar — macOS traffic lights over the transparent sidebar,
+   Windows caption buttons top-right — over a full-width drag strip. ---- */
 :root[data-platform=win] { font-family:'Segoe UI Variable Text','Segoe UI','PingFang SC','Microsoft YaHei UI','Microsoft YaHei',sans-serif; }
-:root[data-platform=mac] { --win-radius:10px; }
-:root:not([data-platform=mac]) { --win-radius:0px; }
-/* Presets: bar geometry, surface, and how the title sits. */
-:root[data-window-style=standard] { --titlebar-h-base:28px; --titlebar-fill:var(--surface); --titlebar-line:var(--border); --sidebar-gap:28px; --workspace-gap:38px; }
-:root[data-window-style=toolbar] { --titlebar-h-base:52px; --titlebar-fill:color-mix(in srgb,var(--surface) 74%,transparent); --titlebar-blur:blur(22px) saturate(1.8); --titlebar-line:var(--border); --sidebar-gap:28px; --workspace-gap:38px; }
-:root[data-window-style=compact] { --titlebar-h-base:26px; --titlebar-fill:var(--surface); --titlebar-line:var(--border); --sidebar-gap:20px; --workspace-gap:30px; --title-inset:52px; --title-size:11px; }
-:root[data-window-style=overlay] { --titlebar-h-base:32px; --titlebar-fill:transparent; --titlebar-line:transparent; --sidebar-gap:8px; --workspace-gap:12px; --title-display:none; }
-:root[data-window-style=sidebar],:root:not([data-window-style]) { --titlebar-h-base:52px; --titlebar-fill:transparent; --titlebar-line:transparent; --sidebar-gap:28px; --workspace-gap:38px; --title-display:none; }
-/* Pack override slot: a theme's chromeHeight / chromeFill / chromeHairline wins. */
-:root[data-window-style] { --titlebar-h:var(--mdn-chrome-height,var(--titlebar-h-base)); }
+:root[data-platform=mac] { --titlebar-h:52px; --win-radius:10px; }
+:root:not([data-platform=mac]) { --titlebar-h:36px; --win-radius:0px; }
 /* The window itself paints our rounded page; body only carries the layout. */
 html:has(body.chrome-window),body.chrome-window { background:transparent!important; }
 body.chrome-window { height:100vh; overflow:hidden; }
 body.chrome-window #app { height:100%; min-height:0; display:flex; align-items:stretch; overflow:clip; background:var(--background); border-radius:var(--win-radius); }
 html:not([data-platform=mac]) body.chrome-window.is-maximized #app { border-radius:0; }
 /* Sidebar becomes a flex pane (fixed positioning would escape the corner clip). */
-body.chrome-window .sidebar { position:static; flex:none; min-height:0; padding-top:calc(var(--titlebar-h,52px) + var(--sidebar-gap,28px)); }
-body.chrome-window .workspace { margin-left:0; flex:1; min-width:0; min-height:0; overflow-y:auto; padding-top:calc(var(--titlebar-h,52px) + var(--workspace-gap,38px)); }
-.titlebar { position:fixed; top:0; left:0; right:0; height:var(--titlebar-h,52px); z-index:40; display:flex; align-items:center; user-select:none; -webkit-user-select:none; background:var(--mdn-chrome-fill,var(--titlebar-fill,transparent)); border-bottom:1px solid var(--mdn-chrome-hairline,var(--titlebar-line,transparent)); -webkit-backdrop-filter:var(--titlebar-blur,none); backdrop-filter:var(--titlebar-blur,none); }
-.window-title { position:absolute; left:0; right:0; margin:0 auto; text-align:center; font-size:var(--title-size,13px); font-weight:600; color:var(--text); opacity:.55; pointer-events:none; display:var(--title-display,block); }
-html[data-platform=mac][data-window-style=compact] .window-title { left:var(--title-inset,52px); margin:0; text-align:left; }
-html:not([data-platform=mac]) .window-title { left:16px; margin:0; text-align:left; opacity:.6; }
+body.chrome-window .sidebar { position:static; flex:none; min-height:0; padding-top:calc(var(--titlebar-h,52px) + 28px); }
+body.chrome-window .workspace { margin-left:0; flex:1; min-width:0; min-height:0; overflow-y:auto; padding-top:calc(var(--titlebar-h,52px) + 38px); }
+.titlebar { position:fixed; top:0; left:0; right:0; height:var(--titlebar-h,52px); z-index:40; display:flex; align-items:center; user-select:none; -webkit-user-select:none; }
+.window-title { position:absolute; left:0; right:0; margin:0 auto; text-align:center; font-size:13px; font-weight:600; color:var(--text); opacity:.55; pointer-events:none; display:none; }
+html:not([data-platform=mac]) .window-title { display:block; left:16px; margin:0; text-align:left; font-size:12px; opacity:.6; }
 /* macOS traffic lights: 12px dots, glyphs revealed on group hover (AppKit behavior). */
 .traffic-lights { position:absolute; left:14px; top:calc((var(--titlebar-h,52px) - 12px)/2); display:flex; gap:8px; }
-html[data-window-style=overlay] .traffic-lights { left:10px; padding:5px 7px; border-radius:99px; background:color-mix(in srgb,var(--surface) 55%,transparent); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); }
 .traffic-light { width:12px; height:12px; padding:0; display:grid; place-items:center; border-radius:50%; cursor:default; border:.5px solid rgba(0,0,0,.16); background:var(--light-fill); }
 .traffic-light.close { --light-fill:#ff5f57; } .traffic-light.minimize { --light-fill:#febc2e; } .traffic-light.zoom { --light-fill:#28c840; }
 .traffic-light:hover,.traffic-light:focus-visible { background:var(--light-fill); }
@@ -172,4 +91,4 @@ body.chrome-window.is-maximized .caption-btn.maximize .glyph:first-child { displ
 body.chrome-window:not(.is-maximized) .caption-btn.maximize .glyph:last-child { display:none; }
 /* The narrow-viewport rules predate chrome's flex panes; keep them from
    reintroducing the old fixed-sidebar margin. */
-@media(max-width:900px) { body.chrome-window .workspace { margin-left:0; padding:calc(var(--titlebar-h,52px) + var(--workspace-gap,38px)) 22px 28px; } }
+@media(max-width:900px) { body.chrome-window .workspace { margin-left:0; padding:calc(var(--titlebar-h,52px) + 38px) 22px 28px; } }

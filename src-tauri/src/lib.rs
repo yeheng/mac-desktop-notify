@@ -1,4 +1,3 @@
-mod layout;
 mod model;
 mod platform;
 mod service;
@@ -32,13 +31,10 @@ async fn command(
     data: Value,
 ) -> Result<Value> {
     let label = window.label().to_string();
-    if ["toast", "card", "island", "bezel"].contains(&label.as_str()) {
-        // A presenter window may only speak its own ack namespace, plus the
-        // shared summary dismissal and the panel's read marking.
-        let allowed = op.starts_with(&label)
-            || op == "summary.dismiss"
-            || (label == "island" && op == "notification.mark_read");
-        if !allowed {
+    if label == "toast" {
+        // The toast window may only speak its own namespace, plus the shared
+        // summary dismissal.
+        if !(op.starts_with("toast") || op == "summary.dismiss") {
             return Err(ApiError::new("unauthorized", "presenter command denied"));
         }
     } else if label != "main" || op.starts_with('_') {
@@ -61,46 +57,16 @@ fn open_history(app: tauri::AppHandle) {
     }
 }
 
-struct WindowSpec {
-    label: &'static str,
-    size: (f64, f64),
-}
-
-/// Main presenter windows, one active at a time per settings.
-const MAIN_PRESENTERS: [WindowSpec; 3] = [
-    WindowSpec {
-        label: "toast",
-        size: (400.0, 200.0),
-    },
-    WindowSpec {
-        label: "card",
-        size: (420.0, 320.0),
-    },
-    WindowSpec {
-        label: "island",
-        size: (400.0, 32.0),
-    },
-];
-
-/// Companion surface that flashes on top of whatever main presenter is active.
-const BEZEL: WindowSpec = WindowSpec {
-    label: "bezel",
-    size: (280.0, 140.0),
-};
-
 const TRAY_ID: &str = "primary";
 
-fn build_presenter_window(
-    app: &tauri::AppHandle,
-    spec: &WindowSpec,
-) -> tauri::Result<tauri::WebviewWindow> {
+fn build_toast_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     tauri::WebviewWindowBuilder::new(
         app,
-        spec.label,
-        tauri::WebviewUrl::App(format!("index.html?view={}", spec.label).into()),
+        "toast",
+        tauri::WebviewUrl::App("index.html?view=toast".into()),
     )
     .title("桌面通知")
-    .inner_size(spec.size.0, spec.size.1)
+    .inner_size(400.0, 200.0)
     .decorations(false)
     .transparent(true)
     .shadow(false)
@@ -115,25 +81,17 @@ fn build_presenter_window(
     .build()
 }
 
-/// Ensure only the presenter selected in settings exists; destroy others.
-/// The bezel is a companion surface that stacks on the main presenter.
-fn sync_presenter_windows(app: &tauri::AppHandle, presenter: &str, bezel_on: bool) {
-    for spec in MAIN_PRESENTERS.iter().chain(std::iter::once(&BEZEL)) {
-        let exists = app.get_webview_window(spec.label).is_some();
-        let wanted = spec.label == presenter || (spec.label == BEZEL.label && bezel_on);
-        if wanted && !exists {
-            if let Ok(window) = build_presenter_window(app, spec) {
-                // configure_toast touches NSWindow APIs that require the main thread.
-                let native = window.clone();
-                let _ = window.run_on_main_thread(move || {
-                    let _ = platform::configure_toast(&native);
-                });
-            }
-        } else if !wanted && exists {
-            if let Some(window) = app.get_webview_window(spec.label) {
-                let _ = window.destroy();
-            }
-        }
+/// Create the toast presenter once at startup; it lives for the whole run.
+fn ensure_toast_window(app: &tauri::AppHandle) {
+    if app.get_webview_window("toast").is_some() {
+        return;
+    }
+    if let Ok(window) = build_toast_window(app) {
+        // configure_toast touches NSWindow APIs that require the main thread.
+        let native = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            let _ = platform::configure_toast(&native);
+        });
     }
 }
 
@@ -167,8 +125,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             command,
             open_history,
-            platform::resize_surface,
-            platform::surface_metrics
+            platform::resize_surface
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -218,34 +175,8 @@ pub fn run() {
                 info: info.clone(),
                 _lock: lock,
             });
-            // Spawn the presenter window chosen in settings (toast by default);
-            // sync_presenter_windows keeps it the only main presenter window and
-            // attaches the bezel companion when enabled.
-            let presenter_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let service = presenter_handle.state::<Runtime>().service.clone();
-                let mut changes = service.subscribe();
-                // Prime the initial window before waiting for the first change.
-                changes.borrow_and_update();
-                let mut last: (String, bool) = (String::new(), false);
-                loop {
-                    if let Ok(settings) = service.call(None, "settings.get", json!({})).await {
-                        if let (Some(p), Some(b)) = (
-                            settings["presenter"].as_str(),
-                            settings["bezel_enabled"].as_bool(),
-                        ) {
-                            if (p.to_string(), b) != last {
-                                last = (p.to_string(), b);
-                                sync_presenter_windows(&presenter_handle, p, b);
-                            }
-                        }
-                    }
-                    if !changes.changed().await.is_ok() {
-                        break;
-                    }
-                    changes.borrow_and_update();
-                }
-            });
+            // The toast presenter lives for the whole run; create it once here.
+            ensure_toast_window(app.handle());
             let show = MenuItem::with_id(app, "show", "打开通知中心", true, None::<&str>)?;
             let demo = MenuItem::with_id(app, "demo", "发送测试通知", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
@@ -286,7 +217,7 @@ pub fn run() {
                     // Coalesce bursts of store commits into one UI notification.
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     changes.borrow_and_update();
-                    for label in ["toast", "card", "island", "bezel", "main"] {
+                    for label in ["toast", "main"] {
                         let _ = relay_handle.emit_to(label, "notifications-changed", ());
                     }
                     // Tray badge: the unread count as title text, cleared when read.

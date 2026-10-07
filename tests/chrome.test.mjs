@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { Window } from 'happy-dom';
 import { mountChrome, detectPlatform } from '../src/chrome/index.ts';
-import { theme } from '../src/shared/api.ts';
 
 const MAC_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/619.1.26 (KHTML, like Gecko) Version/17.4 Safari/619.1.26';
 const WIN_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0';
@@ -106,33 +104,4 @@ test('platform detection covers mac, windows, and everything else', () => {
   assert.equal(detectPlatform(MAC_UA), 'mac');
   assert.equal(detectPlatform(WIN_UA), 'win');
   assert.equal(detectPlatform(LINUX_UA), 'other');
-});
-
-test('window style switching is one attribute: theme() flips data-window-style', async () => {
-  const { win } = setup(MAC_UA);
-  const settings = {
-    theme: 'light', window_style: 'toolbar', accent: '#7c6cf0', radius: 16, font_size: 14, reduced_motion: false,
-  };
-  theme(settings);
-  assert.equal(document.documentElement.dataset.windowStyle, 'toolbar');
-  settings.window_style = 'overlay';
-  theme(settings);
-  assert.equal(document.documentElement.dataset.windowStyle, 'overlay');
-  await win.happyDOM.close();
-
-  const legacy = setup(MAC_UA);
-  theme({ theme: 'light', accent: '#7c6cf0', radius: 16, font_size: 14, reduced_motion: false });
-  assert.equal(document.documentElement.dataset.windowStyle, undefined, 'legacy payloads leave the CSS default preset active');
-  await legacy.win.happyDOM.close();
-});
-
-test('all five window-style presets and the pack override slot exist in CSS', () => {
-  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
-  for (const style of ['standard', 'toolbar', 'compact', 'overlay', 'sidebar']) {
-    assert.match(css, new RegExp(`data-window-style=${style}[^]`), `preset ${style} defined in CSS`);
-  }
-  // The --mdn-chrome-* slot is what lets a theme pack override any preset.
-  assert.match(css, /--mdn-chrome-height,/);
-  assert.match(css, /--mdn-chrome-fill,/);
-  assert.match(css, /--mdn-chrome-hairline,/);
 });
