@@ -68,6 +68,9 @@ impl Store {
           CREATE INDEX IF NOT EXISTS notification_group ON notifications(source,group_key);
           CREATE INDEX IF NOT EXISTS event_source ON events(source,seq);
           CREATE INDEX IF NOT EXISTS delivery_pending ON deliveries(status,next_attempt_at);
+          CREATE INDEX IF NOT EXISTS event_notification ON events(notification_id,seq);
+          CREATE INDEX IF NOT EXISTS event_type_time ON events(type,created_at);
+          CREATE INDEX IF NOT EXISTS presentation_state ON presentations(state,scheduled_at);
           CREATE VIRTUAL TABLE IF NOT EXISTS notification_fts USING fts5(title,body,content='notifications',content_rowid='rowid');
           CREATE TRIGGER IF NOT EXISTS notification_ai AFTER INSERT ON notifications BEGIN INSERT INTO notification_fts(rowid,title,body) VALUES(new.rowid,new.title,new.body); END;
           CREATE TRIGGER IF NOT EXISTS notification_ad AFTER DELETE ON notifications BEGIN INSERT INTO notification_fts(notification_fts,rowid,title,body) VALUES('delete',old.rowid,old.title,old.body); END;

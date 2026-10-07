@@ -317,18 +317,63 @@ async fn unix_client(stream: tokio::net::UnixStream, service: Service) {
     let auth_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
         tokio::select! {
-            chunk=reader.fill_buf()=>{
-                let chunk=match chunk{Ok(c) if !c.is_empty()=>c,_=>break};
-                let end=chunk.iter().position(|b|*b==b'\n');let count=end.map_or(chunk.len(),|n|n+1);
-                if buffer.len()+count>MAX_FRAME{break;}buffer.extend_from_slice(&chunk[..count]);reader.consume(count);
-                if end.is_none(){continue;}
-                let request=serde_json::from_slice::<Envelope>(&buffer);buffer.clear();
-                let (rid,result)=match request{Ok(r)=>{let rid=r.request_id.clone();let result=if r.v!=1 {Err(ApiError::invalid("unsupported version"))}else if source.is_none(){if r.op!="auth"{Err(ApiError::new("unauthorized","first command must be auth"))}else{match service.authenticate(r.data["token"].as_str().unwrap_or("")).await{Ok(s)=>{source=Some(s);Ok(json!({"authenticated":true}))},Err(e)=>Err(e)}}}else{let subscribe=r.op=="events.subscribe";let result=service.external(source.as_deref().unwrap(),r).await;if subscribe{if let Ok(v)=&result{cursor=v["next_seq"].as_i64();}}result};(rid,result)},Err(e)=>(String::new(),Err(ApiError::invalid(e)))};
-                let line=format!("{}\n",response(&rid,result));if !matches!(tokio::time::timeout(Duration::from_secs(5),write.write_all(line.as_bytes())).await,Ok(Ok(()))){break;}
-                if source.is_none(){break;}
+            chunk = reader.fill_buf() => {
+                let chunk = match chunk { Ok(c) if !c.is_empty() => c, _ => break };
+                let end = chunk.iter().position(|b| *b == b'\n');
+                let count = end.map_or(chunk.len(), |n| n + 1);
+                if buffer.len() + count > MAX_FRAME { break; }
+                buffer.extend_from_slice(&chunk[..count]);
+                reader.consume(count);
+                if end.is_none() { continue; }
+                let request = serde_json::from_slice::<Envelope>(&buffer);
+                buffer.clear();
+                let (rid, result) = match request {
+                    Ok(r) => {
+                        let rid = r.request_id.clone();
+                        let result = if r.v != 1 {
+                            Err(ApiError::invalid("unsupported version"))
+                        } else if source.is_none() {
+                            if r.op != "auth" {
+                                Err(ApiError::new("unauthorized", "first command must be auth"))
+                            } else {
+                                match service.authenticate(r.data["token"].as_str().unwrap_or("")).await {
+                                    Ok(s) => { source = Some(s); Ok(json!({"authenticated": true})) }
+                                    Err(e) => Err(e),
+                                }
+                            }
+                        } else {
+                            let subscribe = r.op == "events.subscribe";
+                            let result = service.external(source.as_deref().unwrap(), r).await;
+                            if subscribe {
+                                if let Ok(v) = &result { cursor = v["next_seq"].as_i64(); }
+                            }
+                            result
+                        };
+                        (rid, result)
+                    }
+                    Err(e) => (String::new(), Err(ApiError::invalid(e))),
+                };
+                let line = format!("{}\n", response(&rid, result));
+                if !matches!(tokio::time::timeout(Duration::from_secs(5), write.write_all(line.as_bytes())).await, Ok(Ok(()))) { break; }
+                if source.is_none() { break; }
             },
-            _=interval.tick(),if cursor.is_some()=>{match service.call(source.as_deref(),"events.list",json!({"after_seq":cursor})).await{Ok(v)=>{for e in v["events"].as_array().unwrap(){let line=format!("{e}\n");if !matches!(tokio::time::timeout(Duration::from_secs(5),write.write_all(line.as_bytes())).await,Ok(Ok(()))){return;}}cursor=v["next_seq"].as_i64();},Err(e)=>{let line=format!("{}\n",response("",Err(e)));let _=tokio::time::timeout(Duration::from_secs(5),write.write_all(line.as_bytes())).await;cursor=None;}}},
-            _=tokio::time::sleep_until(auth_deadline),if source.is_none()=>break,
+            _ = interval.tick(), if cursor.is_some() => {
+                match service.call(source.as_deref(), "events.list", json!({"after_seq": cursor})).await {
+                    Ok(v) => {
+                        for e in v["events"].as_array().unwrap() {
+                            let line = format!("{e}\n");
+                            if !matches!(tokio::time::timeout(Duration::from_secs(5), write.write_all(line.as_bytes())).await, Ok(Ok(()))) { return; }
+                        }
+                        cursor = v["next_seq"].as_i64();
+                    }
+                    Err(e) => {
+                        let line = format!("{}\n", response("", Err(e)));
+                        let _ = tokio::time::timeout(Duration::from_secs(5), write.write_all(line.as_bytes())).await;
+                        cursor = None;
+                    }
+                }
+            },
+            _ = tokio::time::sleep_until(auth_deadline), if source.is_none() => break,
         }
     }
 }
