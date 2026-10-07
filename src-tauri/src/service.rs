@@ -12,11 +12,13 @@ struct Job {
 #[derive(Clone)]
 pub struct Service {
     sender: mpsc::Sender<Job>,
+    changes: tokio::sync::watch::Receiver<u64>,
 }
 impl Service {
     pub fn start(path: &Path) -> Result<Self> {
         let mut store = Store::open(path)?;
         store.recover()?;
+        let changes = store.subscribe();
         let (sender, mut receiver) = mpsc::channel::<Job>(256);
         std::thread::Builder::new()
             .name("notification-store".into())
@@ -33,7 +35,11 @@ impl Service {
                 }
             })
             .map_err(|e| ApiError::new("unavailable", e))?;
-        Ok(Self { sender })
+        Ok(Self { sender, changes })
+    }
+    /// Receive a signal whenever persisted state changes (coalesced).
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes.clone()
     }
     pub async fn call(&self, source: Option<&str>, op: &str, data: Value) -> Result<Value> {
         let (reply, rx) = oneshot::channel();
@@ -100,15 +106,22 @@ pub async fn run_workers(service: Service) {
             loop {
                 match service.call(None, "_delivery.next", Value::Null).await {
                     Ok(job) if !job.is_null() => {
-                        let response = client
-                            .post(job["url"].as_str().unwrap())
-                            .header("Content-Type", "application/json")
-                            .body(job["body"].as_str().unwrap().to_string())
-                            .send()
-                            .await;
+                        // Delivery rows cross a serialization boundary; never
+                        // unwrap them — a malformed row must fail the delivery,
+                        // not silently kill this worker via panic.
+                        let response = match (job["url"].as_str(), job["body"].as_str()) {
+                            (Some(url), Some(body)) => client
+                                .post(url)
+                                .header("Content-Type", "application/json")
+                                .body(body.to_string())
+                                .send()
+                                .await
+                                .map_err(|e| e.to_string()),
+                            _ => Err("malformed delivery row".into()),
+                        };
                         let (success, error) = match response {
                             Ok(r) => (r.status().is_success(), format!("HTTP {}", r.status())),
-                            Err(e) => (false, e.to_string()),
+                            Err(e) => (false, e),
                         };
                         let result = serde_json::json!({"id":job["id"],"success":success,"error":if success{None}else{Some(error)}});
                         while let Err(e) =

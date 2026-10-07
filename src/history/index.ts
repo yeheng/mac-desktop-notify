@@ -1,3 +1,5 @@
+import { renderSettings } from '../settings';
+import { listen } from '@tauri-apps/api/event';
 import { button, call, date, element, labels, Notification, Page, Settings, showError, theme } from '../shared/api';
 
 export function startHistory(root: HTMLElement) {
@@ -96,75 +98,14 @@ export function startHistory(root: HTMLElement) {
   $('nav-history').onclick = () => { settingsVisible = false; $('history-view').hidden = false; $('settings-view').hidden = true; $('page-title').textContent = '消息历史'; $('subtitle').textContent = '所有提醒，一处回看。'; $('nav-history').classList.add('active'); $('nav-settings').classList.remove('active'); void call<Settings>('settings.get').then(theme).catch(showError); void load().catch(showError); };
   $('nav-settings').onclick = () => { settingsVisible = true; $('history-view').hidden = true; $('settings-view').hidden = false; $('page-title').textContent = '设置与接入'; $('subtitle').textContent = '定义外观，控制打扰，连接你的工具。'; $('nav-history').classList.remove('active'); $('nav-settings').classList.add('active'); void renderSettings($('settings-view')).catch(showError); };
   void call<Settings>('settings.get').then(theme).catch(showError); void load().catch(showError);
-  // Poll a small event page, then reload only when the first page is visible.
+  // Store changes push a native event; the interval is only a fallback.
   let watermark = 0; let polling = false;
-  setInterval(async () => {
+  const poll = async () => {
     if (settingsVisible || document.hidden || polling) return; polling = true;
     try { const events = await call<{ next_seq: number; events: unknown[] }>('events.list', { after_seq: watermark }); watermark = events.next_seq; if (events.events.length && items.length <= 30) await load(); }
     catch (e) { if (typeof e === 'object' && e && 'code' in e && e.code === 'cursor_expired') { const page = await call<Page>('notification.list', query()); watermark = page.watermark; await load(); } else showError(e); }
     finally { polling = false; }
-  }, 2500);
-}
-
-async function renderSettings(root: HTMLElement) {
-  const [s, info, sources, endpoints] = await Promise.all([
-    call<Settings>('settings.get'), call<{ http: string; socket: string; status: string; error?: string }>('runtime.info'),
-    call<string[]>('sources.list'), call<{ id: string; source: string; url: string }[]>('endpoints.list')
-  ]);
-  root.innerHTML = `
-    <form id="settings-form" class="settings-grid">
-      <section class="settings-card"><h2>通知外观</h2><p class="muted">预览只改变外观；保存后应用到弹窗。</p>
-        <label>主题<select name="theme"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
-        <label>强调色<input name="accent" type="color"/></label><label>宽度<input name="width" type="number" min="300" max="600"/></label>
-        <label>圆角<input name="radius" type="number" min="0" max="32"/></label><label>字体大小<input name="font_size" type="number" min="12" max="20"/></label>
-        <label>位置<select name="position"><option value="top-right">右上角</option><option value="bottom-right">右下角</option><option value="top-left">左上角</option><option value="bottom-left">左下角</option></select></label>
-        <label class="check-label"><input name="reduced_motion" type="checkbox"/>减少动画</label>
-        <article class="notification preview-card"><div class="card-top"><span class="source">我的应用</span><span class="badge">成功</span></div><h2>所有消息，有序抵达</h2><p>重要的消息及时出现，其余内容安静保存。</p><button type="button">查看详情</button></article>
-      </section>
-      <section class="settings-card"><h2>降噪与保留</h2>
-        <label>同键合并窗口（毫秒）<input name="merge_window_ms" type="number" min="0" max="60000"/></label>
-        <label>每来源每分钟最多提醒<input name="source_per_minute" type="number" min="1" max="600"/></label>
-        <label>全局每分钟最多提醒<input name="global_per_minute" type="number" min="1" max="1200"/></label>
-        <label>等待队列上限<input name="queue_limit" type="number" min="1" max="1000"/></label>
-        <label>历史保留天数<input name="retention_days" type="number" min="1" max="3650"/></label>
-        <label>勿扰开始<input name="quiet_start" type="time"/></label><label>勿扰结束<input name="quiet_end" type="time"/></label>
-        <label>静音来源（每行一个）<textarea name="muted_sources" rows="2"></textarea></label>
-        <label>静音分组（每行 source/group_key）<textarea name="muted_groups" rows="2"></textarea></label>
-        <p class="muted">勿扰按本机时间执行；相同起止时间表示关闭。被抑制的通知仍保留历史。</p>
-      </section><div class="settings-save"><button type="submit" class="primary">保存设置</button></div>
-    </form>
-    <section class="settings-card"><h2>工具接入</h2><p id="connection-info" class="connection-info"></p><p class="muted">先创建来源取得 token。HTTP 与 WebSocket 使用 Bearer token；Unix socket 首条消息使用 auth。</p>
-      <div id="source-list" class="tags"></div><form id="source-form" class="inline-form"><input name="id" required pattern="[A-Za-z0-9_-]+" maxlength="80" placeholder="来源 ID，例如 build-agent"/><button>创建来源</button></form><pre id="new-token" class="token-output" hidden></pre>
-      <h3>HTTP 回调端点</h3><div id="endpoint-list"></div><form id="endpoint-form" class="inline-form"><input name="id" required placeholder="端点 ID"/><select name="source" aria-label="回调所属来源"></select><input name="url" type="url" required placeholder="http://127.0.0.1:8080/callback"/><button>注册端点</button></form>
-    </section>`;
-  const form = root.querySelector<HTMLFormElement>('#settings-form')!;
-  for (const [key, value] of Object.entries(s)) {
-    const field = form.elements.namedItem(key) as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null; if (!field) continue;
-    if (field instanceof HTMLInputElement && field.type === 'checkbox') field.checked = Boolean(value);
-    else if (key.startsWith('quiet_')) field.value = value === null ? '' : `${String(Math.floor(Number(value) / 60)).padStart(2, '0')}:${String(Number(value) % 60).padStart(2, '0')}`;
-    else field.value = Array.isArray(value) ? value.join('\n') : String(value);
-  }
-  function read(): Settings {
-    const result = { ...s }; const record = result as unknown as Record<string, unknown>;
-    for (const key of Object.keys(s)) {
-      const field = form.elements.namedItem(key) as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
-      if (field instanceof HTMLInputElement && field.type === 'checkbox') record[key] = field.checked;
-      else if (key.startsWith('quiet_')) { const parts = field.value.split(':').map(Number); record[key] = field.value ? parts[0] * 60 + parts[1] : null; }
-      else if (key.startsWith('muted_')) record[key] = field.value.split('\n').map(x => x.trim()).filter(Boolean);
-      else record[key] = typeof record[key] === 'number' ? Number(field.value) : field.value;
-    }
-    return result;
-  }
-  form.oninput = () => theme(read());
-  form.onsubmit = async e => { e.preventDefault(); try { const result = await call<Settings>('settings.set', read()); theme(result); document.querySelector('#status')!.textContent = '设置已保存。'; } catch (e) { showError(e); } };
-  root.querySelector('#connection-info')!.textContent = `${info.status === 'listening' ? '● 监听中' : info.status}　${info.http}\nUnix socket：${info.socket}${info.error ? `\n${info.error}` : ''}`;
-  root.querySelector('#source-list')!.replaceChildren(...sources.map(source => element('span', 'tag', source)));
-  const sourceForm = root.querySelector<HTMLFormElement>('#source-form')!;
-  sourceForm.onsubmit = async e => { e.preventDefault(); try { const result = await call<{ id: string; token: string }>('sources.create', Object.fromEntries(new FormData(sourceForm))); const output = root.querySelector<HTMLElement>('#new-token')!; output.hidden = false; output.textContent = `来源：${result.id}\nToken（仅本次显示，请保存）：${result.token}`; root.querySelector('#source-list')!.append(element('span', 'tag', result.id)); const option = element('option', '', result.id); option.value = result.id; root.querySelector<HTMLSelectElement>('#endpoint-form select')!.append(option); sourceForm.reset(); } catch (e) { showError(e); } };
-  const endpointForm = root.querySelector<HTMLFormElement>('#endpoint-form')!;
-  const sourceSelect = endpointForm.elements.namedItem('source') as HTMLSelectElement;
-  for (const source of ['desktop', ...sources]) { const option = element('option', '', source); option.value = source; sourceSelect.append(option); }
-  const endpointList = root.querySelector('#endpoint-list')!;
-  for (const endpoint of endpoints) endpointList.append(element('p', 'endpoint-row', `${endpoint.id} · ${endpoint.source} → ${endpoint.url}`));
-  endpointForm.onsubmit = async e => { e.preventDefault(); try { const data = Object.fromEntries(new FormData(endpointForm)); await call('endpoints.create', data); endpointList.append(element('p', 'endpoint-row', `${data.id} · ${data.source} → ${data.url}`)); endpointForm.reset(); } catch (e) { showError(e); } };
+  };
+  void listen('notifications-changed', () => { void poll(); });
+  setInterval(() => { void poll(); }, 10000);
 }

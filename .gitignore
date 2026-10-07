@@ -2,26 +2,15 @@
 /.build
 /build
 /Packages
-xcuserdata/
-DerivedData/
-.swiftpm/configuration/registries.json
-.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
-.netrc
 dist/
 
 # Git worktrees
 .worktrees/
-
-# Rust (egui-notify 子项目)
-/egui-notify/target
-
-# Superpowers subagent-driven-development scratch (ledger, briefs, reports, review packages)
-/.superpowers/
 
 # Local agent/AI workspace data
 .claude/
 .workbuddy/
 repomix-output.xml
 
-# 重构期一次性审计底稿（行号随代码漂移，不入库）
-hardcoded-visual-inventory.md
+# Installed dependencies are reproduced from pnpm-lock.yaml.
+node_modules/

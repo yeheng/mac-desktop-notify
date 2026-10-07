@@ -14,7 +14,7 @@ use std::{
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager,
+    Emitter, Manager,
 };
 
 struct Runtime {
@@ -60,53 +60,6 @@ fn open_history(app: tauri::AppHandle) {
         let _ = window.set_focus();
     }
 }
-#[tauri::command]
-async fn resize_toast(
-    window: tauri::WebviewWindow,
-    width: u32,
-    height: u32,
-    position: String,
-) -> std::result::Result<(), String> {
-    if window.label() != "toast" {
-        return Err("toast only".into());
-    }
-    if height == 0 {
-        return window.hide().map_err(|e| e.to_string());
-    }
-    let width = width.clamp(300, 600);
-    let height = height.clamp(1, 850);
-    let monitor = window
-        .current_monitor()
-        .map_err(|e| e.to_string())?
-        .or(window.primary_monitor().map_err(|e| e.to_string())?);
-    if let Some(monitor) = monitor {
-        let area = monitor.work_area();
-        let scale = monitor.scale_factor();
-        let actual_height = (height as f64)
-            .min(area.size.height as f64 / scale - 24.0)
-            .max(1.0);
-        let actual_width = (width as f64)
-            .min(area.size.width as f64 / scale - 24.0)
-            .max(1.0);
-        let x = if position.ends_with("left") {
-            area.position.x as f64 / scale + 12.0
-        } else {
-            (area.position.x + area.size.width as i32) as f64 / scale - actual_width - 12.0
-        };
-        let y = if position.starts_with("bottom") {
-            (area.position.y + area.size.height as i32) as f64 / scale - actual_height - 12.0
-        } else {
-            area.position.y as f64 / scale + 12.0
-        };
-        window
-            .set_size(tauri::LogicalSize::new(actual_width, actual_height))
-            .map_err(|e| e.to_string())?;
-        window
-            .set_position(tauri::LogicalPosition::new(x, y))
-            .map_err(|e| e.to_string())?;
-    }
-    platform::show_toast(window).await
-}
 
 fn send_demo(app: &tauri::AppHandle) {
     let service = app.state::<Runtime>().service.clone();
@@ -135,7 +88,7 @@ fn send_demo(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![command,open_history,resize_toast])
+        .invoke_handler(tauri::generate_handler![command,open_history,platform::resize_toast])
         .setup(|app|{
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -162,6 +115,18 @@ pub fn run() {
             let mut tray=TrayIconBuilder::new().tooltip("桌面通知").menu(&menu).on_menu_event(|app,event|match event.id.as_ref(){"show"=>open_history(app.clone()),"demo"=>send_demo(app),"quit"=>app.exit(0),_=>{}});
             if let Some(icon)=app.default_window_icon(){tray=tray.icon(icon.clone());}tray.build(app)?;
             if std::env::args().any(|arg| arg == "--demo") { send_demo(app.handle()); }
+            let relay_handle = app.handle().clone();
+            let relay_service = service.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut changes = relay_service.subscribe();
+                while changes.changed().await.is_ok() {
+                    // Coalesce bursts of store commits into one UI notification.
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    changes.borrow_and_update();
+                    let _ = relay_handle.emit_to("toast", "notifications-changed", ());
+                    let _ = relay_handle.emit_to("main", "notifications-changed", ());
+                }
+            });
             tauri::async_runtime::spawn(async move {
                 service::run_workers(service.clone()).await;
                 let (ready,received)=tokio::sync::oneshot::channel();

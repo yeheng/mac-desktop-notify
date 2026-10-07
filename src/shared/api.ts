@@ -8,7 +8,18 @@ export interface Notification {
   events?: { seq: number; type: string; created_at: number; data: unknown }[];
   deliveries?: { id: number; status: string; attempts: number; last_error: string | null }[];
 }
+export interface ToastStyle {
+  header: 'full' | 'compact' | 'hidden'; header_label: string; header_separator: boolean;
+  show_icon: boolean; show_time: boolean; show_level: boolean;
+  border_style: 'none' | 'solid' | 'dashed'; border_width: number; border_color: string;
+  level_accent: boolean; background: string; text_color: string;
+  material: 'none' | 'hud' | 'popover' | 'sidebar' | 'under-window'; tint_opacity: number; shadow: boolean;
+  padding: number; gap: number; title_size: number; title_weight: number; body_lines: number;
+  line_height: number; text_align: 'left' | 'center'; show_body: boolean; show_progress: boolean;
+  show_tags: boolean; show_history: boolean; actions_layout: 'inline' | 'stacked';
+}
 export interface Settings {
+  toast: ToastStyle;
   theme: string; accent: string; width: number; radius: number; font_size: number; position: string;
   reduced_motion: boolean; muted_sources: string[]; muted_groups: string[];
   quiet_start: number | null; quiet_end: number | null; merge_window_ms: number;

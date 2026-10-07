@@ -125,7 +125,102 @@ impl Create {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct ToastStyle {
+    pub header: String,
+    pub header_label: String,
+    pub header_separator: bool,
+    pub show_icon: bool,
+    pub show_time: bool,
+    pub show_level: bool,
+    pub border_style: String,
+    pub border_width: u32,
+    pub border_color: String,
+    pub level_accent: bool,
+    pub background: String,
+    pub text_color: String,
+    pub material: String,
+    pub tint_opacity: u32,
+    pub shadow: bool,
+    pub padding: u32,
+    pub gap: u32,
+    pub title_size: u32,
+    pub title_weight: u32,
+    pub body_lines: u32,
+    pub line_height: f64,
+    pub text_align: String,
+    pub show_body: bool,
+    pub show_progress: bool,
+    pub show_tags: bool,
+    pub show_history: bool,
+    pub actions_layout: String,
+}
+impl Default for ToastStyle {
+    fn default() -> Self {
+        Self {
+            header: "full".into(),
+            header_label: String::new(),
+            header_separator: false,
+            show_icon: true,
+            show_time: false,
+            show_level: true,
+            border_style: "solid".into(),
+            border_width: 1,
+            border_color: "theme".into(),
+            level_accent: true,
+            background: "theme".into(),
+            text_color: "theme".into(),
+            material: "none".into(),
+            tint_opacity: 35,
+            shadow: false,
+            padding: 16,
+            gap: 8,
+            title_size: 15,
+            title_weight: 600,
+            body_lines: 5,
+            line_height: 1.6,
+            text_align: "left".into(),
+            show_body: true,
+            show_progress: true,
+            show_tags: false,
+            show_history: true,
+            actions_layout: "inline".into(),
+        }
+    }
+}
+fn color(value: &str) -> bool {
+    value.len() == 7 && value.starts_with('#') && value[1..].bytes().all(|b| b.is_ascii_hexdigit())
+}
+impl ToastStyle {
+    pub fn validate(&self) -> Result<()> {
+        if !["full", "compact", "hidden"].contains(&self.header.as_str())
+            || self.header_label.chars().count() > 80
+            || !["none", "solid", "dashed"].contains(&self.border_style.as_str())
+            || self.border_width > 4
+            || [&self.border_color, &self.background, &self.text_color]
+                .iter()
+                .any(|c| c.as_str() != "theme" && !color(c))
+            || !["none", "hud", "popover", "sidebar", "under-window"]
+                .contains(&self.material.as_str())
+            || self.tint_opacity > 100
+            || !(8..=32).contains(&self.padding)
+            || self.gap > 24
+            || !(12..=28).contains(&self.title_size)
+            || ![400, 500, 600, 700].contains(&self.title_weight)
+            || !(1..=12).contains(&self.body_lines)
+            || !self.line_height.is_finite()
+            || !(1.2..=2.0).contains(&self.line_height)
+            || !["left", "center"].contains(&self.text_align.as_str())
+            || !["inline", "stacked"].contains(&self.actions_layout.as_str())
+        {
+            return Err(ApiError::invalid("invalid toast appearance"));
+        }
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Settings {
+    pub toast: ToastStyle,
     pub theme: String,
     pub accent: String,
     pub width: u32,
@@ -146,6 +241,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            toast: ToastStyle::default(),
             theme: "system".into(),
             accent: "#7c6cf0".into(),
             width: 380,
@@ -167,6 +263,7 @@ impl Default for Settings {
 }
 impl Settings {
     pub fn validate(&self) -> Result<()> {
+        self.toast.validate()?;
         if !["system", "light", "dark"].contains(&self.theme.as_str())
             || !["top-right", "bottom-right", "top-left", "bottom-left"]
                 .contains(&self.position.as_str())

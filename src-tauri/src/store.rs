@@ -6,12 +6,13 @@ use sha2::{Digest, Sha256};
 fn token_hash(token: &str) -> String {
     format!("{:x}", Sha256::digest(token.as_bytes()))
 }
-use std::{collections::HashMap, path::Path, time::Instant};
+use std::{collections::HashMap, net::ToSocketAddrs, path::Path, time::Instant};
 
 pub struct Store {
     conn: Connection,
     clocks: HashMap<String, (Instant, i64, bool)>,
     last_cleanup: i64,
+    changes: tokio::sync::watch::Sender<u64>,
 }
 fn parse(s: String) -> Result<Value> {
     Ok(serde_json::from_str(&s)?)
@@ -76,11 +77,20 @@ impl Store {
             "INSERT OR IGNORE INTO settings VALUES(1,?)",
             [serde_json::to_string(&Settings::default())?],
         )?;
+        let (changes, _) = tokio::sync::watch::channel(0u64);
         Ok(Self {
             conn,
             clocks: HashMap::new(),
             last_cleanup: 0,
+            changes,
         })
+    }
+    /// In-process change signal; bumped only after commits that alter persisted state.
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes.subscribe()
+    }
+    fn changed(&self) {
+        self.changes.send_modify(|value| *value += 1);
     }
     pub fn settings(&self) -> Result<Settings> {
         Ok(serde_json::from_str(&self.conn.query_row(
@@ -160,6 +170,7 @@ impl Store {
                     )?;
                 }
                 tx.commit()?;
+                self.changed();
                 Ok(json!({"updated":ids.len()}))
             }
             "events.subscribe" | "events.list" => {
@@ -173,6 +184,7 @@ impl Store {
                     "UPDATE settings SET payload=? WHERE id=1",
                     [serde_json::to_string(&settings)?],
                 )?;
+                self.changed();
                 Ok(json!(settings))
             }
             "sources.list" if source.is_none() => {
@@ -200,6 +212,7 @@ impl Store {
                         params![name, token_hash(&token)],
                     )
                     .map_err(|_| ApiError::new("conflict", "source already exists"))?;
+                self.changed();
                 Ok(json!({"id":name,"token":token}))
             }
             "endpoints.list" if source.is_none() => {
@@ -224,6 +237,38 @@ impl Store {
                 {
                     return Err(ApiError::invalid("invalid endpoint"));
                 }
+                // Webhook targets must stay on this machine unless the operator
+                // explicitly opts into LAN delivery; blocks SSRF from any
+                // authenticated source towards internal nets or cloud metadata.
+                // DNS is resolved at registration time only; reqwest re-resolves later.
+                let allow_lan =
+                    std::env::var("MAC_NOTIFY_ALLOW_LAN_CALLBACKS").as_deref() == Ok("1");
+                let host = parsed.host_str().unwrap_or_default().to_string();
+                let port = parsed.port_or_known_default().unwrap_or(80);
+                let resolved = (host.as_str(), port)
+                    .to_socket_addrs()
+                    .map_err(|_| ApiError::invalid("endpoint host cannot be resolved"))?
+                    .collect::<Vec<_>>();
+                if resolved.is_empty()
+                    || resolved.iter().any(|addr| {
+                        let allowed = match addr.ip() {
+                            std::net::IpAddr::V4(ip) => {
+                                ip.is_loopback()
+                                    || (allow_lan && (ip.is_private() || ip.is_link_local()))
+                            }
+                            std::net::IpAddr::V6(ip) => {
+                                ip.is_loopback()
+                                    || (allow_lan
+                                        && (ip.is_unique_local() || ip.is_unicast_link_local()))
+                            }
+                        };
+                        !allowed
+                    })
+                {
+                    return Err(ApiError::invalid(
+                        "endpoint must address loopback; set MAC_NOTIFY_ALLOW_LAN_CALLBACKS=1 to allow LAN targets",
+                    ));
+                }
                 let exists = src == "desktop"
                     || self.conn.query_row(
                         "SELECT EXISTS(SELECT 1 FROM sources WHERE id=?)",
@@ -234,6 +279,7 @@ impl Store {
                     return Err(ApiError::invalid("unknown source"));
                 }
                 self.conn.execute("INSERT INTO endpoints(id,source,url) VALUES(?,?,?)",params![id_,src,url]).map_err(|_|ApiError::new("conflict","endpoint already exists; create a new id to preserve pending delivery destinations"))?;
+                self.changed();
                 Ok(json!({"id":id_}))
             }
             "deliveries.retry" if source.is_none() => {
@@ -241,6 +287,9 @@ impl Store {
                     .as_i64()
                     .ok_or_else(|| ApiError::invalid("id required"))?;
                 let n=self.conn.execute("UPDATE deliveries SET status='pending',attempts=0,next_attempt_at=? WHERE id=? AND status='failed'",params![now(),id_])?;
+                if n > 0 {
+                    self.changed();
+                }
                 Ok(json!({"updated":n}))
             }
             "toast.snapshot" if source.is_none() => self.snapshot(),
@@ -260,6 +309,7 @@ impl Store {
                     "UPDATE metadata SET value=? WHERE key='summary_shown_at'",
                     [now()],
                 )?;
+                self.changed();
                 Ok(json!({}))
             }
             "toast.displayed" if source.is_none() => self.displayed(&data),
@@ -340,7 +390,8 @@ impl Store {
             }
         }
         let settings = self.settings()?;
-        let minute = chrono::Local::now().hour() * 60 + chrono::Local::now().minute();
+        let local = chrono::Local::now();
+        let minute = local.hour() * 60 + local.minute();
         let quiet = quiet_at(&settings, minute);
         let mut reason = if settings.muted_sources.iter().any(|s| s == source)
             || settings
@@ -418,6 +469,7 @@ impl Store {
             event(&tx, &id_, "suppressed", json!({"reason":reason}), at)?;
         }
         tx.commit()?;
+        self.changed();
         Ok(
             json!({"notification_id":id_,"accepted":true,"duplicate":false,"presentation":if reason.is_empty(){"queued"}else{"suppressed"},"reason":reason}),
         )
@@ -527,22 +579,43 @@ impl Store {
         }
         let limit = data["limit"].as_i64().unwrap_or(30).clamp(1, 100);
         args.push((limit + 1).into());
-        let sql=format!("SELECT n.id FROM notifications n JOIN presentations p ON p.notification_id=n.id WHERE {} ORDER BY n.created_at DESC,n.id DESC LIMIT ?",where_.join(" AND "));
+        let sql = format!(
+            "SELECT n.id,n.payload,n.source,n.created_at,n.updated_at,n.revision,n.read_at,n.archived_at,p.state,p.reason,p.merge_count \
+             FROM notifications n JOIN presentations p ON p.notification_id=n.id WHERE {} \
+             ORDER BY n.created_at DESC,n.id DESC LIMIT ?",
+            where_.join(" AND ")
+        );
         let mut stmt = self.conn.prepare(&sql)?;
-        let mut ids = stmt
+        let rows = stmt
             .query_map(rusqlite::params_from_iter(args.iter()), |r| {
-                r.get::<_, String>(0)
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    json!({
+                        "source": r.get::<_, String>(2)?,
+                        "created_at": r.get::<_, i64>(3)?,
+                        "updated_at": r.get::<_, i64>(4)?,
+                        "revision": r.get::<_, i64>(5)?,
+                        "read_at": r.get::<_, Option<i64>>(6)?,
+                        "archived_at": r.get::<_, Option<i64>>(7)?,
+                        "state": r.get::<_, String>(8)?,
+                        "reason": r.get::<_, String>(9)?,
+                        "merge_count": r.get::<_, i64>(10)?,
+                    }),
+                ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let more = ids.len() > limit as usize;
-        ids.truncate(limit as usize);
-        let mut items = vec![];
-        for id_ in ids {
-            let mut n = self.get(&id_)?;
-            n.as_object_mut().unwrap().remove("events");
-            n.as_object_mut().unwrap().remove("deliveries");
+        let more = rows.len() > limit as usize;
+        let mut items = Vec::with_capacity(rows.len().min(limit as usize));
+        for (id_, payload, meta) in rows {
+            let mut n: Value = parse(payload)?;
+            n["id"] = json!(id_);
+            n.as_object_mut()
+                .unwrap()
+                .extend(meta.as_object().unwrap().clone());
             items.push(n);
         }
+        items.truncate(limit as usize);
         let cursor = if more {
             items
                 .last()
@@ -587,6 +660,7 @@ impl Store {
         }
         event(&tx, id_, "updated", json!({}), at)?;
         tx.commit()?;
+        self.changed();
         Ok(json!({"notification_id":id_,"revision":expected+1}))
     }
     fn finish(
@@ -621,6 +695,7 @@ impl Store {
         event(&tx, id_, kind, data, at)?;
         tx.commit()?;
         self.clocks.remove(id_);
+        self.changed();
         Ok(json!({"notification_id":id_,"state":state}))
     }
     fn displayed(&mut self, data: &Value) -> Result<Value> {
@@ -639,6 +714,7 @@ impl Store {
             )?;
             event(&tx, id_, "displayed", json!({}), at)?;
             tx.commit()?;
+            self.changed();
             self.clocks.insert(
                 id_.into(),
                 (Instant::now(), input.display_duration_ms, false),
@@ -704,6 +780,7 @@ impl Store {
             "UPDATE deliveries SET status='pending' WHERE status='sending'",
             [],
         )?;
+        self.changed();
         Ok(())
     }
     pub fn tick(&mut self) -> Result<()> {
@@ -775,15 +852,45 @@ impl Store {
                 event(&tx, &id_, "suppressed", json!({"reason":reason}), at)?;
                 tx.commit()?;
                 self.clocks.remove(&id_);
+                self.changed();
             }
         }
         if !quiet {
-            let count: i64 = self.conn.query_row(
-                "SELECT COUNT(*) FROM presentations WHERE state='showing'",
-                [],
-                |r| r.get(0),
-            )?;
-            self.conn.execute("UPDATE presentations SET state='showing',scheduled_at=? WHERE notification_id IN (SELECT n.id FROM notifications n JOIN presentations p ON p.notification_id=n.id WHERE p.state='queued' ORDER BY CASE WHEN n.created_at<? THEN 0 WHEN n.level='error' THEN 1 WHEN n.level='warning' THEN 2 ELSE 3 END,n.created_at,n.id LIMIT ?)",params![at,at-30_000,3-count])?;
+            // Slots belong to groups, not individual messages. Bound each group so
+            // a busy producer cannot create an unbounded native surface.
+            let mut stmt = self.conn.prepare("SELECT n.id,n.source,n.group_key,n.level,p.state FROM notifications n JOIN presentations p ON p.notification_id=n.id WHERE p.state IN ('showing','queued') ORDER BY CASE WHEN p.state='showing' THEN 0 ELSE 1 END,CASE WHEN n.created_at<? THEN 0 WHEN n.level='error' THEN 1 WHEN n.level='warning' THEN 2 ELSE 3 END,n.created_at,n.id")?;
+            let active = stmt
+                .query_map([at - 30_000], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, String>(4)?,
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            drop(stmt);
+            let mut groups = HashMap::new();
+            let mut promoted = 0;
+            for (id, source, group, level, state) in active {
+                let key = (
+                    source,
+                    !group.is_empty(),
+                    if group.is_empty() { level } else { group },
+                );
+                if state == "showing" {
+                    *groups.entry(key).or_insert(0usize) += 1;
+                } else if groups.get(&key).is_some_and(|count| *count < 5)
+                    || (!groups.contains_key(&key) && groups.len() < 3)
+                {
+                    promoted += self.conn.execute("UPDATE presentations SET state='showing',scheduled_at=? WHERE notification_id=? AND state='queued'", params![at, id])?;
+                    *groups.entry(key).or_insert(0) += 1;
+                }
+            }
+            if promoted > 0 {
+                self.changed();
+            }
         }
         if at - self.last_cleanup > 3_600_000 {
             self.cleanup(at, settings.retention_days)?;
@@ -878,6 +985,9 @@ impl Store {
             "UPDATE deliveries SET status=?,last_error=?,next_attempt_at=? WHERE id=?",
             params![status, data["error"].as_str(), now() + delay, id_],
         )?;
+        if success || status == "failed" {
+            self.changed();
+        }
         Ok(json!({}))
     }
 }
@@ -901,6 +1011,123 @@ mod tests {
             title: "构建失败".into(),
             ..Create::default()
         }
+    }
+    #[test]
+    fn toast_groups_share_slots_and_keep_individual_lifecycles() {
+        let mut s = db();
+        let mut ids = vec![];
+        for i in 0..6 {
+            ids.push(
+                s.create("build", input(&format!("msg-{i}")), now())
+                    .unwrap()["notification_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+        }
+        let mut warning = input("warning");
+        warning.level = "warning".into();
+        s.create("build", warning, now()).unwrap();
+        s.create("other", input("other"), now()).unwrap();
+        s.create("fourth", input("fourth"), now()).unwrap();
+        // Bypass rate policy for this scheduler-only fixture.
+        s.conn
+            .execute("UPDATE presentations SET state='queued',reason=''", [])
+            .unwrap();
+        s.tick().unwrap();
+        let snapshot = s.snapshot().unwrap();
+        let items = snapshot["items"].as_array().unwrap();
+        assert_eq!(items.len(), 7);
+        assert_eq!(
+            items
+                .iter()
+                .filter(|n| n["source"] == "build" && n["level"] == "info")
+                .count(),
+            5
+        );
+        let shown = items
+            .iter()
+            .find(|n| n["source"] == "build" && n["level"] == "info")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        s.finish(&shown, None, "dismissed", json!({}), now())
+            .unwrap();
+        s.tick().unwrap();
+        assert_eq!(s.snapshot().unwrap()["items"].as_array().unwrap().len(), 7);
+        assert_eq!(
+            s.conn
+                .query_row("SELECT COUNT(*) FROM notifications", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            9
+        );
+    }
+
+    #[test]
+    fn explicit_group_overrides_level_but_never_source() {
+        let mut s = db();
+        for (i, source, group, level) in [
+            (0, "a", "job", "info"),
+            (1, "a", "job", "error"),
+            (2, "b", "job", "info"),
+            (3, "a", "", "job"),
+        ] {
+            let mut n = input(&i.to_string());
+            n.group_key = group.into();
+            // Last message uses a valid level matching a different explicit group below.
+            n.level = if level == "job" { "info" } else { level }.into();
+            s.create(source, n, now()).unwrap();
+        }
+        s.tick().unwrap();
+        assert_eq!(s.snapshot().unwrap()["items"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn appearance_survives_legacy_settings_and_rejected_save() {
+        let mut s = db();
+        // A settings row from before toast appearance existed remains usable.
+        s.conn
+            .execute(
+                "UPDATE settings SET payload=? WHERE id=1",
+                [r##"{"theme":"dark","width":420,"muted_sources":["build"]}"##],
+            )
+            .unwrap();
+        let legacy = s.settings().unwrap();
+        assert_eq!(legacy.width, 420);
+        assert_eq!(legacy.toast.material, "none");
+        assert_eq!(legacy.toast.header, "full");
+        let mut updated = serde_json::to_value(legacy).unwrap();
+        updated["toast"]["material"] = json!("popover");
+        updated["toast"]["header_label"] = json!("我的构建");
+        updated["toast"]["border_color"] = json!("#12ABef");
+        updated["toast"]["shadow"] = json!(true);
+        updated["toast"]["tint_opacity"] = json!(20);
+        s.command(None, "settings.set", updated.clone()).unwrap();
+        assert_eq!(s.command(None, "settings.get", json!({})).unwrap(), updated);
+        for (key, value) in [
+            ("material", json!("arbitrary")),
+            ("border_color", json!("url(file://bad)")),
+            ("body_lines", json!(0)),
+            ("line_height", json!(5)),
+            ("tint_opacity", json!(101)),
+        ] {
+            let mut bad = updated.clone();
+            bad["toast"][key] = value;
+            assert!(s.command(None, "settings.set", bad).is_err());
+            assert_eq!(s.command(None, "settings.get", json!({})).unwrap(), updated);
+        }
+        assert_eq!(s.settings().unwrap().muted_sources, vec!["build"]);
+    }
+    #[test]
+    fn partial_toast_style_uses_defaults() {
+        let s: Settings = serde_json::from_value(json!({"toast":{"header":"hidden"}})).unwrap();
+        s.validate().unwrap();
+        assert_eq!(s.toast.header, "hidden");
+        assert!(s.toast.show_body);
+        assert_eq!(s.toast.border_width, 1);
+        assert!(serde_json::from_value::<Settings>(json!({"toast":{"typo":true}})).is_err());
     }
     #[test]
     fn idempotency_conflict_and_source_isolation() {

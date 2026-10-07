@@ -3,6 +3,7 @@
 (() => {
   window.isTauri = true;
   const settings = { theme: 'light', accent: '#7c6cf0', width: 380, radius: 16, font_size: 14, position: 'top-right', reduced_motion: false, muted_sources: [], muted_groups: [], quiet_start: null, quiet_end: null, merge_window_ms: 2000, source_per_minute: 6, global_per_minute: 20, queue_limit: 100, retention_days: 30 };
+  settings.toast = {"header": "full", "header_label": "", "header_separator": false, "show_icon": true, "show_time": false, "show_level": true, "border_style": "solid", "border_width": 1, "border_color": "theme", "level_accent": true, "background": "theme", "text_color": "theme", "material": "none", "tint_opacity": 35, "shadow": false, "padding": 16, "gap": 8, "title_size": 15, "title_weight": 600, "body_lines": 5, "line_height": 1.6, "text_align": "left", "show_body": true, "show_progress": true, "show_tags": false, "show_history": true, "actions_layout": "inline"};
   const items = [
     { title: '构建完成，准备好下一步', body: 'backend / main · 128 项测试通过，构建耗时 32 秒。', source: 'build-agent', level: 'success', group_key: 'backend', tags: ['build', 'main'] },
     { title: '部署失败，需要检查环境配置', body: '无法连接 staging 数据库。请检查连接信息后重试。', source: 'deploy-agent', level: 'error', group_key: 'staging', tags: ['deploy'] },
@@ -10,7 +11,8 @@
     { title: '任务进度：索引工作区', body: '正在建立符号索引，剩余 12 个文件。', source: 'index-agent', level: 'info', group_key: 'workspace', tags: ['progress'], progress: 0.68 },
   ].map((n, i) => ({ id: `fixture-${i}`, body: '', progress: null, actions: [{ id: 'confirm', label: '确认收到' }], state: i === 2 ? 'suppressed' : 'closed', reason: i === 2 ? 'rate_limited' : 'timed_out', revision: 1, merge_count: 1, created_at: Date.now() - i * 60000, read_at: i === 3 ? Date.now() : null, archived_at: null, ...n }));
   window.__TAURI_INTERNALS__ = { invoke: async (cmd, args) => {
-    if (cmd === 'resize_toast' || cmd === 'open_history') return null;
+    if (cmd === 'resize_toast') return { native_material: false, reduced_transparency: false };
+    if (cmd === 'open_history') return null;
     if (cmd !== 'command') throw Error(`unexpected IPC ${cmd}`);
     const { op, data } = args;
     if (op === 'settings.get') return settings;
