@@ -139,22 +139,26 @@ pub use platform::{Tray, install};
 #[cfg(target_os = "windows")]
 mod platform {
     use super::TrayEvent;
-    use std::{cell::RefCell, mem::size_of, sync::atomic::{AtomicU32, Ordering}};
+    use std::{
+        cell::RefCell,
+        mem::size_of,
+        sync::atomic::{AtomicU32, Ordering},
+    };
     use tokio::sync::mpsc::UnboundedSender;
-    use windows::core::{w, PCWSTR};
-    use windows::Win32::Foundation::{HWND, HMODULE, LPARAM, LRESULT, POINT, WPARAM};
+    use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, POINT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Shell::{
-        Shell_NotifyIconW, NOTIFYICONDATAW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
-        NIM_MODIFY, NOTIFY_ICON_DATA_FLAGS,
+        NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+        Shell_NotifyIconW,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-        GetCursorPos, LoadIconW, PostMessageW, RegisterClassW, RegisterWindowMessageW,
-        SetForegroundWindow, TrackPopupMenuEx, CW_USEDEFAULT, IDI_APPLICATION, MF_SEPARATOR,
-        MF_STRING, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE,
-        WNDCLASSW, WM_APP, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WS_OVERLAPPED,
+        AppendMenuW, CW_USEDEFAULT, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
+        DestroyWindow, GetCursorPos, IDI_APPLICATION, LoadIconW, MF_SEPARATOR, MF_STRING,
+        PostMessageW, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, TPM_BOTTOMALIGN,
+        TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WINDOW_EX_STYLE, WM_APP, WM_LBUTTONUP,
+        WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
     };
+    use windows::core::{PCWSTR, w};
 
     /// 托盘回调消息：lparam 低字携带鼠标消息。
     const CALLBACK_MSG: u32 = WM_APP + 1;
@@ -191,7 +195,7 @@ mod platform {
         let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
             return;
         };
-        unsafe {
+        let picked = unsafe {
             let _ = AppendMenuW(menu, MF_STRING, MENU_OPEN, w!("打开消息历史"));
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             let _ = AppendMenuW(menu, MF_STRING, MENU_QUIT, w!("退出"));
@@ -204,7 +208,7 @@ mod platform {
             let _ = SetForegroundWindow(hwnd);
             let picked = TrackPopupMenuEx(
                 menu,
-                TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
+                (TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN).0,
                 cursor.x,
                 cursor.y,
                 hwnd,
@@ -213,7 +217,8 @@ mod platform {
             .0 as usize;
             let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
             let _ = DestroyMenu(menu);
-        }
+            picked
+        };
         match picked {
             MENU_OPEN => send(TrayEvent::OpenHistory),
             MENU_QUIT => send(TrayEvent::Quit),
@@ -297,7 +302,10 @@ mod platform {
                 let _ = DestroyWindow(hwnd);
                 return None;
             }
-            TASKBAR_CREATED.store(RegisterWindowMessageW(w!("TaskbarCreated")), Ordering::Relaxed);
+            TASKBAR_CREATED.store(
+                RegisterWindowMessageW(w!("TaskbarCreated")),
+                Ordering::Relaxed,
+            );
             SENDER.with(|slot| *slot.borrow_mut() = Some(sender));
             ICON_DATA.with(|slot| *slot.borrow_mut() = Some(data));
             Some(Tray { hwnd })
