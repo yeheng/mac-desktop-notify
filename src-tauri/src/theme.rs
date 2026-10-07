@@ -6,7 +6,7 @@
 
 use crate::model::{ApiError, Result, Settings};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// Card fill: "auto" (follow light/dark surface), one hex, or a light/dark pair.

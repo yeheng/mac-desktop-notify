@@ -1,7 +1,7 @@
 use crate::model::*;
 use chrono::Timelike;
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use serde_json::{json, Value};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 fn token_hash(token: &str) -> String {
     format!("{:x}", Sha256::digest(token.as_bytes()))
@@ -250,10 +250,16 @@ impl Store {
                 }
                 // Omitted flags preserve the existing mark-read/archive API.
                 // Explicit false restores unread/unarchived state atomically.
-                let flag = if op.ends_with("archive") { "archived" } else { "read" };
+                let flag = if op.ends_with("archive") {
+                    "archived"
+                } else {
+                    "read"
+                };
                 let enabled = match data.get(flag) {
                     None => true,
-                    Some(value) => value.as_bool().ok_or_else(|| ApiError::invalid("state flag must be boolean"))?,
+                    Some(value) => value
+                        .as_bool()
+                        .ok_or_else(|| ApiError::invalid("state flag must be boolean"))?,
                 };
                 let tx = self.conn.transaction()?;
                 let at = enabled.then_some(now());
@@ -319,7 +325,9 @@ impl Store {
                         .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
                     || name == "desktop"
                 {
-                    return Err(ApiError::invalid("source id must be 1-80 ASCII letters, digits, hyphen or underscore; desktop reserved"));
+                    return Err(ApiError::invalid(
+                        "source id must be 1-80 ASCII letters, digits, hyphen or underscore; desktop reserved",
+                    ));
                 }
                 let token = format!("{}{}", id(), id());
                 self.conn
@@ -1323,13 +1331,14 @@ mod tests {
         n.body = "changed".into();
         assert_eq!(s.create("a", n, now()).unwrap_err().code, "conflict");
         assert!(s.create("b", input("1"), now()).is_ok());
-        assert!(s
-            .command(
+        assert!(
+            s.command(
                 Some("b"),
                 "notification.get",
                 json!({"id":a["notification_id"]})
             )
-            .is_err());
+            .is_err()
+        );
     }
     #[test]
     fn transaction_ends_presentation_once() {
@@ -1410,11 +1419,13 @@ mod tests {
         assert_eq!(a["items"].as_array().unwrap().len(), 10);
         assert_eq!(b["items"].as_array().unwrap().len(), 5);
         for n in a["items"].as_array().unwrap() {
-            assert!(!b["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|m| m["id"] == n["id"]));
+            assert!(
+                !b["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|m| m["id"] == n["id"])
+            );
         }
     }
     #[test]

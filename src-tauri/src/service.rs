@@ -152,8 +152,8 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     };
     #[tokio::test]
     async fn webhook_retries_same_event_after_http_failure() {

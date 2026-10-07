@@ -1,0 +1,54 @@
+[package]
+name = "notify-gpui-mvp"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gpui-kit = "=0.7.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.32", features = ["bundled-full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+futures-util = "0.3"
+fs2 = "0.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+raw-window-handle = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSGeometry", "NSData"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSColor",
+    "NSWindow",
+    "NSView",
+    "NSResponder",
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSStatusBarButton",
+    "NSMenu",
+    "NSMenuItem",
+    "NSImage",
+] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+gpui-kit = { version = "=0.7.1", features = ["test-support"] }
+tokio-tungstenite = "0.29"
+
+[profile.dev]
+debug = 0
