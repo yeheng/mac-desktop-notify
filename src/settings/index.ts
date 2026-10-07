@@ -1,18 +1,23 @@
-import { call, element, labels, type Settings, showError, theme } from '../shared/api.ts';
+import { call, element, labels, type Settings, type SettingsStyle, showError, theme } from '../shared/api.ts';
 import { applyToastStyle, previewNotification, renderToastCard } from '../toast/card.ts';
-import { appearanceFields } from './fields.ts';
+import { appearanceFields, type StyleEntry } from './fields.ts';
 
 const previewObservers = new WeakMap<HTMLElement, ResizeObserver>();
 
 export async function renderSettings(root: HTMLElement) {
   previewObservers.get(root)?.disconnect();
-  const [s, info, sources, endpoints] = await Promise.all([
-    call<Settings>('settings.get'), call<{ http: string; socket: string; status: string; error?: string }>('runtime.info'),
-    call<string[]>('sources.list'), call<{ id: string; source: string; url: string }[]>('endpoints.list')
+  const [raw, info, sources, endpoints, themes, layouts] = await Promise.all([
+    call<Settings & { style?: SettingsStyle }>('settings.get'), call<{ http: string; socket: string; status: string; error?: string }>('runtime.info'),
+    call<string[]>('sources.list'), call<{ id: string; source: string; url: string }[]>('endpoints.list'),
+    call<StyleEntry[]>('themes.list', {}).catch(() => []), call<StyleEntry[]>('layouts.list', {}).catch(() => [])
   ]);
+  // `style` (theme/layout payload) is read-only decoration; submitting it back
+  // would be rejected as an unknown settings field.
+  const { style: stylePack, ...s } = raw;
+  let currentStyle = stylePack;
   root.innerHTML = `
     <form id="settings-form" class="appearance-layout">
-      <div class="appearance-sections">${appearanceFields()}
+      <div class="appearance-sections">${appearanceFields(themes, layouts)}
       <section class="settings-card"><h2>降噪与保留</h2>
         <label>同键合并窗口（毫秒）<input name="merge_window_ms" type="number" min="0" max="60000"/></label>
         <label>每来源每分钟最多提醒<input name="source_per_minute" type="number" min="1" max="600"/></label>
@@ -24,10 +29,10 @@ export async function renderSettings(root: HTMLElement) {
         <label>静音分组（每行 source/group_key）<textarea name="muted_groups" rows="2"></textarea></label>
         <p class="muted">勿扰按本机时间执行；相同起止时间表示关闭。被抑制的通知仍保留历史。</p>
       </section></div>
-      <aside class="appearance-preview settings-card"><h2>通知预览</h2><p class="muted">调整后即时查看布局。系统毛玻璃请通过桌面预览查看。</p>
-        <div class="preset-buttons"><button type="button" data-preset="minimal">简洁</button><button type="button" data-preset="glass">毛玻璃</button><button type="button" data-preset="detailed">信息丰富</button></div>
+      <aside class="appearance-preview settings-card"><h2>通知预览</h2><p class="muted">调整后即时查看布局，保存后应用到桌面通知。</p>
+        <div class="preset-buttons"><button type="button" data-preset="minimal">简洁</button><button type="button" data-preset="detailed">信息丰富</button></div>
         <div class="preview-viewport"><div id="toast-preview" class="preview-backdrop"></div></div>
-        <p id="material-note" class="muted"></p><div class="settings-save"><button type="submit" class="primary">保存设置</button><button type="button" id="desktop-preview">保存并在桌面预览</button></div>
+        <div class="settings-save"><button type="submit" class="primary">保存设置</button><button type="button" id="desktop-preview">保存并在桌面预览</button></div>
       </aside>
     </form>
     <section class="settings-card"><h2>工具接入</h2><p id="connection-info" class="connection-info"></p><p class="muted">先创建来源取得 token。HTTP 与 WebSocket 使用 Bearer token；Unix socket 首条消息使用 auth。</p>
@@ -64,7 +69,29 @@ export async function renderSettings(root: HTMLElement) {
     }
     return result;
   }
-  fill(s); theme(s);
+  fill(s); theme({ ...s, style: currentStyle } as Settings);
+  function renderDiagnostics(style: SettingsStyle | undefined) {
+    const box = root.querySelector<HTMLElement>('#style-diagnostics');
+    if (!box) return;
+    const diags = [...(style?.theme?.diagnostics ?? []), ...(style?.layout?.diagnostics ?? [])];
+    box.hidden = diags.length === 0;
+    box.replaceChildren(...diags.map(d => element('p', '', `⚠ ${d}`)));
+  }
+  renderDiagnostics(currentStyle);
+  // Theme/layout selection applies immediately: the form reloads from the
+  // active theme so stale appearance values never bleed into the next one.
+  for (const name of ['theme_id', 'layout_id', 'presenter', 'bezel_enabled', 'tray_badge_enabled']) {
+    (form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | null)?.addEventListener('change', async () => {
+      try {
+        const result = await call<Settings & { style?: SettingsStyle }>('settings.set', read());
+        const { style: appliedStyle, ...applied } = result;
+        currentStyle = appliedStyle;
+        Object.assign(s, applied);
+        fill(s); updatePreview(); renderDiagnostics(currentStyle);
+        status(name === 'theme_id' ? '主题已切换，外观已按主题重置。' : '设置已保存，桌面通知已同步。');
+      } catch (e) { showError(e); }
+    });
+  }
   const preview = root.querySelector<HTMLElement>('#toast-preview')!;
   const sample = previewNotification();
   const card = renderToastCard(sample, s, () => {}, () => {}); preview.append(card);
@@ -76,21 +103,16 @@ export async function renderSettings(root: HTMLElement) {
   }
   const observer = new ResizeObserver(fitPreview); observer.observe(viewport); previewObservers.set(root, observer);
   function updatePreview() {
-    const draft = read(); theme(draft); applyToastStyle(card, draft);
+    const draft = read(); theme({ ...draft, style: currentStyle } as Settings); applyToastStyle(card, draft);
     card.style.width = `${draft.width}px`; fitPreview();
-    preview.dataset.material = draft.toast.material;
     preview.dataset.shadow = String(draft.toast.shadow);
-    root.querySelector('#material-note')!.textContent = draft.toast.material === 'none'
-      ? '纯色背景。布局和样式会应用到实际桌面通知。'
-      : '桌面使用 macOS 原生材质；这里展示布局与颜色示意。“减少透明度”开启时自动使用纯色。';
   }
   form.oninput = updatePreview;
   root.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => {
     button.onclick = () => {
       const draft = read();
-      if (button.dataset.preset === 'minimal') Object.assign(draft.toast, { header: 'compact', header_separator: false, show_time: false, show_tags: false, border_style: 'none', material: 'none', padding: 14 });
-      else if (button.dataset.preset === 'glass') Object.assign(draft.toast, { header: 'full', border_style: 'solid', border_width: 1, background: 'theme', text_color: 'theme', border_color: 'theme', material: 'popover', tint_opacity: 20, shadow: true });
-      else Object.assign(draft.toast, { header: 'full', header_separator: true, show_icon: true, show_time: true, show_level: true, show_body: true, show_tags: true, show_progress: true, show_history: true, body_lines: 8 });
+      if (button.dataset.preset === 'minimal') Object.assign(draft.toast, { header: 'compact', header_separator: false, show_time: false, show_tags: false, border_style: 'none', padding: 14 });
+      else if (button.dataset.preset === 'detailed') Object.assign(draft.toast, { header: 'full', header_separator: true, show_icon: true, show_time: true, show_level: true, show_body: true, show_tags: true, show_progress: true, show_history: true, body_lines: 8 });
       fill(draft); updatePreview();
     };
   });

@@ -6,13 +6,20 @@ use sha2::{Digest, Sha256};
 fn token_hash(token: &str) -> String {
     format!("{:x}", Sha256::digest(token.as_bytes()))
 }
-use std::{collections::HashMap, net::ToSocketAddrs, path::Path, time::Instant};
+use crate::theme;
+use std::{
+    collections::HashMap,
+    net::ToSocketAddrs,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 pub struct Store {
     conn: Connection,
     clocks: HashMap<String, (Instant, i64, bool)>,
     last_cleanup: i64,
     changes: tokio::sync::watch::Sender<u64>,
+    styles_dir: Option<PathBuf>,
 }
 fn parse(s: String) -> Result<Value> {
     Ok(serde_json::from_str(&s)?)
@@ -39,7 +46,7 @@ fn event(tx: &Transaction<'_>, id_: &str, kind: &str, data: Value, at: i64) -> R
     Ok(())
 }
 impl Store {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path, styles_dir: Option<&Path>) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_secs(3))?;
         let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
@@ -71,6 +78,7 @@ impl Store {
           CREATE INDEX IF NOT EXISTS event_notification ON events(notification_id,seq);
           CREATE INDEX IF NOT EXISTS event_type_time ON events(type,created_at);
           CREATE INDEX IF NOT EXISTS presentation_state ON presentations(state,scheduled_at);
+          CREATE INDEX IF NOT EXISTS notification_unread ON notifications(created_at DESC) WHERE read_at IS NULL AND archived_at IS NULL;
           CREATE VIRTUAL TABLE IF NOT EXISTS notification_fts USING fts5(title,body,content='notifications',content_rowid='rowid');
           CREATE TRIGGER IF NOT EXISTS notification_ai AFTER INSERT ON notifications BEGIN INSERT INTO notification_fts(rowid,title,body) VALUES(new.rowid,new.title,new.body); END;
           CREATE TRIGGER IF NOT EXISTS notification_ad AFTER DELETE ON notifications BEGIN INSERT INTO notification_fts(notification_fts,rowid,title,body) VALUES('delete',old.rowid,old.title,old.body); END;
@@ -86,6 +94,7 @@ impl Store {
             clocks: HashMap::new(),
             last_cleanup: 0,
             changes,
+            styles_dir: styles_dir.map(Path::to_path_buf),
         })
     }
     /// In-process change signal; bumped only after commits that alter persisted state.
@@ -95,12 +104,53 @@ impl Store {
     fn changed(&self) {
         self.changes.send_modify(|value| *value += 1);
     }
-    pub fn settings(&self) -> Result<Settings> {
-        Ok(serde_json::from_str(&self.conn.query_row(
-            "SELECT payload FROM settings WHERE id=1",
+    /// Settings plus the active theme pack: toast appearance fields are
+    /// derived from the theme file, which is their single source of truth.
+    fn decorated_settings(&self) -> Result<Value> {
+        let mut settings = self.settings()?;
+        let mut value = serde_json::to_value(&settings)?;
+        if let Some(dir) = self.styles_dir.clone() {
+            let theme = theme::Theme::load(Some(&dir), &settings.theme_id);
+            theme.derive(&mut settings);
+            value = serde_json::to_value(&settings)?;
+            let mut style = json!({"theme": theme});
+            if let Some(layout) = crate::layout::Layout::load(Some(&dir), &settings.layout_id) {
+                style["layout"] = serde_json::to_value(&layout)?;
+            }
+            value["style"] = style;
+        }
+        Ok(value)
+    }
+    /// Unread count driving the tray badge, plus whether the badge is on.
+    pub fn tray_state(&self) -> Result<Value> {
+        let enabled = self.settings()?.tray_badge_enabled;
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM notifications WHERE read_at IS NULL AND archived_at IS NULL",
             [],
-            |r| r.get::<_, String>(0),
-        )?)?)
+            |r| r.get(0),
+        )?;
+        Ok(json!({"count": count, "enabled": enabled}))
+    }
+    pub fn settings(&self) -> Result<Settings> {
+        let payload: String =
+            self.conn
+                .query_row("SELECT payload FROM settings WHERE id=1", [], |r| {
+                    r.get::<_, String>(0)
+                })?;
+        let mut value: Value = serde_json::from_str(&payload)?;
+        // Rows saved before the frosted-glass removal still carry those keys,
+        // which are now unknown fields and would fail parsing.
+        if let Some(toast) = value.get_mut("toast").and_then(Value::as_object_mut) {
+            let material = toast.remove("material").is_some();
+            let tint = toast.remove("tint_opacity").is_some();
+            if material || tint {
+                self.conn.execute(
+                    "UPDATE settings SET payload=? WHERE id=1",
+                    [value.to_string()],
+                )?;
+            }
+        }
+        Ok(serde_json::from_value(value)?)
     }
     pub fn authenticate(&self, token: &str) -> Result<Value> {
         let source: Option<String> = self
@@ -179,17 +229,38 @@ impl Store {
             "events.subscribe" | "events.list" => {
                 self.events(source, data["after_seq"].as_i64().unwrap_or(0))
             }
-            "settings.get" if source.is_none() => Ok(serde_json::to_value(self.settings()?)?),
+            "settings.get" if source.is_none() => self.decorated_settings(),
             "settings.set" if source.is_none() => {
-                let settings: Settings = serde_json::from_value(data)?;
-                settings.validate()?;
+                let incoming: Settings = serde_json::from_value(data)?;
+                incoming.validate()?;
+                if let Some(dir) = self.styles_dir.clone() {
+                    // The theme file is the appearance source of truth: field
+                    // edits write through into the active theme. A theme
+                    // switch resets appearance wholesale, so stale form values
+                    // never leak into the newly selected theme.
+                    let stored = self.settings()?;
+                    if incoming.theme_id == stored.theme_id {
+                        let mut active = theme::Theme::load(Some(&dir), &incoming.theme_id);
+                        let mut baseline = stored;
+                        active.derive(&mut baseline);
+                        if active.merge_edits(&baseline, &incoming) {
+                            active.write(&dir)?;
+                        }
+                    }
+                }
                 self.conn.execute(
                     "UPDATE settings SET payload=? WHERE id=1",
-                    [serde_json::to_string(&settings)?],
+                    [serde_json::to_string(&incoming)?],
                 )?;
                 self.changed();
-                Ok(json!(settings))
+                self.decorated_settings()
             }
+            "themes.list" if source.is_none() => {
+                Ok(json!(theme::Theme::list(self.styles_dir.as_deref())))
+            }
+            "layouts.list" if source.is_none() => Ok(json!(crate::layout::Layout::list(
+                self.styles_dir.as_deref()
+            ))),
             "sources.list" if source.is_none() => {
                 let mut stmt = self.conn.prepare("SELECT id FROM sources ORDER BY id")?;
                 let ids = stmt
@@ -295,7 +366,12 @@ impl Store {
                 }
                 Ok(json!({"updated":n}))
             }
-            "toast.snapshot" if source.is_none() => self.snapshot(),
+            "toast.snapshot" | "card.snapshot" | "island.snapshot" | "bezel.snapshot"
+                if source.is_none() =>
+            {
+                // One query set, label-differentiated payloads.
+                self.snapshot(op.split('.').next().unwrap_or("toast"))
+            }
             "summary.dismiss" if source.is_none() => {
                 let seq = data["through_seq"]
                     .as_i64()
@@ -315,8 +391,45 @@ impl Store {
                 self.changed();
                 Ok(json!({}))
             }
-            "toast.displayed" if source.is_none() => self.displayed(&data),
-            "toast.interact" if source.is_none() => {
+            "toast.displayed" | "card.displayed" | "island.displayed" if source.is_none() => {
+                self.displayed(&data)
+            }
+            // Bezel flashes record history only: they never claim a showing
+            // slot and never substitute for the main presenter's acknowledgment.
+            "bezel.shown" if source.is_none() => {
+                let id_ = string(&data, "id")?;
+                let tx = self.conn.transaction()?;
+                let row: Option<(String, i64)> = tx
+                    .query_row(
+                        "SELECT source,revision FROM notifications WHERE id=?",
+                        [id_],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()?;
+                let (source_of, revision) =
+                    row.ok_or_else(|| ApiError::new("not_found", "notification not found"))?;
+                // Idempotent per revision: reloads must not duplicate markers.
+                let inserted = tx.execute(
+                    "INSERT INTO events(event_id,notification_id,source,revision,type,data,created_at) SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM events WHERE notification_id=? AND revision=? AND type='bezel_shown')",
+                    params![
+                        id(),
+                        id_,
+                        source_of,
+                        revision,
+                        "bezel_shown",
+                        json!({"surface":"bezel"}).to_string(),
+                        now(),
+                        id_,
+                        revision
+                    ],
+                )?;
+                tx.commit()?;
+                if inserted > 0 {
+                    self.changed();
+                }
+                Ok(json!({"recorded": inserted > 0}))
+            }
+            "toast.interact" | "card.interact" | "island.interact" if source.is_none() => {
                 let id_ = string(&data, "id")?;
                 let rev = data["revision"]
                     .as_i64()
@@ -343,7 +456,7 @@ impl Store {
                     now(),
                 )
             }
-            "toast.hover" if source.is_none() => {
+            "toast.hover" | "card.hover" | "island.hover" if source.is_none() => {
                 let id_ = string(&data, "id")?;
                 if let Some((last, remaining, paused)) = self.clocks.get_mut(id_) {
                     if !*paused {
@@ -916,7 +1029,7 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
-    fn snapshot(&self) -> Result<Value> {
+    fn snapshot(&self, label: &str) -> Result<Value> {
         let mut stmt=self.conn.prepare("SELECT notification_id FROM presentations WHERE state='showing' ORDER BY scheduled_at,notification_id")?;
         let ids = stmt
             .query_map([], |r| r.get::<_, String>(0))?
@@ -926,6 +1039,7 @@ impl Store {
             items.push(self.get(&id_)?);
         }
         let settings = self.settings()?;
+        let decorated = self.decorated_settings()?;
         let local = chrono::Local::now();
         let ack: i64 = self.conn.query_row(
             "SELECT value FROM metadata WHERE key='summary_ack'",
@@ -950,7 +1064,32 @@ impl Store {
         } else {
             None
         };
-        Ok(json!({"items":items,"settings":settings,"summary":summary}))
+        let mut snapshot = json!({"items":items,"settings":decorated,"summary":summary});
+        if label == "island" {
+            // The expansion panel lists the newest unread rows; the pill shows the count.
+            let count: i64 = self.conn.query_row(
+                "SELECT COUNT(*) FROM notifications WHERE read_at IS NULL AND archived_at IS NULL",
+                [],
+                |r| r.get(0),
+            )?;
+            let mut stmt = self.conn.prepare(
+                "SELECT n.id,n.title,n.source,n.level,n.created_at,p.merge_count FROM notifications n JOIN presentations p ON p.notification_id=n.id WHERE n.read_at IS NULL AND n.archived_at IS NULL ORDER BY n.created_at DESC,n.id DESC LIMIT 5",
+            )?;
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok(json!({
+                        "id": r.get::<_, String>(0)?,
+                        "title": r.get::<_, String>(1)?,
+                        "source": r.get::<_, String>(2)?,
+                        "level": r.get::<_, String>(3)?,
+                        "created_at": r.get::<_, i64>(4)?,
+                        "merge_count": r.get::<_, i64>(5)?,
+                    }))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            snapshot["unread"] = json!({"count": count, "items": rows});
+        }
+        Ok(snapshot)
     }
     pub fn claim_delivery(&mut self) -> Result<Value> {
         let tx = self.conn.transaction()?;
@@ -1006,7 +1145,13 @@ pub fn quiet_at(settings: &Settings, minute: u32) -> bool {
 mod tests {
     use super::*;
     fn db() -> Store {
-        Store::open(Path::new(":memory:")).unwrap()
+        Store::open(Path::new(":memory:"), None).unwrap()
+    }
+    fn styled_db() -> (Store, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("mdn-store-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(Path::new(":memory:"), Some(&dir)).unwrap();
+        (store, dir)
     }
     fn input(key: &str) -> Create {
         Create {
@@ -1038,7 +1183,7 @@ mod tests {
             .execute("UPDATE presentations SET state='queued',reason=''", [])
             .unwrap();
         s.tick().unwrap();
-        let snapshot = s.snapshot().unwrap();
+        let snapshot = s.snapshot("toast").unwrap();
         let items = snapshot["items"].as_array().unwrap();
         assert_eq!(items.len(), 7);
         assert_eq!(
@@ -1058,7 +1203,13 @@ mod tests {
         s.finish(&shown, None, "dismissed", json!({}), now())
             .unwrap();
         s.tick().unwrap();
-        assert_eq!(s.snapshot().unwrap()["items"].as_array().unwrap().len(), 7);
+        assert_eq!(
+            s.snapshot("toast").unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            7
+        );
         assert_eq!(
             s.conn
                 .query_row("SELECT COUNT(*) FROM notifications", [], |r| r
@@ -1084,7 +1235,13 @@ mod tests {
             s.create(source, n, now()).unwrap();
         }
         s.tick().unwrap();
-        assert_eq!(s.snapshot().unwrap()["items"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            s.snapshot("toast").unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
     }
 
     #[test]
@@ -1099,22 +1256,40 @@ mod tests {
             .unwrap();
         let legacy = s.settings().unwrap();
         assert_eq!(legacy.width, 420);
-        assert_eq!(legacy.toast.material, "none");
         assert_eq!(legacy.toast.header, "full");
+        // Rows saved before the frosted-glass removal carry obsolete keys.
+        s.conn
+            .execute(
+                "UPDATE settings SET payload=? WHERE id=1",
+                [r#"{"theme":"dark","toast":{"material":"popover","tint_opacity":20,"shadow":true}}"#],
+            )
+            .unwrap();
+        let migrated = s.settings().unwrap();
+        assert_eq!(migrated.toast.background, "theme");
+        assert!(migrated.toast.shadow);
+        let stored: Value = serde_json::from_str(
+            &s.conn
+                .query_row("SELECT payload FROM settings WHERE id=1", [], |r| {
+                    r.get::<_, String>(0)
+                })
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(stored["toast"]["material"].is_null());
+        assert!(stored["toast"]["tint_opacity"].is_null());
         let mut updated = serde_json::to_value(legacy).unwrap();
-        updated["toast"]["material"] = json!("popover");
         updated["toast"]["header_label"] = json!("我的构建");
         updated["toast"]["border_color"] = json!("#12ABef");
+        updated["toast"]["background"] = json!("#244832");
         updated["toast"]["shadow"] = json!(true);
-        updated["toast"]["tint_opacity"] = json!(20);
         s.command(None, "settings.set", updated.clone()).unwrap();
         assert_eq!(s.command(None, "settings.get", json!({})).unwrap(), updated);
         for (key, value) in [
-            ("material", json!("arbitrary")),
+            // Removed appearance keys are unknown fields now and must be rejected.
+            ("material", json!("popover")),
             ("border_color", json!("url(file://bad)")),
             ("body_lines", json!(0)),
             ("line_height", json!(5)),
-            ("tint_opacity", json!(101)),
         ] {
             let mut bad = updated.clone();
             bad["toast"][key] = value;
@@ -1255,11 +1430,116 @@ mod tests {
         s.create("a", input("1"), now()).unwrap();
         s.tick().unwrap();
         s.recover().unwrap();
-        assert_eq!(s.snapshot().unwrap()["items"], json!([]));
+        assert_eq!(s.snapshot("toast").unwrap()["items"], json!([]));
         assert_eq!(
             s.list(None, &json!({})).unwrap()["items"][0]["reason"],
             "interrupted"
         );
+    }
+    #[test]
+    fn bezel_marker_is_idempotent_and_tray_counts_unread() {
+        let mut s = db();
+        let a = s.create("a", input("1"), now()).unwrap();
+        let id_ = a["notification_id"].as_str().unwrap();
+        // Bypass scheduling so the message counts as displayed.
+        s.conn
+            .execute("UPDATE presentations SET state='showing'", [])
+            .unwrap();
+        let first = s
+            .command(None, "bezel.shown", json!({"id":id_,"revision":1}))
+            .unwrap();
+        let again = s
+            .command(None, "bezel.shown", json!({"id":id_,"revision":1}))
+            .unwrap();
+        assert_eq!(first["recorded"], json!(true));
+        assert_eq!(again["recorded"], json!(false));
+        let detail = s.get(id_).unwrap();
+        assert_eq!(
+            detail["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["type"] == "bezel_shown")
+                .count(),
+            1
+        );
+        // The bezel marker never occupies or finishes a presentation slot.
+        assert_eq!(detail["state"], json!("showing"));
+        assert_eq!(s.tray_state().unwrap()["count"], json!(1));
+        s.command(None, "notification.mark_read", json!({"ids":[id_]}))
+            .unwrap();
+        assert_eq!(s.tray_state().unwrap()["count"], json!(0));
+        assert_eq!(s.tray_state().unwrap()["enabled"], json!(true));
+    }
+    #[test]
+    fn island_snapshot_carries_unread_but_toast_does_not() {
+        let mut s = db();
+        let a = s.create("a", input("1"), now()).unwrap();
+        let id_ = a["notification_id"].as_str().unwrap().to_owned();
+        let b = s.create("a", input("2"), now()).unwrap();
+        let id2 = b["notification_id"].as_str().unwrap().to_owned();
+        s.conn
+            .execute("UPDATE presentations SET state='showing'", [])
+            .unwrap();
+        let island = s.snapshot("island").unwrap();
+        assert_eq!(island["unread"]["count"], json!(2));
+        let rows = island["unread"]["items"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], json!(id2));
+        assert_eq!(rows[0]["title"], json!("构建失败"));
+        s.command(None, "notification.mark_read", json!({"ids":[id_]}))
+            .unwrap();
+        assert_eq!(s.snapshot("island").unwrap()["unread"]["count"], json!(1));
+        assert!(s.snapshot("toast").unwrap().get("unread").is_none());
+    }
+    #[test]
+    fn theme_pack_derives_and_writes_through() {
+        let (mut s, dir) = styled_db();
+        // settings.get derives appearance from the active theme.
+        let current = s.command(None, "settings.get", json!({})).unwrap();
+        assert_eq!(current["style"]["theme"]["id"], json!("default"));
+        assert_eq!(current["style"]["theme"]["source"], json!("builtin"));
+        assert_eq!(current["toast"]["title_size"], json!(15));
+        // Appearance edits land in the theme file (write-through) and persist.
+        let mut edited = current.clone();
+        edited["toast"]["title_size"] = json!(22);
+        edited.as_object_mut().unwrap().remove("style");
+        let saved = s.command(None, "settings.set", edited).unwrap();
+        assert_eq!(saved["toast"]["title_size"], json!(22));
+        let file = dir.join("themes").join("default.json");
+        let pack: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(pack["titleSize"], json!(22));
+        assert_eq!(
+            s.command(None, "settings.get", json!({})).unwrap()["toast"]["title_size"],
+            json!(22)
+        );
+        // A theme switch ignores stale form values: midnight answers wholesale.
+        let mut switch = s.command(None, "settings.get", json!({})).unwrap();
+        switch["theme_id"] = json!("midnight");
+        switch.as_object_mut().unwrap().remove("style");
+        let switched = s.command(None, "settings.set", switch).unwrap();
+        assert_eq!(switched["style"]["theme"]["id"], json!("midnight"));
+        assert_eq!(switched["toast"]["title_size"], json!(15));
+        assert_eq!(switched["radius"], json!(18));
+        assert!(!file_for(&dir, "midnight").exists());
+        // themes.list merges builtins and user copies.
+        let listed = s.command(None, "themes.list", json!({})).unwrap();
+        assert_eq!(listed.as_array().unwrap().len(), 4);
+    }
+    fn file_for(dir: &Path, id: &str) -> PathBuf {
+        dir.join("themes").join(format!("{id}.json"))
+    }
+    #[test]
+    fn snapshot_carries_style_theme_for_presenters() {
+        let (mut s, _dir) = styled_db();
+        s.create("a", input("1"), now()).unwrap();
+        s.tick().unwrap();
+        let snapshot = s.snapshot("card").unwrap();
+        assert_eq!(
+            snapshot["settings"]["style"]["theme"]["id"],
+            json!("default")
+        );
+        assert!(snapshot["settings"]["style"]["theme"]["pillHeight"].is_u64());
     }
     #[test]
     fn callback_outbox_atomic_and_stable() {

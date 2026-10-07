@@ -1,8 +1,12 @@
 {
-  "identifier": "toast",
-  "description": "Notification renderer event access only",
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "presenters",
+  "description": "Notification presenter windows: event access only",
   "windows": [
-    "toast"
+    "toast",
+    "card",
+    "island",
+    "bezel"
   ],
   "permissions": [
     "core:event:default"

@@ -38,7 +38,7 @@ test('updating appearance preserves focused actions and original notification id
   const s = structuredClone(fixture);
   const card = renderToastCard(previewNotification(), s, (kind, id) => { action = [kind, id]; }, () => {}); root.append(card);
   const button = card.querySelector('.toast-actions button'); button.focus();
-  s.toast.material = 'popover'; s.toast.title_size = 24; s.toast.header = 'compact';
+  s.toast.background = '#112233'; s.toast.title_size = 24; s.toast.header = 'compact';
   applyToastStyle(card, s);
   assert.equal(document.activeElement, button);
   assert.equal(card.style.getPropertyValue('--toast-title-size'), '24px');
@@ -57,7 +57,7 @@ test('settings save nested appearance with correct types while preserving noise 
     throw Error(op);
   }};
   await renderSettings(root);
-  root.querySelector('[data-preset=glass]').click();
+  root.querySelector('[data-preset=detailed]').click();
   const form = root.querySelector('form');
   form.elements.namedItem('toast.header_label').value = '构建中心';
   form.elements.namedItem('toast.title_weight').value = '700';
@@ -65,9 +65,10 @@ test('settings save nested appearance with correct types while preserving noise 
   form.dispatchEvent(new win.Event('input', { bubbles: true }));
   assert.equal(root.querySelector('.toast-source').textContent, '构建中心');
   root.querySelector('#desktop-preview').click(); await settle();
-  assert.equal(saved.toast.material, 'popover'); assert.equal(saved.toast.title_weight, 700);
+  assert.equal(saved.toast.header, 'full'); assert.equal(saved.toast.show_tags, true);
+  assert.equal(saved.toast.title_weight, 700);
   assert.equal(saved.toast.body_lines, 3); assert.equal(saved.toast.background, 'theme');
-  assert.equal(saved.toast.shadow, true); assert.deepEqual(saved.muted_sources, ['quiet-agent']);
+  assert.equal(saved.toast.shadow, false); assert.deepEqual(saved.muted_sources, ['quiet-agent']);
   assert.equal(saved.retention_days, 30); assert.equal(sent, 1);
   assert.ok(!('toast.background_auto' in saved));
   await win.happyDOM.close();
@@ -108,5 +109,38 @@ test('toast grouping isolates sources and explicit keys and retains per-message 
   cards.get('b').node.remove(); cards.delete('b');
   reconcileGroups(root, [a,c], cards, s);
   assert.equal(root.firstElementChild.querySelector('.toast-group-heading').hidden, true);
+  await win.happyDOM.close();
+});
+
+test('presenter and theme selection apply immediately and reload derived appearance', async () => {
+  const { win, root } = setup(); const savedPayloads = [];
+  window.__TAURI_INTERNALS__ = { invoke: async (_cmd, { op, data }) => {
+    if (op === 'settings.get') return structuredClone(fixture);
+    if (op === 'runtime.info') return { status: 'listening' };
+    if (op === 'sources.list' || op === 'endpoints.list') return [];
+    if (op === 'themes.list') return [{ id: 'default', name: '默认' }, { id: 'midnight', name: '午夜' }];
+    if (op === 'layouts.list') return [{ id: 'default', name: '内置布局' }];
+    if (op === 'settings.set') { savedPayloads.push(data); const next = structuredClone(data); next.toast = { ...next.toast, title_size: 15 }; return next; }
+    throw Error(op);
+  }};
+  await renderSettings(root);
+  const form = root.querySelector('form');
+  // `style` decoration from settings.get never leaks back into a save payload.
+  form.elements.namedItem('presenter').value = 'island';
+  form.elements.namedItem('presenter').dispatchEvent(new win.Event('change', { bubbles: true }));
+  form.elements.namedItem('bezel_enabled').checked = true;
+  form.elements.namedItem('bezel_enabled').dispatchEvent(new win.Event('change', { bubbles: true }));
+  await settle();
+  assert.equal(savedPayloads.length, 2);
+  assert.equal(savedPayloads[0].presenter, 'island');
+  assert.equal(savedPayloads[1].bezel_enabled, true);
+  assert.ok(!('style' in savedPayloads[0]));
+  // The theme switch reloads the derived appearance into the form.
+  form.elements.namedItem('theme_id').value = 'midnight';
+  form.elements.namedItem('theme_id').dispatchEvent(new win.Event('change', { bubbles: true }));
+  await settle();
+  assert.equal(savedPayloads.at(-1).theme_id, 'midnight');
+  assert.equal(Number(form.elements.namedItem('toast.title_size').value), 15);
+  assert.equal(document.querySelector('#status').textContent.includes('主题已切换'), true);
   await win.happyDOM.close();
 });

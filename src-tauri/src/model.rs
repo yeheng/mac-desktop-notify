@@ -138,8 +138,6 @@ pub struct ToastStyle {
     pub level_accent: bool,
     pub background: String,
     pub text_color: String,
-    pub material: String,
-    pub tint_opacity: u32,
     pub shadow: bool,
     pub padding: u32,
     pub gap: u32,
@@ -169,8 +167,6 @@ impl Default for ToastStyle {
             level_accent: true,
             background: "theme".into(),
             text_color: "theme".into(),
-            material: "none".into(),
-            tint_opacity: 35,
             shadow: false,
             padding: 16,
             gap: 8,
@@ -188,7 +184,10 @@ impl Default for ToastStyle {
     }
 }
 fn color(value: &str) -> bool {
-    value.len() == 7 && value.starts_with('#') && value[1..].bytes().all(|b| b.is_ascii_hexdigit())
+    // 6-digit fills plus 8-digit translucent fills (theme pack only).
+    matches!(value.len(), 7 | 9)
+        && value.starts_with('#')
+        && value[1..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 impl ToastStyle {
     pub fn validate(&self) -> Result<()> {
@@ -199,9 +198,6 @@ impl ToastStyle {
             || [&self.border_color, &self.background, &self.text_color]
                 .iter()
                 .any(|c| c.as_str() != "theme" && !color(c))
-            || !["none", "hud", "popover", "sidebar", "under-window"]
-                .contains(&self.material.as_str())
-            || self.tint_opacity > 100
             || !(8..=32).contains(&self.padding)
             || self.gap > 24
             || !(12..=28).contains(&self.title_size)
@@ -237,6 +233,13 @@ pub struct Settings {
     pub global_per_minute: u32,
     pub queue_limit: u32,
     pub retention_days: u32,
+    /// Which main presenter window owns the `showing` surface.
+    pub presenter: String,
+    /// Companion surfaces that stack on top of the main presenter.
+    pub bezel_enabled: bool,
+    pub tray_badge_enabled: bool,
+    pub theme_id: String,
+    pub layout_id: String,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -258,6 +261,11 @@ impl Default for Settings {
             global_per_minute: 20,
             queue_limit: 100,
             retention_days: 30,
+            presenter: "toast".into(),
+            bezel_enabled: false,
+            tray_badge_enabled: true,
+            theme_id: "default".into(),
+            layout_id: "default".into(),
         }
     }
 }
@@ -276,7 +284,10 @@ impl Settings {
         {
             return Err(ApiError::invalid("invalid theme"));
         }
-        if self.quiet_start.is_some() != self.quiet_end.is_some()
+        if !["toast", "card", "island"].contains(&self.presenter.as_str())
+            || !crate::theme::valid_id(&self.theme_id)
+            || !crate::theme::valid_id(&self.layout_id)
+            || self.quiet_start.is_some() != self.quiet_end.is_some()
             || self.quiet_start.is_some_and(|m| m >= 1440)
             || self.quiet_end.is_some_and(|m| m >= 1440)
             || !(0..=60_000).contains(&self.merge_window_ms)

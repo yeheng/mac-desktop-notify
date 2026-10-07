@@ -14,3 +14,4 @@ repomix-output.xml
 
 # Installed dependencies are reproduced from pnpm-lock.yaml.
 node_modules/
+.zcodeignore

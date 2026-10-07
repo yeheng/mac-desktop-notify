@@ -7,18 +7,19 @@ export function applyToastStyle(card: HTMLElement, s: Settings) {
     header: t.header, separator: String(t.header_separator), icon: String(t.show_icon),
     time: String(t.show_time), level: String(t.show_level), body: String(t.show_body),
     progress: String(t.show_progress), tags: String(t.show_tags), history: String(t.show_history),
-    accent: String(t.level_accent), actions: t.actions_layout, material: t.material,
+    accent: String(t.level_accent), actions: t.actions_layout,
   });
   const variables: Record<string, string> = {
     '--card-radius': `${s.radius}px`, '--notification-font': `${s.font_size}px`,
     '--toast-padding': `${t.padding}px`, '--toast-title-size': `${t.title_size}px`,
     '--toast-title-weight': String(t.title_weight), '--toast-line-height': String(t.line_height),
-    '--toast-body-height': `${t.body_lines * t.line_height * s.font_size}px`,
+    // body_lines 0 = full text: the surface itself scrolls instead of clamping.
+    '--toast-body-height': t.body_lines > 0 ? `${t.body_lines * t.line_height * s.font_size}px` : 'none',
     '--toast-border-width': `${t.border_width}px`, '--toast-border-style': t.border_style,
     '--toast-border-color': t.border_color === 'theme' ? 'var(--border)' : t.border_color,
     '--toast-background': t.background === 'theme' ? 'var(--surface)' : t.background,
     '--toast-color': t.text_color === 'theme' ? 'var(--text)' : t.text_color,
-    '--toast-tint': `${t.tint_opacity}%`, '--toast-align': t.text_align,
+    '--toast-align': t.text_align,
   };
   for (const [key, value] of Object.entries(variables)) card.style.setProperty(key, value);
   const source = card.querySelector<HTMLElement>('.toast-source');

@@ -4,7 +4,6 @@ import { call, element, Notification, Settings, showError, theme } from '../shar
 import { reconcileGroups } from './groups';
 import { applyToastStyle, previewNotification, renderToastCard } from './card';
 
-interface NativeEffect { native_material: boolean; reduced_transparency: boolean }
 export function startToast(root: HTMLElement) {
   document.body.classList.add('toast-window');
   const stack = element('section', 'toast-stack'); stack.setAttribute('aria-label', '通知'); root.append(stack);
@@ -16,17 +15,10 @@ export function startToast(root: HTMLElement) {
   function resize(): Promise<void> {
     const next = layoutWork.then(async () => {
       if (!settings) return;
-      const rects = Array.from(stack.children).map(child => {
-        const r = child.getBoundingClientRect();
-        return { x: r.x, y: r.y, width: r.width, height: r.height };
-      });
-      const effect = await invoke<NativeEffect>('resize_toast', {
+      await invoke('resize_surface', {
         width: settings.width, height: stack.children.length ? Math.ceil(stack.getBoundingClientRect().height) : 0,
-        position: settings.position,
-        surface: { material: settings.toast.material, theme: settings.theme, radius: settings.radius, shadow: settings.toast.shadow, rects },
+        position: settings.position, shadow: settings.toast.shadow,
       });
-      document.body.dataset.nativeMaterial = String(effect.native_material);
-      document.body.dataset.reducedTransparency = String(effect.reduced_transparency);
     });
     layoutWork = next.catch(() => {});
     return next;
@@ -85,8 +77,6 @@ export function startToast(root: HTMLElement) {
       }));
     } catch (e) { showError(e); } finally { busy = false; if (pending) { pending = false; void refresh(); } }
   }
-  // Scrolling a short display must move the native material masks with their cards.
-  document.addEventListener('scroll', () => { void resize().catch(showError); }, { capture: true, passive: true });
   // Subscribe before the initial snapshot so changes during startup are retained.
   void listen('notifications-changed', () => { void refresh(); }).then(() => refresh()).catch(showError);
   setInterval(() => { void refresh(); }, 5000);

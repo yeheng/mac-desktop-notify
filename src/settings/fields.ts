@@ -3,8 +3,22 @@ const number = (name: string, label: string, min: number, max: number, step = 1)
 const check = (name: string, label: string) => `<label class="check-label"><input name="${name}" type="checkbox"/>${label}</label>`;
 const color = (name: string, label: string, fallback: string) => `<div class="color-field"><span>${label}</span><input name="${name}" type="color" data-fallback="${fallback}" aria-label="${label}"/>${check(`${name}_auto`, '跟随主题')}</div>`;
 
-export function appearanceFields() {
+export interface StyleEntry { id: string; name: string; source?: string }
+
+export function appearanceFields(themes: StyleEntry[] = [], layouts: StyleEntry[] = []) {
+  const entry = (list: StyleEntry[], id: string) => list.find(x => x.id === id)?.name ?? id;
   return `
+  <section class="settings-card"><h2>呈现方式</h2>
+    ${select('presenter', '主呈现面', [['toast', '通知栈（分组卡片）'], ['card', '单卡（最新一条）'], ['island', '灵动岛（状态胶囊）']])}
+    <p class="muted">切换在下一个消息 tick 生效；窗口按需创建和销毁。</p>
+    <div class="check-grid">${check('bezel_enabled', '伴生闪现（成功/错误居中提示）')}${check('tray_badge_enabled', '菜单栏未读徽章')}</div>
+  </section>
+  <section class="settings-card"><h2>主题与布局</h2>
+    ${select('theme_id', '样式主题', [['default', '默认'], ['midnight', '午夜'], ['minimal', '极简'], ['glass', '玻璃'], ...themes.filter(t => !['default', 'midnight', 'minimal', 'glass'].includes(t.id)).map(t => [t.id, entry(themes, t.id)] as [string, string])])}
+    ${select('layout_id', '面板布局', [['default', '内置布局'], ['midnight', '午夜示例'], ...layouts.filter(l => !['default', 'midnight'].includes(l.id)).map(l => [l.id, entry(layouts, l.id)] as [string, string])])}
+    <p class="muted">主题是一组外观 token（颜色、字号、边距、圆角）；布局用节点树重排灵动岛与单卡。切换立即生效；下面的外观编辑会写回当前主题文件。</p>
+    <div id="style-diagnostics" class="diagnostics" hidden></div>
+  </section>
   <section class="settings-card"><h2>尺寸与位置</h2>
     ${select('theme', '主题', [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']])}
     <label>强调色<input name="accent" type="color"/></label>
@@ -19,10 +33,8 @@ export function appearanceFields() {
     <div class="check-grid">${check('toast.show_icon', '状态图标')}${check('toast.show_level', '级别标签')}${check('toast.show_time', '发送时间')}${check('toast.header_separator', '头部分隔线')}</div>
     <p class="muted">隐藏头部后仍保留关闭按钮。</p>
   </section>
-  <section class="settings-card"><h2>边框与系统效果</h2>
-    ${select('toast.material', '背景材质', [['none', '纯色'], ['popover', '毛玻璃 · 浮层'], ['hud', '毛玻璃 · HUD'], ['sidebar', '毛玻璃 · 侧边栏'], ['under-window', '毛玻璃 · 窗口底衬']])}
+  <section class="settings-card"><h2>背景与边框</h2>
     ${color('toast.background', '背景颜色', '#25252e')}
-    ${number('toast.tint_opacity', '毛玻璃覆色浓度（%）', 0, 100)}
     ${select('toast.border_style', '边框样式', [['solid', '实线'], ['dashed', '虚线'], ['none', '无边框']])}
     ${number('toast.border_width', '边框粗细', 0, 4)}${color('toast.border_color', '边框颜色', '#d8d8e3')}
     <div class="check-grid">${check('toast.level_accent', '按消息级别强调顶部')}${check('toast.shadow', 'macOS 系统阴影')}</div>

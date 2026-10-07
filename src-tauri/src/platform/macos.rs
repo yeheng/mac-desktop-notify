@@ -1,12 +1,7 @@
-use super::{NativeEffect, ToastSurface};
-use objc2::{MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{
-    NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSStatusWindowLevel, NSUserInterfaceItemIdentification, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
-    NSWindowCollectionBehavior, NSWindowOrderingMode, NSWorkspace,
-};
-use objc2_foundation::{ns_string, NSPoint, NSRect, NSSize};
+use objc2::MainThreadMarker;
+use objc2_app_kit::{NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
+
+use super::SurfaceMetrics;
 
 pub fn configure_toast(window: &tauri::WebviewWindow) -> tauri::Result<()> {
     let _main = MainThreadMarker::new().expect("toast configuration requires the main thread");
@@ -19,110 +14,60 @@ pub fn configure_toast(window: &tauri::WebviewWindow) -> tauri::Result<()> {
             | NSWindowCollectionBehavior::FullScreenAuxiliary
             | NSWindowCollectionBehavior::IgnoresCycle,
     );
+    // Enter the live-but-invisible state immediately: a WKWebView whose
+    // window is ordered out gets its JS suspended, which would kill the
+    // snapshot loop before the first message ever arrives.
+    native.setIgnoresMouseEvents(true);
+    native.setAlphaValue(0.0);
+    native.orderFrontRegardless();
     Ok(())
 }
 
-pub fn show_toast(
-    window: &tauri::WebviewWindow,
-    surface: &ToastSurface,
-    visible: bool,
-) -> tauri::Result<NativeEffect> {
-    let main = MainThreadMarker::new().expect("toast presentation requires the main thread");
+pub fn show_toast(window: &tauri::WebviewWindow, shadow: bool, visible: bool) -> tauri::Result<()> {
+    let _main = MainThreadMarker::new().expect("toast presentation requires the main thread");
     // SAFETY: same lifetime and thread guarantee as configure_toast.
     let native = unsafe { &*window.ns_window()?.cast::<NSWindow>() };
-    let reduced = NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceTransparency();
-    let material = match surface.material.as_str() {
-        "hud" => Some(NSVisualEffectMaterial::HUDWindow),
-        "popover" => Some(NSVisualEffectMaterial::Popover),
-        "sidebar" => Some(NSVisualEffectMaterial::Sidebar),
-        "under-window" => Some(NSVisualEffectMaterial::UnderWindowBackground),
-        _ => None,
-    }
-    .filter(|_| !reduced && visible);
-    let content = native
-        .contentView()
-        .ok_or(tauri::Error::InvalidWindowHandle)?;
-    let identifier = ns_string!("mac-desktop-notify.material");
-    let mut effects = content
-        .subviews()
-        .iter()
-        .filter_map(|v| {
-            if v.identifier().as_deref() == Some(identifier) {
-                v.downcast::<NSVisualEffectView>().ok()
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-    let count = if material.is_some() {
-        surface.rects.len()
-    } else {
-        0
-    };
-    while effects.len() > count {
-        if let Some(view) = effects.pop() {
-            view.removeFromSuperview();
-        }
-    }
-    while effects.len() < count {
-        let view = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(main), NSRect::ZERO);
-        view.setIdentifier(Some(identifier));
-        view.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-        // Notifications stay visually active while another app has input focus.
-        view.setState(NSVisualEffectState::Active);
-        view.setWantsLayer(true);
-        content.addSubview_positioned_relativeTo(&view, NSWindowOrderingMode::Below, None);
-        effects.push(view);
-    }
-    // The effect view order is not meaningful: all geometry is reassigned here.
-    if let Some(material) = material {
-        let appearance = match surface.theme.as_str() {
-            // SAFETY: these AppKit constants exist on every supported macOS version.
-            "light" => NSAppearance::appearanceNamed(unsafe { NSAppearanceNameAqua }),
-            "dark" => NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }),
-            _ => None,
-        };
-        let bounds = content.bounds();
-        for (view, rect) in effects.iter().zip(&surface.rects) {
-            let y = if content.isFlipped() {
-                rect.y
-            } else {
-                bounds.size.height - rect.y - rect.height
-            };
-            let frame = NSRect::new(
-                NSPoint::new(rect.x, y),
-                NSSize::new(rect.width, rect.height),
-            );
-            if view.frame() != frame {
-                view.setFrame(frame);
-            }
-            if view.material() != material {
-                view.setMaterial(material);
-            }
-            view.setAppearance(appearance.as_deref());
-            if let Some(layer) = view.layer() {
-                layer.setCornerRadius(
-                    (surface.radius as f64)
-                        .min(rect.width / 2.0)
-                        .min(rect.height / 2.0),
-                );
-                layer.setMasksToBounds(true);
-            }
-        }
-    }
-    if native.hasShadow() != surface.shadow {
-        native.setHasShadow(surface.shadow);
+    if native.hasShadow() != shadow {
+        native.setHasShadow(shadow);
     }
     native.invalidateShadow();
     if visible {
         if !native.isVisible() {
             native.orderFrontRegardless();
         }
+        if native.alphaValue() == 0.0 {
+            native.setIgnoresMouseEvents(false);
+            native.setAlphaValue(1.0);
+        }
     } else {
-        native.orderOut(None);
+        // Hiding via orderOut suspends the WKWebView's JS entirely (timers and
+        // IPC events stop arriving); an alpha-0 window stays live and, with
+        // ignored mouse events, is fully click-through.
+        native.setAlphaValue(0.0);
+        native.setIgnoresMouseEvents(true);
     }
-    Ok(NativeEffect {
-        native_material: material.is_some(),
-        reduced_transparency: reduced,
+    Ok(())
+}
+
+/// Notch detection: a positive safe-area top inset means the screen has a
+/// camera housing; its width is the frame minus both auxiliary menu-bar areas.
+pub fn surface_metrics(window: &tauri::WebviewWindow) -> tauri::Result<SurfaceMetrics> {
+    let _main = MainThreadMarker::new().expect("surface metrics require the main thread");
+    // SAFETY: same lifetime and thread guarantee as configure_toast.
+    let native = unsafe { &*window.ns_window()?.cast::<NSWindow>() };
+    let screen = native.screen().ok_or(tauri::Error::InvalidWindowHandle)?;
+    if screen.safeAreaInsets().top <= 0.0 {
+        return Ok(SurfaceMetrics {
+            notch: false,
+            width: 0.0,
+        });
+    }
+    let frame = screen.frame();
+    let left = screen.auxiliaryTopLeftArea();
+    let right = screen.auxiliaryTopRightArea();
+    let width = (frame.size.width - left.size.width - right.size.width).max(0.0);
+    Ok(SurfaceMetrics {
+        notch: width > 0.0,
+        width,
     })
 }

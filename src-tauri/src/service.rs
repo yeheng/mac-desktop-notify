@@ -1,6 +1,6 @@
-use crate::{model::*, store::Store};
+use crate::{model::*, store::Store, theme};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::sync::{mpsc, oneshot};
 
 struct Job {
@@ -15,9 +15,17 @@ pub struct Service {
     changes: tokio::sync::watch::Receiver<u64>,
 }
 impl Service {
-    pub fn start(path: &Path) -> Result<Self> {
-        let mut store = Store::open(path)?;
+    pub fn start(path: &Path, styles_dir: Option<PathBuf>) -> Result<Self> {
+        let mut store = Store::open(path, styles_dir.as_deref())?;
         store.recover()?;
+        if let Some(dir) = &styles_dir {
+            // First launch: export the persisted appearance as default.json so
+            // the theme file becomes the source of truth. Failure is
+            // non-fatal — builtins answer the load instead.
+            if let Ok(settings) = store.settings() {
+                let _ = theme::export_default_if_absent(dir, &settings);
+            }
+        }
         let changes = store.subscribe();
         let (sender, mut receiver) = mpsc::channel::<Job>(256);
         std::thread::Builder::new()
@@ -27,6 +35,7 @@ impl Service {
                     let result = match job.op.as_str() {
                         "_authenticate" => store.authenticate(job.data.as_str().unwrap_or("")),
                         "_tick" => store.tick().map(|_| Value::Null),
+                        "_tray_state" => store.tray_state(),
                         "_delivery.next" => store.claim_delivery(),
                         "_delivery.result" => store.delivery_result(job.data),
                         _ => store.command(job.source.as_deref(), &job.op, job.data),
@@ -168,7 +177,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let service = Service::start(Path::new(":memory:")).unwrap();
+        let service = Service::start(Path::new(":memory:"), None).unwrap();
         service
             .call(
                 None,

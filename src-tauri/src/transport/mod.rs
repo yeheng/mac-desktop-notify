@@ -386,7 +386,7 @@ mod tests {
 
     #[tokio::test]
     async fn three_transports_share_contract_and_replay_events() {
-        let service = Service::start(std::path::Path::new(":memory:")).unwrap();
+        let service = Service::start(std::path::Path::new(":memory:"), None).unwrap();
         let credentials = service
             .call(None, "sources.create", json!({"id":"test"}))
             .await
