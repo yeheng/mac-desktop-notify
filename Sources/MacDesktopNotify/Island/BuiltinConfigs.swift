@@ -41,32 +41,39 @@ enum BuiltinConfigs {
     /// `Bundle.module` traps when the bundle is nowhere on its candidate list,
     /// so a hand-assembled `.app` that forgot it entirely crashed at launch.
     /// Presets are a convenience: a missing bundle should cost the presets, not
-    /// the app. The candidates mirror the generated accessor's — the places
-    /// SPM itself maintains — and return nil instead of trapping:
+    /// the app. The generated accessor's candidates differ per toolchain, so
+    /// every probe below mirrors one deployment shape or one toolchain's
+    /// accessor, and returns nil instead of trapping:
     ///
+    /// - `PACKAGE_RESOURCE_BUNDLE_PATH`: ≥6.2 test runs export it, which
+    ///   removes every layout assumption;
     /// - merged into an app: `resourceURL` is `Contents/Resources`, where
     ///   `build_app.sh` copies the bundle;
-    /// - merged into an executable target: under `swift test` this module is
-    ///   statically linked into the `.xctest` bundle, whose Resources SPM
-    ///   populates with the resource bundle;
-    /// - a bare executable: the bundle sits next to the binary in
-    ///   `.build/debug/`.
-    ///
-    /// The previous development fallback walked `.build/<slice>/` guessing at
-    /// SPM's output layout; the toolchain has since moved that layout
-    /// (`.build/debug/`, `.build/out/Products/`), which left the test suite
-    /// red on machines CI never sees. Mirroring the accessor removes the
-    /// guesswork.
+    /// - `swift test` on ≥6.2: the bundle is merged into the `.xctest`'s
+    ///   Resources, reachable via either host bundle's `resourceURL`;
+    /// - `swift test` on ≤6.1: resources of an executable target are NOT
+    ///   merged into the `.xctest`; they stay in the products dir next to it,
+    ///   and `Bundle.main` is the xctest *runner*, not the test bundle. The
+    ///   module's own bundle (`Bundle(for:)`, the `.xctest`) is therefore the
+    ///   only anchor that reaches the sibling bundle;
+    /// - a bare executable: the bundle sits next to the binary.
     private static func resourceBundle() -> Bundle? {
         let name = "\(bundleName).bundle"
-        let candidates: [URL?] = [
-            Bundle.main.resourceURL?.appendingPathComponent(name),
-            Bundle(for: BundleFinder.self).resourceURL?.appendingPathComponent(name),
-            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent(name),
-            Bundle.main.bundleURL
-                .appendingPathComponent("Contents/Resources")
-                .appendingPathComponent(name),
-        ]
+        var candidates: [URL?] = []
+        if let override = ProcessInfo.processInfo.environment["PACKAGE_RESOURCE_BUNDLE_PATH"]
+                       ?? ProcessInfo.processInfo.environment["PACKAGE_RESOURCE_BUNDLE_URL"] {
+            candidates.append(URL(fileURLWithPath: override))
+        }
+        for host in [Bundle.main, Bundle(for: BundleFinder.self)] {
+            candidates.append(contentsOf: [
+                host.resourceURL?.appendingPathComponent(name),
+                host.bundleURL.appendingPathComponent(name),
+                host.bundleURL.deletingLastPathComponent().appendingPathComponent(name),
+                host.bundleURL
+                    .appendingPathComponent("Contents/Resources")
+                    .appendingPathComponent(name),
+            ])
+        }
         for candidate in candidates.compactMap({ $0 }) {
             if let bundle = Bundle(url: candidate) { return bundle }
         }
