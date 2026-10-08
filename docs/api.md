@@ -88,7 +88,7 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 | `title` | string | ✅ | — | trim；超 200 字符截断；trim 后为空 → **400**（有 `script` 时除外） |
 | `body` | string | ❌ | `""` | Markdown；超 5000 字符截断 |
 | `blocks` | array | ❌ | — | 结构化正文，**非空时优先于 `body`**，见 [3.1](#31-blocks结构化正文) |
-| `island` | object | ❌ | — | 灵动岛状态行，见 [3.2](#32-island灵动岛状态行) |
+| `island` | object | ❌ | — | 状态行，见 [3.2](#32-island状态行) |
 | `urgency` | string | ❌ | `"normal"` | `low` / `normal` / `critical`；**无法识别的值回落 `normal`**（不报错） |
 | `timeout` | number | ❌ | 设置值 | 自动收起秒数，钳制到 `1...60`；`NaN`/`Inf` 视为**未提供** |
 | `group` | string | ❌ | — | 分组键；trim；超 64 字符截断；空白串视为无分组 |
@@ -116,21 +116,21 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 - 未知 `type`、空内容的条目**静默丢弃**，不拒绝整条推送。
 - 反糖结果仍受 5000 字符上限约束。
 
-### 3.2 `island`：灵动岛状态行
+### 3.2 `island`：状态行
 
-让摘要面（刘海 pill / 无刘海屏迷你条 / `display=peek` 停留态）显示一行发送方驱动的状态，而不只是「新消息」。
+让收起态的卡片显示一行发送方驱动的摘要文本与进度，而不只是消息标题。
 
 | 字段 | 类型 | 约束 |
 |------|------|------|
 | `text` | string | trim；超 64 字符截断；空白 → 丢弃 |
 | `progress` | number | 钳制到 `0...1`；`NaN`/`Inf` → 丢弃。迷你条在胶囊底边画一条 2pt 进度细条 |
-| `icon` | string | SF Symbol 名，替换紧急度 glyph（仍染紧急度色）；无效名渲染为空 |
+| `icon` | string | SF Symbol 名，替换卡片头部的紧急度 glyph（仍染紧急度色）；无效名渲染为空 |
 
 规则：
 
-- 整体缺失、或所有字段都归一化为空 → 视为**无 `island`**，三个摘要面的渲染与接入前完全一致。发送方无法用 `{}` 清空状态行。
+- 整体缺失、或所有字段都归一化为空 → 视为**无 `island`**，卡片按标题+正文渲染，与接入前完全一致。发送方无法用 `{}` 清空状态行。
 - 未知字段忽略；单字段类型错误只丢弃该字段。
-- 配合 `group` 顶替即是**进度刷新**：CI 周期推同一 `group`，岛上 42% → 60%，消息不堆叠。
+- 配合 `group` 顶替即是**进度刷新**：CI 周期推同一 `group`，卡片上 42% → 60%，消息不堆叠。
 - 脚本桥 `notify.push` 与脚本回填不合并 `island`。
 
 ### 3.3 `actions`：操作按钮

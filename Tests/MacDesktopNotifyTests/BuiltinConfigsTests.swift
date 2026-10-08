@@ -98,4 +98,49 @@ final class BuiltinConfigsTests: XCTestCase {
         XCTAssertNil(Color(hex: "#10101"))
         XCTAssertNil(Color(hex: "#GGGGGG"))
     }
+
+    // MARK: - Numeric tokens
+
+    /// Each numeric token clamps to its own range, so a hand-written file
+    /// cannot produce a card wider than the screen or a title smaller than a
+    /// footnote.
+    func testNumericTokensClamp() {
+        let json = """
+        {"version":1,"tokens":{
+          "cardRadius":999,"padding":-5,"gap":1000,
+          "titleSize":2,"bodySize":99,"borderWidth":50}}
+        """.data(using: .utf8)!
+        let (spec, _) = ToastStyleParser.parse(json)
+        XCTAssertEqual(spec.cardRadius, ToastStyleRules.radius.upperBound)
+        XCTAssertEqual(spec.padding, ToastStyleRules.padding.lowerBound)
+        XCTAssertEqual(spec.gap, ToastStyleRules.gap.upperBound)
+        XCTAssertEqual(spec.titleSize, ToastStyleRules.sizes.lowerBound)
+        XCTAssertEqual(spec.bodySize, ToastStyleRules.sizes.upperBound)
+        XCTAssertEqual(spec.borderWidth, ToastStyleRules.borderWidth.upperBound)
+    }
+
+    func testNumericTokensApply() {
+        let json = """
+        {"version":1,"tokens":{"cardRadius":22,"padding":10,"gap":6,
+          "titleSize":16,"bodySize":13,"borderWidth":2}}
+        """.data(using: .utf8)!
+        let (spec, diagnostics) = ToastStyleParser.parse(json)
+        XCTAssertTrue(diagnostics.isEmpty)
+        XCTAssertEqual(spec.cardRadius, 22)
+        XCTAssertEqual(spec.padding, 10)
+        XCTAssertEqual(spec.gap, 6)
+        XCTAssertEqual(spec.titleSize, 16)
+        XCTAssertEqual(spec.bodySize, 13)
+        XCTAssertEqual(spec.borderWidth, 2)
+    }
+
+    /// A non-numeric value keeps the default and reports the key.
+    func testNonNumericTokenIsReported() {
+        let json = """
+        {"version":1,"tokens":{"cardRadius":"wide"}}
+        """.data(using: .utf8)!
+        let (spec, diagnostics) = ToastStyleParser.parse(json)
+        XCTAssertEqual(spec.cardRadius, ToastStyleSpec.default.cardRadius)
+        XCTAssertEqual(diagnostics.map(\.path), ["tokens.cardRadius"])
+    }
 }

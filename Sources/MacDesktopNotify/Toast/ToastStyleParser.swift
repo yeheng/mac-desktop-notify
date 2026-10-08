@@ -105,6 +105,21 @@ enum ToastStyleParser {
                     case "levelError": spec.levelError = value
                     default: break
                     }
+                // Numeric tokens: each one clamps to its own range, so a
+                // hand-written file cannot produce a card wider than the
+                // screen or a title smaller than a footnote.
+                case "cardRadius":
+                    if let value = number(raw, at: "tokens.cardRadius", to: ToastStyleRules.radius) { spec.cardRadius = value }
+                case "padding":
+                    if let value = number(raw, at: "tokens.padding", to: ToastStyleRules.padding) { spec.padding = value }
+                case "gap":
+                    if let value = number(raw, at: "tokens.gap", to: ToastStyleRules.gap) { spec.gap = value }
+                case "titleSize":
+                    if let value = number(raw, at: "tokens.titleSize", to: ToastStyleRules.sizes) { spec.titleSize = value }
+                case "bodySize":
+                    if let value = number(raw, at: "tokens.bodySize", to: ToastStyleRules.sizes) { spec.bodySize = value }
+                case "borderWidth":
+                    if let value = number(raw, at: "tokens.borderWidth", to: ToastStyleRules.borderWidth) { spec.borderWidth = value }
                 default:
                     // Unknown token: ignored, not reported. A newer file opened
                     // in an older build must not fill the diagnostics with

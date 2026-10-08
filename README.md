@@ -1,6 +1,6 @@
 # NotchNotify
 
-通过 URL Scheme 或本地 API（HTTP / WebSocket / Unix socket）向 macOS 灵动岛（Dynamic Notch）推送 Markdown 通知的轻量工具。
+通过 URL Scheme 或本地 API（HTTP / WebSocket / Unix Socket）向 macOS 推送 Markdown 通知的轻量工具：消息以可层叠的浮动 Toast 卡片出现在屏幕角落，收起态是纯文本摘要，鼠标移入展开完整正文与操作按钮。
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-6.0-orange)
@@ -8,35 +8,34 @@
 
 ## 特性
 
-- 🖥️ **Vibe Island 风格 UI** — 常驻摘要态、悬停/点击展开、消息自动展开和内容切换动画；自动弹出只显示当前消息单卡，悬停/点击进入完整消息中心
-- 🍞 **浮动 Toast 呈现** — 不依赖刘海的第二种呈现：消息卡片出现在屏幕右上角，点击展开面板、点击外部收起，任何显示器都可用；设置 → 通用 → 呈现方式 切换（即时生效）。消息流、历史、已读、动作回执、勿扰感知等能力两种呈现完全共享，切换的只是像素落点
+- 🖥️ **Toast 卡片栈** — 消息卡片层叠出现在屏幕角落，最多 4 张，超出按时间退役并保留在历史；单个窗口装整栈，卡片进出有过渡动画
 - 🔗 **URL Scheme 推送** — 通过 `notch-notify://` 协议从任何语言/脚本发送通知
 - 🔌 **本地 API** — HTTP / WebSocket / Unix Socket 三种对接方式，仅本机监听，推送结果同步返回
 - 💾 **历史持久化** — 消息与已读状态原子写入磁盘，重启后仍在（防抖合并写，可在设置关闭）
 - 🧹 **分组去重** — 带 `group` 参数的重复推送顶掉旧消息，CI 这类高频任务不再刷屏
 - 📨 **动作回执** — `notch-notify://ack` 按钮把点击结果写回磁盘，脚本可轮询拿到审批结论；`&input=1` 可要求一行批注，回执携带 `comment` 字段
 - 🔕 **勿扰感知** — 锁屏/屏保/睡眠三档静默（照常显示 / 静默存入历史 / 仅紧急穿透），消息永不丢失
-- 🖥️ **多显示器** — 刘海跟随指针所在的屏幕，拔插显示器自动同步；可选所有屏幕镜像摘要，无刘海屏降级为顶部迷你摘要条（可关）
+
 - ✅ **可操作通知** — 最多 3 个操作按钮，点击打开回调 URL，轻松实现审批流
 - 📜 **JSC 脚本** — 推送带 `script=` 由 JS 生成内容、操作按钮绑定脚本、`POST /v1/exec` 手动执行；受限 `fetch` + 通知 API，15s 看门狗
 - 📝 **Markdown 渲染** — 通知正文支持 Markdown（行内格式 + 代码块），解析结果带缓存
-- ⏱️ **智能收起** — 信息卡 10 秒自动收起（指针进入取消计时，看过即收）；可操作卡与 Critical 常驻不自动收起，闲置 5 分钟才恢复倒计时；新推送总是立即顶替当前卡片，被顶替的消息留在历史里保持未读
+- ⏱️ **智能收起** — 每张卡片独立倒计时（悬停只暂停指针所在那张，其余继续）；可操作卡与 Critical 常驻不自动收起，闲置 5 分钟才恢复倒计时；同 `group` 的重复推送顶掉旧卡片并累计 ×N
 - ↩️ **删除可撤销** — 历史窗口中单条/整组删除 4 秒内可撤销，连续删除自动合并计数；仅「清空全部」仍需确认
-- 🫳 **触觉反馈** — 进入触发区、点击刘海时触控板轻戳确认，可在设置关闭
-- 🎥 **屏录隐藏** — 屏幕共享、录屏与截图时刘海不入画面，会议演示不泄露消息
-- 🪶 **轻提醒档位** — `display=peek` 让普通消息只在摘要栏停留（时长跟随消息 `timeout` 或全局停留设置），不展开面板，适合低价值高频消息
+- 🫳 **触觉反馈** — 鼠标移入卡片并展开时触控板轻戳确认，可在设置关闭
+- 🎥 **屏录隐藏** — 屏幕共享、录屏与截图时通知不入画面，会议演示不泄露消息
+
 - 📂 **历史分组聚合** — 同 `group` 的重复推送顶掉旧条目，未读数自动累计；整组清理走 `clear?group=`
 - 🗂️ **历史信息窗口** — 右键菜单打开独立历史窗口，以列表形式逐条浏览全部消息（同组分别列出）：搜索标题/正文、全部/未读/紧急筛选、逐条已读/删除、点击手风琴展开正文、全部已读/清除历史、删除可撤销且提示不遮挡列表
-- 🖱️ **右键菜单** — 面板右键即可打开/收起、历史信息、静默 1 小时或进入设置；「管理消息」统一提供清除历史与清除全部，面板头部「更多操作」使用相同管理入口
-- ⌨️ **键盘操作** — `⌃⌥N` 全局切换面板（系统级热键，无需辅助功能授权）；`Esc` 收起面板（指针在面板/刘海区域，或面板由点击/悬停打开时生效）
-- 📜 **消息列表** — 正在显示与历史（最多 50 条）同屏连续展示，无分区标题；正文手风琴展开（点哪条开哪条，同时只展开一条）；面板只读，删除/标读/搜索在历史窗口完成
-- ♿ **阅读与辅助功能** — 自动展开卡片可直接进入全部消息；标题支持完整阅读，历史行支持 VoiceOver 展开及命名操作，面板遵循系统「减少动态效果」设置
-- ✅ **已读管理** — 已读 = 用户点开：点击打开面板即读当前消息，展开某行即读该行；超时、悬停、自动弹出都不标读；面板头部一键全部已读，历史窗口可单条切换
-- 🔵 **未读指示** — 摘要 pill 显示紧急度 glyph 与 `×N` 未读徽章；没点开过的消息（含被新推送顶掉的、超时退下的）一律保持未读，历史窗口可手动切换
+- 🖱️ **右键菜单** — 卡片右键即可「稍后提醒 / 关掉这张」、历史信息、静默 1 小时或进入设置；「管理消息」统一提供清除历史与清除全部
+- ⌨️ **键盘操作** — `⌃⌥N` 打开历史窗口（系统级热键，无需辅助功能授权）；`Esc` 收起当前展开的卡片（仅点击展开的那张）
+
+- ♿ **阅读与辅助功能** — 卡片标题与正文支持完整阅读；遵循系统「减少动态效果」（动画降级为淡入淡出）
+- ✅ **已读管理** — 已读 = 用户点开：点击卡片即读它；悬停展开、自动弹出、超时退役都不标读；历史窗口可单条切换
+
 - 🎨 **紧急度颜色** — 低/中/高三级紧急度对应不同颜色和图标指示
 - 🔇 **全屏隐藏** — 检测到全屏应用时自动隐藏，避免干扰
 - 🔔 **分级声音** — Low 静默，Normal/Critical 使用不同系统提示音，可在设置中关闭
-- ⚙️ **完整设置** — 行为、显示、通知、声音、快捷键和登录启动配置
+- ⚙️ **完整设置** — 位置、样式、悬停、通知、声音、快捷键和登录启动配置
 
 ---
 
@@ -82,7 +81,7 @@ swift build -c release
 | `actions` | `string` | ❌ | _(空)_ | 操作按钮，JSON 数组 `[{"label":"允许","url":"http://..."}]`，最多 3 个。`url` 若为 `notch-notify://ack` 则记录回执而非打开浏览器（见下文） |
 | `click` | `string` | ❌ | _(无)_ | 点击通知卡打开的链接，须带 scheme（URL Scheme 入口为 `click`，本地 API 为 `clickUrl`）；非法值丢弃不影响消息。点击后消息标已读并关闭 |
 | `blocks` | `array` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：结构化正文块数组，JSON 原生免转义；非空时优先于 `body`（见 [docs/api.md](docs/api.md#31-blocks结构化正文)） |
-| `island` | `object` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：灵动岛状态行 `{"text","progress","icon"}`，驱动刘海 pill / 迷你条 / peek 停留态的紧凑面（见 [docs/api.md](docs/api.md#32-island灵动岛状态行)） |
+| `island` | `object` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：状态行 `{"text","progress","icon"}`，驱动收起卡片的摘要文本与进度显示（见 [docs/api.md](docs/api.md#32-island状态行)） |
 | `display` | `string` | ❌ | 设置值 | 展示档位：`"peek"` 轻提醒（只在摘要栏停留，不展开面板）/ `"expand"` 正常展开；未传时由「设置 → 通知 → 普通消息使用轻提醒」决定；critical 恒为展开，忽略此参数 |
 
 #### 编码与转义（重要）
@@ -446,28 +445,26 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 
 | 操作 | 说明 |
 |------|------|
-| 鼠标靠近刘海 | 延迟 150ms（可调）后展开消息中心（hover 打开，不标读任何消息） |
-| 点击刘海 / `⌃⌥N` / 菜单「打开面板」 | 立即展开完整消息中心（click 打开），当前消息标为已读；历史行需逐条点开 |
-| 推送自动弹开 | 单卡模式：只显示当前一张通知卡 |
-| 新推送到达 | 立即顶替当前卡片上屏（critical 占屏时除外：普通推送存为未读历史）；被顶替的消息留在列表中保持未读，点击即可再看 |
-| 信息卡（无操作按钮、非紧急） | 10s 自动收起；指针进入卡片取消计时，进入后离开立即收起 |
-| 可操作卡（带按钮或紧急） | 不自动收起：操作完成收起；无人理睬 5 分钟后恢复倒计时；也可关闭按钮/Esc/点击外部 |
-| 右键 → 稍后提醒 | 当前消息立即收起（保持未读），30 分钟或 1 小时后自动重新上屏（重现规则与新推送一致，critical 照常占屏）；期间已读、删除或清空则提醒自动作废。一次只有一条提醒在途，新的替换旧的；提醒是进程内定时器，退出 app 即丢弃 |
-| 悬停打开的面板 | 指针完全离开后 260ms 收起（可在设置关闭） |
-| `Esc` | 收起面板——指针在面板/刘海区域，或面板由点击/悬停打开时生效；需辅助功能授权 |
-| 点击面板外 | 收起面板（「鼠标离开时自动收起」关闭时不收起） |
+| 鼠标移入卡片 | 延迟（默认 150ms，可调）后该卡片就地展开完整正文与操作按钮；hover 展开**不**标已读 |
+| 鼠标移出卡片 | 该 hover 展开的卡片收起；其余卡片不受影响 |
+| 点击卡片 | 第一次点击 = 展开**并**标记已读；再点一次 = 收起并退役（留在历史，已读） |
+| 点击带 `clickUrl` 的卡片 | 打开发送方链接、标为已读并收起卡片——与操作按钮同一条处理路径 |
+| 点击卡片外 | 收起所有 hover 展开的卡片（「鼠标离开时自动收起」关闭时不收起） |
+| 同一 `group` 重复推送 | 顶掉旧卡片、累计 ×N 计数，不堆叠 |
+| 卡片超过 4 张 | 最早的卡片退役进历史（仍为未读），未读徽章与历史窗口可查 |
+| 信息卡（无操作按钮、非紧急） | 到 dwell 时长退役；悬停只暂停该卡倒计时 |
+| 可操作卡（带按钮或紧急） | 不自动退役：操作完成收起；无人理睬 5 分钟后恢复倒计时 |
+| 右键 → 稍后提醒 | 该卡片立即收起（保持未读），30 分钟或 1 小时后自动重新上屏；期间已读、删除或清空则提醒作废。一次只有一条提醒在途，新的替换旧的；提醒是进程内定时器，退出 app 即丢弃 |
+| `Esc` | 收起当前**点击展开**的那张卡片；hover 展开的不受影响，需辅助功能授权 |
+| `⌃⌥N` | 打开历史信息窗口 |
 | 点击历史行 | 就地展开/收起正文与操作按钮（手风琴，开合间保留）；展开即标为已读 |
-| 点击当前通知卡（带 `click`） | 打开发送方链接、标为已读并收起卡片——与操作按钮同一条处理路径 |
-| 面板内管理 | 面板只读：删除/标读/撤销/搜索请用右键「历史信息…」独立历史窗口 |
-| 面板头部 | 「全部已读」「更多操作」菜单、关闭按钮、触感反馈保留 |
-| 刘海 pill | 环境态：紧急度色 glyph + `×N` 未读徽章（N>1）；推送带 `island` 时 glyph（或发送方 icon）旁显示一行状态文本；标题只出现在通知卡与消息中心 |
 | 设置 / 历史信息 / 引导窗口 | `⌘W` 关闭该窗口，`⌘Q` 退出应用。本应用是无主菜单的 accessory，这两个键由窗口自己的本地监视器提供 |
 
-**未读语义：** 消息只有两种归宿——未读 或 历史（已读）。没点开就是没点开：超时退下、被新推送顶替、悬停看过、自动弹出，都不会把消息变成历史；只有用户点开（点击打开面板读当前消息、展开某一行、点击消息上的操作按钮）才算历史。历史窗口徽章与之一致：正在显示 / 未读 / 历史。
+**未读语义：** 消息只有两种归宿——未读 或 历史（已读）。没点开就是没点开：超时退役、超上限挤出栈、悬停看过、自动弹出，都不会把消息变成历史；只有用户点开（点击卡片、展开历史行、点击操作按钮）才算历史。历史窗口徽章与之一致：未读 / 历史。
 
 **首次运行引导：** 首次启动会出现三步引导（发一条测试通知 / 复制接入片段 / 选择安静·平衡·即时档位），可跳过，并可在「设置 → 关于」重新打开。
 
-**推送诊断：** `push` 缺少 `title` 时不再静默丢弃——写 stderr 并在刘海弹出一条「推送格式错误」的普通通知说明原因。
+**推送诊断：** `push` 缺少 `title` 时不再静默丢弃——写 stderr 并弹出一条「推送格式错误」的普通通知说明原因。
 
 **全局热键：** `⌃⌥N` 默认开启（系统级注册，无需辅助功能授权，任何 App 中可用），可在「设置 → 通知 → 快捷键」关闭。若该组合已被其他应用占用，注册会失败——设置页会就此给出提示，而不是让开关停在一个不生效的 ON 上。
 
@@ -481,7 +478,7 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 - Swift 6.0+（使用严格并发检查）
 - Xcode 16.0+（用于构建）
 
-> **注意：** 无物理刘海的 Mac（如 iMac、Mac mini）会自动降级为浮动窗口样式；摘要态以屏幕顶部居中的迷你摘要条呈现（紧急度、状态行——`island` 文本优先——与未读数，`island.progress` 另加一条底边进度细条，可在「设置 → 通用 → 显示器」关闭）。
+不依赖物理刘海：有刘海与无刘海的 Mac 使用同一套 Toast 呈现。
 
 ---
 
@@ -489,7 +486,7 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 
 | 库 | 说明 |
 |----|------|
-| [DynamicNotchKit](https://github.com/yeheng/DynamicNotchKit) | macOS 灵动岛窗口、摘要态与转场基础。**已本地 vendor**：源码在 `Sources/DynamicNotchKit/`（MIT，随附 `LICENSE`），基线为上游 `cd0b3e5` + pill 圆角调整，本地改动在源码中以 `local patch:` 标出（回退了把 floating 渲染裁成 `Capsule` 的改动）。不再依赖远端包，`Package.resolved` 随之移除 |
+无第三方运行时依赖。灵动岛（DynamicNotchKit）已在 2026-10-08 的 toast 改造中删除。
 
 ---
 
@@ -499,175 +496,117 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 
 | 分类 | 配置项 |
 |------|--------|
-| **通用** | 悬停展开、鼠标离开收起、空闲隐藏、全屏隐藏、屏幕录制时隐藏、触觉反馈、悬停延迟、显示器（无刘海屏迷你摘要条、所有屏幕显示摘要）、登录启动 |
-| **外观** | 面板宽度/高度上限、内容字号、摘要栏紧急度图标与未读数量 |
+| **通用** | 悬停展开、鼠标离开收起、全屏隐藏、屏幕录制时隐藏、触觉反馈、悬停延迟、出现位置（右上/右下/顶部居中）、登录启动 |
+| **外观** | 卡片样式选择（default / pill / midnight / minimal / accent）、内容字号、解析诊断、打开配置文件夹、恢复默认 |
 | **接口** | Unix Socket 开关与路径、HTTP / WebSocket 开关与端口（默认 4770，仅绑定 127.0.0.1，回车或「应用」后生效） |
-| **通知** | 提醒档位（安静/平衡/即时）、普通消息轻提醒（`display` 未指定时生效）、保留历史、声音、快捷键（`⌃⌥N` 为系统级热键无需授权；`Esc` 需辅助功能授权，含授权引导）、离开时行为（照常显示 / 静默存入历史 / 仅紧急消息穿透） |
+| **通知** | 提醒档位（安静/平衡/即时）、保留历史、声音、快捷键（`⌃⌥N` 为系统级热键无需授权；`Esc` 需辅助功能授权，含授权引导）、离开时行为（照常显示 / 静默存入历史 / 仅紧急消息穿透） |
 | **关于** | 版本、系统要求、项目链接、接入示例、重新运行引导 |
 
-**提醒档位**是通知行为的主开关：安静＝到达不展开只亮摘要栏；平衡＝自动展开停留 5 秒；即时＝自动展开停留 10 秒且 critical 不自动降级。刘海偏移微调与校准框属于调试工具，默认隐藏，可用 `defaults write com.yeheng.macdesktopnotify island.debugGeometry -bool true` 后在「设置 → 外观 → 高级」中启用。
+**提醒档位**是通知停留时长的主开关：安静＝卡片停留 3 秒、紧急 5 分钟无人理会自动降级；平衡＝停留 5 秒（默认）；即时＝停留 10 秒且 critical 常驻直到手动处理。
 
-面板高度为**上限**语义：面板随内容收缩，短消息不再占用整块面板空间。
+栈高度为**上限**语义：最多 4 张卡片，总高夹到屏幕可视区的 60%，窗口随内容增减自动伸缩。
 
 ---
 
-## 自定义灵动岛外观
+## 自定义 Toast 外观
 
-灵动岛的**外壳**（刘海 pill 两面、展开面板、无刘海迷你条）可以按主题和 JSON 布局定制。在「设置 → 外观」里选主题与布局；文件存在即生效，删文件即回退，无需重启。定制的是外壳，不是消息正文，也不是行为（点击 / URL / 脚本 / 窗口几何留在 Swift）。
+Toast 的**样式**（收起态形状、颜色、字号、动画）是一套 JSON 样式包。在「设置 → 外观 → 卡片样式」里选；文件存在即生效，删文件即回退，无需重启。定制的是外观，不是消息正文，也不是行为（点击 / URL / 脚本 / 窗口几何留在 Swift）。
 
-📖 **完整指南：[docs/island-appearance.md](docs/island-appearance.md)** — 全部 token 默认值与范围、11 种节点逐键参考、通用修饰键、9 绑定 + 13 谓词、示例布局/主题、上限与诊断、排错清单。下面只留速查。
+📖 **完整指南：[docs/toast-style.md](docs/toast-style.md)** — 全部 token 默认值与范围、5 套内置预设、宽容解码规则、上限与诊断、排错清单。下面只留速查。
 
 ### 文件位置
 
 ```
 ~/Library/Application Support/MacDesktopNotify/
-  island.json                 # 旧位置的布局（「自动」时使用）
-  layouts/
-    classic.json              # 自己的布局；同名会覆盖 app 内置的同名预设
-  themes/
-    midnight.json             # 自己的主题；缺失 = 内置默认（等于今天的字面量）
+  styles/
+    mine.json                 # 自己的样式；同名会覆盖 app 内置的同名预设
 ```
 
-app 内置了一套预设（`layouts/`、`themes/`，随包发布），下拉里带 **「（内置）」** 标记：内置先加载，用户目录下的同名文件叠在上面（自定义赢）。用户目录里没有文件时，内置预设依然可选。
+app 内置了 5 套预设（`default` / `pill` / `midnight` / `minimal` / `accent`，随包发布），下拉里带 **「（内置）」** 标记。内置先加载，用户目录下的同名文件叠在上面（自定义赢）；用户目录里没有文件时，内置预设依然可选。
 
-「设置 → 外观」可切换主题/布局、预览 `expanded` 布局、查看解析诊断，并有「打开配置文件夹」。改文件后自动热重载（200ms 去抖）。
+「设置 → 外观」可切换样式、查看解析诊断，并有「打开配置文件夹」。改文件后自动热重载（200ms 去抖）。
 
-### 主题 token
+### 样式包结构
 
-主题是一个 JSON：`{"name":"...","tokens":{...}}`。颜色支持 `#RRGGBB` / `#RRGGBBAA` 或 `{"light":"#...","dark":"#..."}`。未知 token 忽略，缺失取默认，数值 clamp。
+```jsonc
+{
+  "version": 1,
+  "name": "mine",
+  "collapse": { "shape": "card", "lines": 2 },
+  "tokens": {
+    "cardFill":   "#141419F2",
+    "textPrimary": "#ECECF4",  "textSubtle": "#FFFFFFB8",
+    "borderColor": "#FFFFFF2E", "accent": "#7C6CF0",
+    "levelSuccess": "#49A88B", "levelWarning": "#C89743", "levelError": "#DF6E7B"
+  },
+  "flags": {
+    "showIcon": true, "showTime": true, "showLevel": true,
+    "showTags": true, "showProgress": true, "showOccurrences": true
+  },
+  "motion": { "enter": "slide", "exit": "fade", "enterMs": 220, "exitMs": 160 }
+}
+```
 
-| token | 默认 | 说明 |
+| 键 | 值 | 说明 |
 |---|---|---|
-| `panelFill` | `#000000` | 面板底色 |
-| `panelBorder` | `#FFFFFF2E` | 面板描边 |
-| `divider` | `#FFFFFF1F` | 分隔线 |
-| `textPrimary` | `#FFFFFFFF` | 主文本 |
-| `textSubtle` | `#FFFFFFA8` | 次级文本 |
-| `textTimestamp` | `#FFFFFF9E` | 时间戳 |
-| `cardFill` / `cardFillHover` | `#FFFFFF17` / `#FFFFFF24` | 当前卡片底 / hover |
-| `historyRowFill` / `historyRowFillHover` | `#FFFFFF12` / `#FFFFFF1F` | 历史行底 / hover |
-| `miniBarFill` | `#000000B8` | 迷你条胶囊底 |
-| `badgeFill` | `#FFFFFF3D` | 未读徽章底 |
-| `accent` / `critical` | `.blue` / `.red` | 普通 / 紧急色 |
-| `panelRadius` / `cardRadius` / `historyRowRadius` | `22` / `12` / `10` | 圆角（0…48） |
-| `paddingPanel` / `paddingCard` | `16` / `12` | 内边距（0…64） |
-| `fontDesign` | `rounded` | 固定枚举 `default\|rounded\|serif\|monospaced` |
-| `fontScale` | `1.0` | 壳层字号乘数（0.8…1.6） |
-| `monoDigits` | `true` | 数字等宽 |
-| `fontFamily` | 无（系统字体） | 外壳比例文本的字体族，如 `"JetBrainsMono Nerd Font"` |
-| `monoFontFamily` | 无（系统等宽） | 等宽文本（代码块）的字体族 |
-| `panelMaterial` | `solid` | `solid\|popover` |
-| `motionScale` | `1.0` | 动效倍率（0…2） |
+| `collapse.shape` | `card` \| `pill` | 收起态形状。`pill` 是固定高度的胶囊，`card` 是自适应高度的圆角矩形 |
+| `collapse.lines` | `1`…`4` | 收起态显示几行纯文本摘要 |
+| `tokens.*` | `#RRGGBB` / `#RRGGBBAA` | 颜色。`cardFill` / `textPrimary` / `textSubtle` / `borderColor` 还接受 `"auto"`（跟随系统浅色/深色） |
+| `flags.*` | bool | 卡片各区块的开关 |
+| `motion.enter` / `exit` | `slide` \| `fade` \| `zoom` \| `bounce` \| `none` | 进场/退场动画 |
+| `motion.enterMs` / `exitMs` | `0`…`1200` | 动画时长 |
 
-### 布局文档
-
-`island.json` 顶层是 `{ "version": 1, "surfaces": { ... } }`。四个 surface 各自独立：`compactLeading`、`compactTrailing`、`expanded`、`miniBar`。某个 surface 缺失或无效时，只有它回退内置视图。
-
-**节点闭集（11 种）**：
-
-| `type` | 键 |
-|---|---|
-| `vstack` / `hstack` / `zstack` | `spacing`, `alignment`, `children` |
-| `text` | `value`(绑定/字面串), `size`, `weight`, `design`, `tint`, `lineLimit`, `fontFamily`(Nerd Font 图标), `marquee`(超长时走马灯) |
-| `image` | `system`(SF Symbol，可为绑定), `size`, `weight`, `tint` |
-| `dot` | `size`, `fill` |
-| `badge` | `value`(`$unread`), **`format` 必填**（`timesN`=`×N`，`count`=裸数字）, `fill`, `clip` |
-| `progress` | `value`(`$progress`), `height`, `fill`, `track` |
-| `divider` | — |
-| `spacer` | `minLength` |
-| `slot` | `name` ∈ `headerActions` / `messageBody` / `footerActions` |
-
-**通用修饰键**（任意节点；应用顺序固定 `if` → `frame` → `padding` → `background` → `clip` → `opacity` → `a11y`）：
-
-```
-frame:      { width, height, minWidth, maxWidth, minHeight, maxHeight, alignment }
-padding:    { top, bottom, leading, trailing, horizontal, vertical }
-background: { fill, radius, clip: "rounded"|"capsule", stroke, strokeWidth }
-a11y:       { label, hidden }
-```
-
-**取值规则**：`$xxx` = 绑定；`@xxx` 或裸名 = 主题 token；`#RRGGBB` / `#RRGGBBAA` = 字面色。没有表达式、插值、运算或拼接。颜色 token 也可写成 `{"light":"#...","dark":"#..."}`。
-
-**绑定（9 个，全部预格式化）**：`$status`、`$islandText`、`$panelTitle`、`$panelSubtitle`、`$icon`、`$unread`、`$progress`、`$urgency`、`$latestUnreadTitle`（最新未读标题，收起 pill 的走马灯用它）。
-
-**谓词（13 个，用于 `if`）**：`hasStatus`、`hasIslandText`、`hasCurrent`、`hasUnread`、`manyUnread`、`isCritical`、`showUrgency`、`showHistoryCount`、`showsPillBadge`、`showsMiniBarBadge`、`hasProgress`、`showsCurrentCard`、`showsUnreadTitle`（有未读且无 island 文本）。未知谓词按 **true（可见）** 处理。
-
-**原生内容槽**：`messageBody` 是消息卡片/历史列表（含滚动与内边距），`headerActions` 是面板头部按钮，`footerActions` 是「查看全部消息」。这些内容、Markdown 正文、点击/URL/脚本都留在 Swift，JSON 只决定盒子怎么摆。
-
-### 内置预设与覆盖
-
-`layouts/`、`themes/` 里的预设已**随 app 打包**，下拉菜单直接可用，带「（内置）」标记（如 `classic（内置）`、`github-dark（内置）`）：
-
-- 主题：`midnight`、`solar`、`github-dark`、`nerd-font`
-- 布局：`classic`（等于 Swift 内置壳布局）、`progress`、`github`、`nerd`
-
-**加载顺序：内置先，用户目录后。** 把同名文件放进配置目录就会覆盖内置版本（用户赢）；删掉它又回到内置，而不是直接回默认。
-
-> **打包注意**：内置预设来自 SPM 生成的 `MacDesktopNotify_MacDesktopNotify.bundle`。`build_app.sh` 会把它复制进 `Contents/Resources`，找不到就**中止构建**（手工打包漏了它是发版事故）。即使真的漏了，app 也能启动，只是下拉里没有内置预设 —— `BuiltinConfigs` 刻意不用会 `fatalError` 的 `Bundle.module`。
-
-```bash
-CFG=~/Library/Application\ Support/MacDesktopNotify
-mkdir -p "$CFG/themes" "$CFG/layouts"
-cp Sources/MacDesktopNotify/Builtin/themes/*.json "$CFG/themes/"   # 想改哪个就先拷出来覆盖（只选用、不改，下拉里直接选即可）
-cp Sources/MacDesktopNotify/Builtin/layouts/*.json "$CFG/layouts/"
-# 然后在「设置 → 外观」里选主题和布局
-```
+未知键忽略，坏值保留默认并在「设置 → 外观」报出诊断，数值 clamp。**`version` 不是 1 时整个文件作废**，回默认样式。
 
 ### 回退与边界
 
-- **逐 surface 回退**：某个 surface 解析失败、根节点被丢空、或文件里没写它 → 只回退该面，其余不受影响，绝不出现空白岛。
-- **宽容解码**：未知 `type` 丢该子树、未知键忽略、字段类型错丢该字段、`version` 未知整体回退；上限为文件 ≤ 64KB、深度 ≤ 12、每 surface 节点 ≤ 256、单字符串 ≤ 256、frame 数值 ≤ 4000。
-- **诊断带节点路径**（如 `surfaces.expanded.children[2].background.fill: 颜色解析失败`），显示在「设置 → 外观」。
-- **收起路径永远在 Swift**：`Esc`、`⌃⌥N`、右键菜单与 DSL 无关，自定义布局无法移除它们；删文件立即回退。
+- **坏文件保留上一份**：解析失败、文件超过 64KB、或 `version` 未知 → 保留上一次的样式并报诊断，绝不把 toast 刷成空白。
+- **宽容解码**：未知 token 忽略、字段类型错丢该字段并报诊断、坏动画名丢该字段。
+- **行为不可定制**：Esc、⌃⌥N、右键菜单、悬停展开、点击已读都在 Swift 里，样式包改不动它们。
+- **减弱动态效果**：系统开启后所有动画降级为淡入淡出。
 
-**不做**：表达式/条件组合、循环或列表模板、在 JSON 里定义按钮或点击行为、描述消息正文、窗口宽高与刘海几何、每节点动画、多主题继承 / `$ref` / 跨文件 include、per-surface 主题（主题全局，布局 per-surface）。
+**不做**：per-message 样式路由、每节点动画曲线、自定义字体文件上传、任意图标 URL、窗口宽高与坐标。
 
 ---
+
+
 
 ## 项目结构
 
 ```
-Sources/DynamicNotchKit/                  # 本地 vendor 的 DynamicNotchKit（MIT）
-├── DynamicNotch/                         # DynamicNotch 主体、样式、状态、转场配置、hover 行为
-├── DynamicNotchInfo/                     # 预设信息卡样式（应用未使用，随库保留）
-├── Utility/                              # NSScreen 刘海测量、panel、环境值、材质视图
-└── Views/                                # NotchView / NotchlessView / NotchShape 等渲染
-
 Sources/MacDesktopNotify/
 ├── main.swift                          # 入口
 ├── AppDelegate.swift                   # 应用代理，URL Scheme 处理，菜单栏，快捷键，提示音
 ├── AppSettings.swift                    # 类型化设置与持久化（@Observable）
-├── IslandDisplayState.swift             # 两态展示状态（NotchDisplayState + OpenReason，打开意图随状态流转）
-├── IslandGeometry.swift                 # 刘海区域计算、触发区、屏幕标识
-├── Island/                              # 自定义外观：主题 token + JSON-DSL 布局
-│   ├── IslandTokens.swift               # token 闭集 + 默认值（= 今天的字面量）
-│   ├── IslandThemeStore.swift           # themes/ 目录、当前主题、热重载
-│   ├── IslandNode.swift                 # 11 种节点 + 修饰键（纯值类型）
-│   ├── IslandLayoutParser.swift         # 宽容 JSON walker + 上限 + 路径诊断
-│   ├── IslandLayoutStore.swift          # island.json 加载与热重载
-│   ├── IslandBindings.swift             # 9 个绑定 + 13 个谓词
-│   ├── IslandNodeView.swift             # 递归渲染器（具体类型，无 AnyView）
-│   ├── IslandSurfaceView.swift          # surface 入口 + 原生 slot
-│   └── BuiltinConfigs.swift             # app bundle 里的内置 layouts/themes 定位
-├── Builtin/                             # 随包发布的内置预设（预设源文件在此）
-│   ├── layouts/                         # classic / progress / github / nerd
-│   └── themes/                          # midnight / solar / github-dark / nerd-font
-├── IslandHaptics.swift                  # 触控板触觉反馈（触发区进入、点击、手势确认）
-├── NotificationManager.swift            # 当前消息、历史、未读、dwell 状态机、静默闸门（@MainActor）
+├── NotificationManager.swift            # 卡片栈、历史、未读、dwell 状态机、静默闸门（@MainActor）
+├── NotificationManager+Presentation.swift  # 卡片栈生命周期：present / retireCard / tapCard / 展开
+├── NotificationManager+Pointer.swift     # 指针状态机（per-card 悬停）与每卡收起规则
+├── NotificationManager+Dwell.swift       # per-card dwell 倒计时、critical 降级、actions hold
+├── NotificationManager+History.swift     # 持久化、已读状态、删除撤销
 ├── NotificationLog.swift                # 消息历史与已读集合（50 条上限、分组整组移除、撤销恢复）
-├── DelayedEvents.swift                  # 延迟事件簿记（hover 展开、手动收起等定时器，可单独/整体取消）
-├── NotchNotification.swift              # 通知数据模型（标题/正文/紧急度/超时/分组/操作按钮）
+├── DelayedEvents.swift                  # 延迟事件簿记（dwell / hover / aging 等，按卡片 id 键控）
+├── CardPayload.swift                    # 通知数据模型（标题/正文/紧急度/超时/分组/标签/操作按钮）
 ├── NotificationActionHandler.swift      # 操作按钮点击处理（URL 回调 / ack 回执与批注输入 / 稍后处理降级）
 ├── NotificationHistoryStore.swift       # 历史持久化（原子写 + schemaVersion）
 ├── NotificationAckStore.swift          # 动作回执（token 校验 + 落盘 + 过期清理）
 ├── ScriptStore.swift                   # 脚本目录解析与名字校验（防路径穿越）、按名读源码
 ├── ScriptRunner.swift                  # ScriptValue/ScriptEngine（JSC 线程+VM+看门狗）与编排 facade（并发闸、回填、钩子）
 ├── PresenceMonitor.swift                # 锁屏/屏保/睡眠感知（AwaySource 集合）
-├── NotchPresenter.swift                 # DynamicNotchKit 桥接、全屏探测缓存、指针监控
-├── PerScreenInstances.swift            # 每显示器一个 notch 实例的簿记
-├── MiniSummaryBar.swift                 # 无刘海屏的迷你摘要条（每屏一个常驻 NSPanel）
+├── ToastPresenter.swift                 # Toast 呈现：单窗口卡片栈、定位、全屏抑制探测、事件驱动
+├── Toast/                              # 定位几何、样式 DSL 与卡片视图
+│   ├── ToastPosition.swift              # 三个锚点 + ToastLayout 纯几何（可测，无需窗口服务器）
+│   ├── ToastCardView.swift              # 单卡：收起态摘要 / 展开态 Markdown+操作
+│   ├── ToastStackView.swift             # 整栈 VStack + 分组头 + transition
+│   ├── ToastStyle.swift                 # 样式包 spec（collapse/tokens/flags/motion）+ 宽容规则
+│   ├── ToastStyleParser.swift           # 宽容 JSON walker + 上限 + 路径诊断
+│   ├── ToastStyleStore.swift            # styles/ 目录、当前样式、热重载、颜色解析
+│   ├── MarkdownPreview.swift            # Markdown 拍平为纯文本摘要（收起态与历史行共用）
+│   ├── ScreenProbe.swift                # 全屏判定（纯谓词，可测）+ NSScreen.displayID
+│   ├── DirectoryWatcher.swift           # 目录监听 + 200ms 去抖
+│   └── BuiltinConfigs.swift             # app bundle 里的内置 styles/ 定位
+├── Builtin/                             # 随包发布的内置样式包（default / pill / midnight / minimal / accent）
 ├── URLNotificationParser.swift          # URL Scheme 参数解析（push/clear/ack，含长度限制）
-├── PushValidator.swift                 # 推送字段校验（长度/紧急度/分组/动作按钮截断），各入口共用
+├── PushValidator.swift                 # 推送字段校验（长度/紧急度/分组/标签/动作按钮截断），各入口共用
 ├── APIRouter.swift                     # 四个端点与 WS 命令的路由（纯逻辑，返回 JSON）
 ├── HTTPCodec.swift                     # HTTP 报文解析与响应编码
 ├── HTTPServer.swift                    # NWListener 监听（127.0.0.1 TCP / Unix socket）与升级回调
@@ -676,10 +615,13 @@ Sources/MacDesktopNotify/
 ├── WSEventHub.swift                    # WS 会话登记与事件广播（hello/ack/unreadCount）
 ├── APIListenerService.swift            # 两个监听器的生命周期（默认 socket 开、HTTP 关）
 ├── SystemHotkey.swift                  # 系统热键（Carbon 注册，无需辅助功能授权）：⌃⌥N 常驻
-├── MarkdownNotificationView.swift       # 展开视图、摘要视图、消息列表、操作按钮
-├── HistoryWindowController.swift       # 历史信息窗口（列表浏览、逐条已读/删除、手风琴展开）
+├── MessageCards.swift                  # 卡片共用件：OccurrenceTag / NotificationBodyView / ActionRow
+├── SurfaceChrome.swift                 # 按钮样式与右键菜单（ToastContextMenu）
+├── MarqueeText.swift                   # 摘要跑马灯（TimelineView + 双副本 + 边缘渐隐）
+├── MarkdownBlocksView.swift             # Markdown 块渲染器
 ├── MarkdownCache.swift                  # Markdown 解析缓存（NSCache）
 ├── MarkdownRenderer.swift              # Markdown 解析器（正文/代码块分离）
+├── HistoryWindowController.swift       # 历史信息窗口（列表浏览、逐条已读/删除、手风琴展开、含标签搜索）
 ├── OnboardingView.swift                # 首次运行引导（试一试/接入/选档位）
 ├── OnboardingWindowController.swift    # 引导窗口生命周期
 ├── SettingsView.swift                   # 设置页面（NavigationSplitView，5 分类）
