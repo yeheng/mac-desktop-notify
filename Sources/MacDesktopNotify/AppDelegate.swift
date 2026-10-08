@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 
 extension Notification.Name {
-    /// Opens the Settings window: the notch panel's context menu posts it,
+    /// Opens the Settings window: the toast card's context menu posts it,
     /// the delegate (which owns the window controller) observes it.
     static let openSettings = Notification.Name("MacDesktopNotify.openSettings")
     /// Ask the app delegate to run its modal clear-all confirmation. The
@@ -13,7 +13,7 @@ extension Notification.Name {
     /// Same modal-confirmation escape hatch as `requestClearAll`, scoped to
     /// the history section only: the current message survives it.
     static let requestClearHistory = Notification.Name("MacDesktopNotify.requestClearHistory")
-    /// Opens the standalone history browser from the island's context menu.
+    /// Opens the standalone history browser from a toast card's context menu.
     static let openHistoryWindow = Notification.Name("MacDesktopNotify.openHistoryWindow")
     /// Reruns onboarding from Settings → 关于。
     static let reopenOnboarding = Notification.Name("MacDesktopNotify.reopenOnboarding")
@@ -22,11 +22,9 @@ extension Notification.Name {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
-    /// Every presentation style, registered together; the manager holds it
-    /// weakly, so this retained reference is what keeps the active style
-    /// alive. Itself a `NotchPresenting`, which is why the manager never sees
-    /// the switching at all.
-    private var router: PresentationRouter?
+    /// The one presenter. The manager holds it weakly, so this retained
+    /// reference is what keeps it alive.
+    private var presenter: ToastPresenter?
     private var settingsController: SettingsWindowController?
     private var historyController: HistoryWindowController?
     private var onboardingController: OnboardingWindowController?
@@ -40,15 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 「静默 1 小时」/「取消静默」——标题随 `isSilenced` 翻转。
     private var silenceMenuItem: NSMenuItem?
 
-    func applicationWillFinishLaunching(_ notification: Notification) {
+    func applicationWillFinishLaunching(_ notification: CardPayload) {
         NSApp.setActivationPolicy(.accessory)
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        let router = PresentationRouter.makeDefault()
-        self.router = router                    // retain (manager holds it weakly)
-        NotificationManager.shared.attach(router)
-        observePresentationStyleChanges()
+    func applicationDidFinishLaunching(_ notification: CardPayload) {
+        let presenter = ToastPresenter()
+        self.presenter = presenter            // retain (manager holds it weakly)
+        NotificationManager.shared.attach(presenter)
         NotificationManager.shared.restoreHistory(using: .default)
         NotificationManager.shared.attachActionHandler(
             NotificationActionHandler(ackStore: .default)
@@ -76,9 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncPanelHotkey()
         // Local API listeners (HTTP/WS on 127.0.0.1, unix socket in App Support).
         APIListenerService.shared.restart()
-        // Custom island appearance: themes/ and island.json, watched for edits.
-        IslandThemeStore.shared.start()
-        IslandLayoutStore.shared.start()
+        // Custom toast appearance: styles/*.json, watched for edits.
+        ToastStyleStore.shared.start()
         // addObserverOnMain runs handlers inline on the main actor (see its
         // contract) — same delivery the explicit queue+assertion pairs used
         // to spell out at every site.
@@ -122,26 +118,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.show()
         }
 
-        // Last, so the first activation sees every store already started:
-        // a style that replays history against an empty log would flash a
+        // Last, so the first presentation sees every store already started:
+        // a presenter that replays history against an empty log would flash a
         // blank screen for one frame.
-        Task { await router.standUp() }
-    }
-
-    /// Registers the presentation-style observer. Split out of the launch
-    /// block because it is the only observer that also fires during launch
-    /// (the picker writes the setting on read) and the names it listens for
-    /// belong to the router conversation, not the app's.
-    private func observePresentationStyleChanges() {
-        addObserverOnMain(forName: AppSettings.presentationStyleDidChange) { [weak self] in
-            self?.router?.activate()
-        }
+        Task { await presenter.standUp() }
     }
 
     /// The debounced history write is only a latency optimization; quitting
     /// inside its window would drop the newest message (or the last read-state
     /// change), which is the one thing persistence exists to prevent.
-    func applicationWillTerminate(_ notification: Notification) {
+    func applicationWillTerminate(_ notification: CardPayload) {
         // Stop the listeners so the unix socket file does not outlive the
         // process. A crash still leaves one behind; the next launch probes and
         // unlinks it rather than reporting a bogus conflict.
@@ -191,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func reportPushRejection(_ rejection: PushRejection, url: URL) {
         FileHandle.standardError.write(Data("notch-notify: push 被拒绝：\(rejection.description)（\(url.absoluteString)）\n".utf8))
         NotificationIngress.deliver(
-            NotchNotification(
+            CardPayload(
                 title: "推送格式错误",
                 bodyMarkdown: "**\(rejection.description)**\n\n发送方：`\(url.host() ?? "push")`\n\n请检查 URL 参数后重试。",
                 urgency: .normal,
@@ -213,7 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Low-urgency pushes stay silent; critical uses a heavier system sound. Rapid-fire
     /// pushes of the same urgency are throttled so a chatty script cannot stack
     /// overlapping sounds.
-    private func playSound(for notification: NotchNotification) {
+    private func playSound(for notification: CardPayload) {
         guard AppSettings.shared.soundEnabled, notification.urgency != .low else { return }
         let now = Date()
         if let last = lastSoundAt[notification.urgency], now.timeIntervalSince(last) <= 0.6 { return }
@@ -375,18 +361,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
 
-    /// Esc collapses the panel. That is the only key this handler claims:
-    /// the ⌘-family shortcuts (⌘, / ⌘⇧N / ⌘Delete) were removed - a shortcut
-    /// that fights Finder and every app's own menu is a special case, and the
-    /// conflict-free ⌃⌥N already covers panel toggling.
+    /// Esc collapses the card the pointer is on, if that card was expanded
+    /// deliberately. That is the only key this handler claims: the ⌘-family
+    /// shortcuts (⌘, / ⌘⇧N / ⌘Delete) were removed - a shortcut that fights
+    /// Finder and every app's own menu is a special case, and the conflict-free
+    /// ⌃⌥N already covers the history window.
     private func handleShortcut(_ event: NSEvent) -> Bool {
-        // Esc only counts when the panel is a deliberate focus of attention:
-        // the pointer is on it, or the user opened it themselves (click, hover,
-        // or keyboard). Firing from the global monitor otherwise would collapse
-        // the panel on every Esc press in vim & co.
-        if event.keyCode == 53, NotificationManager.shared.displayState.isOpened,
-           NotificationManager.shared.canDismissWithEscape {
-            NotificationManager.shared.dismissPanel()
+        if event.keyCode == 53, NotificationManager.shared.canDismissWithEscape {
+            NotificationManager.shared.dismissExpandedCard()
             return true
         }
         return false

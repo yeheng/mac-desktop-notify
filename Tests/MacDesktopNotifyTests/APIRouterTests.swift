@@ -74,7 +74,8 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/push", query: [:], body: json(["title": "b"])
         ))
-        XCTAssertEqual(decoded(response.body)["outcome"] as? String, "queued")
+        XCTAssertEqual(decoded(response.body)["outcome"] as? String, "displayed",
+                       "the second push joins the stack - there is no queue behind a critical")
     }
 
     func testSecondPushWhileOneIsLiveDisplaces() async {
@@ -160,7 +161,7 @@ final class APIRouterTests: SettingsIsolatedTestCase {
 
     func testHistoryLimitQueryParameterCapsAt50() async {
         for i in 0..<55 {
-            manager.push(NotchNotification(title: "n\(i)", bodyMarkdown: "", urgency: .normal, timeout: 60))
+            manager.push(CardPayload(title: "n\(i)", bodyMarkdown: "", urgency: .normal, timeout: 60))
         }
         // The live one is n54; history holds all 55. Cap limit at maxHistoryCount.
         let response = await router.handle(APIRequest(

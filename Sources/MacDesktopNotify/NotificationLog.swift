@@ -19,11 +19,11 @@ struct NotificationLog {
     /// number of messages you can still read after a restart.
     static let maxHistoryCount = 50
 
-    private(set) var history: [NotchNotification] = []
+    private(set) var history: [CardPayload] = []
     private(set) var readIDs: Set<UUID> = []
 
     /// History items that are not currently shown.
-    func pastHistory(current: NotchNotification?) -> [NotchNotification] {
+    func pastHistory(current: CardPayload?) -> [CardPayload] {
         guard let current else { return history }
         return history.filter { $0.id != current.id }
     }
@@ -33,7 +33,7 @@ struct NotificationLog {
     /// (`pruneReadState`), so an evicted id loses its read marker there —
     /// a second per-call cleanup path is exactly the kind of parallel
     /// mechanism that drifts.
-    mutating func record(_ notification: NotchNotification) {
+    mutating func record(_ notification: CardPayload) {
         history.append(notification)
         if history.count > Self.maxHistoryCount {
             history.removeFirst(history.count - Self.maxHistoryCount)
@@ -42,7 +42,7 @@ struct NotificationLog {
 
     /// Field-level rewrite wherever the message lives (history).
     /// Returns whether anything changed, so the caller decides on persistence.
-    mutating func update(id: UUID, _ transform: (inout NotchNotification) -> Void) -> Bool {
+    mutating func update(id: UUID, _ transform: (inout CardPayload) -> Void) -> Bool {
         guard let index = history.firstIndex(where: { $0.id == id }) else { return false }
         transform(&history[index])
         return true
@@ -73,7 +73,7 @@ struct NotificationLog {
     /// sort *is* the original order) and restores their read markers. The cap
     /// still applies — an undo that overflows history drops the oldest, the
     /// same ruling any arrival gets.
-    mutating func reinsert(_ items: [NotchNotification], read: Set<UUID>) {
+    mutating func reinsert(_ items: [CardPayload], read: Set<UUID>) {
         history.append(contentsOf: items)
         history.sort { $0.timestamp < $1.timestamp }
         if history.count > Self.maxHistoryCount {
@@ -88,7 +88,7 @@ struct NotificationLog {
         readIDs.removeAll()
     }
 
-    mutating func restore(items: [NotchNotification], read: Set<UUID>) {
+    mutating func restore(items: [CardPayload], read: Set<UUID>) {
         history = Array(items.suffix(Self.maxHistoryCount))
         readIDs = read
     }

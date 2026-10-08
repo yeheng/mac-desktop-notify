@@ -1,7 +1,7 @@
 import XCTest
 @testable import MacDesktopNotify
 
-/// Notification-counting helper safe to mutate from an observer closure.
+/// CardPayload-counting helper safe to mutate from an observer closure.
 /// `Sendable` by confinement — `lock` guards the only mutable state.
 private final class NotificationCounter: @unchecked Sendable {
     private let lock = NSLock()

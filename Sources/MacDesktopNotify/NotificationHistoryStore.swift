@@ -10,10 +10,10 @@ struct HistorySnapshot: Codable, Equatable {
     static let currentSchemaVersion = 1
 
     var schemaVersion: Int
-    var items: [NotchNotification]
+    var items: [CardPayload]
     var readIDs: [UUID]
 
-    init(items: [NotchNotification], readIDs: Set<UUID>) {
+    init(items: [CardPayload], readIDs: Set<UUID>) {
         self.schemaVersion = Self.currentSchemaVersion
         self.items = items
         self.readIDs = readIDs.sorted { $0.uuidString < $1.uuidString }

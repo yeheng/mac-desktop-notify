@@ -8,8 +8,8 @@ final class AppSettings {
     static let shared = AppSettings()
     /// Posted when the calibration toggle flips, so the overlay can follow it.
     static let calibrationDidChange = Notification.Name("MacDesktopNotify.calibrationDidChange")
-    /// Posted when the screen-recording exclusion flips, so live notch windows
-    /// can re-apply their `sharingType` without waiting for the next presentation.
+    /// Posted when the screen-recording exclusion flips, so live toast windows
+    /// can re-apply their `sharingType` without waiting for the next stack.
     static let screenRecordingDidChange = Notification.Name("MacDesktopNotify.screenRecordingDidChange")
     /// Posted when the ⌃⌥N registration should follow its toggle.
     static let panelHotkeyDidChange = Notification.Name("MacDesktopNotify.panelHotkeyDidChange")
@@ -22,17 +22,9 @@ final class AppSettings {
     private func notifyAPIChange() {
         NotificationCenter.default.post(name: Self.apiSettingsDidChange, object: nil)
     }
-    /// Posted when the menu-bar geometry changes (the notch offset sliders).
-    /// The calibration overlay exists to verify exactly those numbers, so it
-    /// has to be redrawn when they move.
-    static let notchGeometryDidChange = Notification.Name("MacDesktopNotify.notchGeometryDidChange")
-    /// Posted when where the summary is drawn changes (mini bar on notchless
-    /// screens, mirroring across displays), so live windows follow the setting
-    /// instead of waiting for the next presentation.
-    static let summaryRoutingDidChange = Notification.Name("MacDesktopNotify.summaryRoutingDidChange")
     /// Posted when a display-behavior setting flips (idle hiding, the
     /// fullscreen rule, panel size). Presenters replay the on-screen display
-    /// on it (`NotchPresenting.displayBehaviorChanged`), so the change lands
+    /// on it (`SurfacePresenting.displayBehaviorChanged`), so the change lands
     /// immediately instead of at the next event.
     static let displayBehaviorDidChange = Notification.Name("MacDesktopNotify.displayBehaviorDidChange")
 
@@ -41,19 +33,7 @@ final class AppSettings {
     var hoverToExpand: Bool { didSet { save(hoverToExpand, key: Keys.hoverToExpand) } }
     var hoverDelayMilliseconds: Double { didSet { save(hoverDelayMilliseconds, key: Keys.hoverDelayMilliseconds) } }
     var autoCollapseOnLeave: Bool { didSet { save(autoCollapseOnLeave, key: Keys.autoCollapseOnLeave) } }
-    var autoExpandOnMessage: Bool { didSet { save(autoExpandOnMessage, key: Keys.autoExpandOnMessage) } }
-    /// When on, normal/low messages default to the peek tier: the compact pill
-    /// shows their title for a few seconds instead of opening the panel.
-    /// Critical messages always expand; a push URL can override per message
-    /// with `display=expand` / `display=peek`.
-    var normalMessagesPeek: Bool { didSet { save(normalMessagesPeek, key: Keys.normalMessagesPeek) } }
     var messageDwellSeconds: Double { didSet { save(messageDwellSeconds, key: Keys.messageDwellSeconds) } }
-    var hideWhenIdle: Bool {
-        didSet {
-            save(hideWhenIdle, key: Keys.hideWhenIdle)
-            NotificationCenter.default.post(name: Self.displayBehaviorDidChange, object: nil)
-        }
-    }
     var hideInFullscreen: Bool {
         didSet {
             save(hideInFullscreen, key: Keys.hideInFullscreen)
@@ -62,7 +42,7 @@ final class AppSettings {
     }
     /// Trackpad haptic ticks for zone entry, click-to-open and swipe gestures.
     var enableHaptics: Bool { didSet { save(enableHaptics, key: Keys.enableHaptics) } }
-    /// Excludes the island from screen capture (sharing / recording / screenshots),
+    /// Excludes the toast cards from screen capture (sharing / recording / screenshots),
     /// so meeting demos never leak pending approvals or internal alerts.
     var excludeFromScreenRecording: Bool {
         didSet {
@@ -70,44 +50,24 @@ final class AppSettings {
             NotificationCenter.default.post(name: Self.screenRecordingDidChange, object: nil)
         }
     }
-    /// Screens without a notch get no compact pill from the kit - it hides the
-    /// compact state on floating-style displays - which would leave those users
-    /// without an unread count or status line. This draws a small floating bar
-    /// instead. Off means a notchless screen stays empty until a panel expands.
-    var miniSummaryOnNotchlessScreens: Bool {
-        didSet {
-            save(miniSummaryOnNotchlessScreens, key: Keys.miniSummaryOnNotchlessScreens)
-            NotificationCenter.default.post(name: Self.summaryRoutingDidChange, object: nil)
-        }
-    }
-    /// Show the summary on every display rather than only the pointer's. The
-    /// expanded panel still belongs to one screen, so there is never more than
-    /// one panel to interact with.
-    var mirrorSummaryOnAllDisplays: Bool {
-        didSet {
-            save(mirrorSummaryOnAllDisplays, key: Keys.mirrorSummaryOnAllDisplays)
-            NotificationCenter.default.post(name: Self.summaryRoutingDidChange, object: nil)
-        }
-    }
     var contentFontSize: Double { didSet { save(contentFontSize, key: Keys.contentFontSize) } }
-    /// Which presenter draws notifications. The styles no longer fork at
-    /// launch: `PresentationRouter` keeps every style registered and switches
-    /// the one owning the screen when this flips (live, no relaunch).
-    var presentationStyle: PresentationStyle {
+
+    /// Which corner of the screen the toast stack sits in. Changing it
+    /// re-anchors immediately: the presenter replays its layout on
+    /// `displayBehaviorDidChange`, so the stack moves without a relaunch.
+    var toastPosition: ToastPosition {
         didSet {
-            save(presentationStyle.rawValue, key: Keys.presentationStyle)
-            // Only on a real move: reloading the same value must not tear a
-            // presenter down and stand it back up.
-            if presentationStyle != oldValue {
-                NotificationCenter.default.post(name: Self.presentationStyleDidChange, object: nil)
-            }
+            save(toastPosition.rawValue, key: Keys.toastPosition)
+            NotificationCenter.default.post(name: Self.displayBehaviorDidChange, object: nil)
         }
     }
-    /// Selected `themes/<id>.json`; `"default"` means the builtin literals.
-    var islandThemeID: String { didSet { save(islandThemeID, key: Keys.islandThemeID) } }
-    /// Selected layout. `"auto"` = the legacy `island.json` (or the first
-    /// `layouts/*.json`), `"default"` = builtin, anything else = `layouts/<id>.json`.
-    var islandLayoutID: String { didSet { save(islandLayoutID, key: Keys.islandLayoutID) } }
+
+    /// Selected `styles/<id>.json`; `"default"` means the built-in style.
+    /// The store self-heals from the persisted id, so a picker change needs
+    /// no notification and a file edit needs no reload.
+    var toastStyleID: String {
+        didSet { save(toastStyleID, key: Keys.toastStyleID) }
+    }
 
     var panelWidth: Double {
         didSet {
@@ -119,20 +79,6 @@ final class AppSettings {
         didSet {
             save(panelHeight, key: Keys.panelHeight)
             NotificationCenter.default.post(name: Self.displayBehaviorDidChange, object: nil)
-        }
-    }
-    /// Geometry escape hatches (see `debugGeometryEnabled`); the calibration
-    /// overlay is the only consumer that has to be told they moved.
-    var notchWidthOffset: Double {
-        didSet {
-            save(notchWidthOffset, key: Keys.notchWidthOffset)
-            NotificationCenter.default.post(name: Self.notchGeometryDidChange, object: nil)
-        }
-    }
-    var notchHeightOffset: Double {
-        didSet {
-            save(notchHeightOffset, key: Keys.notchHeightOffset)
-            NotificationCenter.default.post(name: Self.notchGeometryDidChange, object: nil)
         }
     }
     var showUrgency: Bool { didSet { save(showUrgency, key: Keys.showUrgency) } }
@@ -173,14 +119,6 @@ final class AppSettings {
         }
     }
 
-    /// Show a debug overlay of the detected notch frame; the geometry escape
-    /// hatch for OS releases that move the menu bar.
-    var showNotchCalibration: Bool {
-        didSet {
-            save(showNotchCalibration, key: Keys.showNotchCalibration)
-            NotificationCenter.default.post(name: Self.calibrationDidChange, object: nil)
-        }
-    }
     /// System-level ⌃⌥N toggle. Registered via RegisterEventHotKey, so it needs
     /// no Accessibility trust and works in any app - unlike the ⌘-family
     /// shortcuts, which stay opt-in.
@@ -191,43 +129,21 @@ final class AppSettings {
         }
     }
 
-    /// Geometry micro-adjustment and the calibration overlay are escape
-    /// hatches for a macOS release that moves the menu bar, not everyday
-    /// settings. They surface in Settings -> 外观 only when enabled from the
-    /// CLI:
-    /// `defaults write com.yeheng.macdesktopnotify island.debugGeometry -bool true`
-    /// Read on demand (not cached) so the flag can flip between window opens.
-    ///
-    /// Routed through `Keys` like every other persisted key: the old raw-string
-    /// version read `UserDefaults.standard` directly, so it ignored the injected
-    /// suite and escaped `resetAllForTesting`'s `Keys.allCases` sweep.
-    var debugGeometryEnabled: Bool {
-        get { defaults.bool(forKey: Keys.debugGeometry.rawValue) }
-        set { defaults.set(newValue, forKey: Keys.debugGeometry.rawValue) }
-    }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         hoverToExpand = defaults.object(forKey: Keys.hoverToExpand.rawValue) as? Bool ?? true
         hoverDelayMilliseconds = defaults.object(forKey: Keys.hoverDelayMilliseconds.rawValue) as? Double ?? 150
         autoCollapseOnLeave = defaults.object(forKey: Keys.autoCollapseOnLeave.rawValue) as? Bool ?? true
-        autoExpandOnMessage = defaults.object(forKey: Keys.autoExpandOnMessage.rawValue) as? Bool ?? true
-        normalMessagesPeek = defaults.object(forKey: Keys.normalMessagesPeek.rawValue) as? Bool ?? false
         messageDwellSeconds = defaults.object(forKey: Keys.messageDwellSeconds.rawValue) as? Double ?? 5
-        hideWhenIdle = defaults.object(forKey: Keys.hideWhenIdle.rawValue) as? Bool ?? true
         hideInFullscreen = defaults.object(forKey: Keys.hideInFullscreen.rawValue) as? Bool ?? false
         enableHaptics = defaults.object(forKey: Keys.enableHaptics.rawValue) as? Bool ?? true
         excludeFromScreenRecording = defaults.object(forKey: Keys.excludeFromScreenRecording.rawValue) as? Bool ?? true
-        miniSummaryOnNotchlessScreens = defaults.object(forKey: Keys.miniSummaryOnNotchlessScreens.rawValue) as? Bool ?? true
-        mirrorSummaryOnAllDisplays = defaults.object(forKey: Keys.mirrorSummaryOnAllDisplays.rawValue) as? Bool ?? false
         contentFontSize = defaults.object(forKey: Keys.contentFontSize.rawValue) as? Double ?? 12
-        presentationStyle = PresentationStyle(rawValue: defaults.string(forKey: Keys.presentationStyle.rawValue) ?? "") ?? .island
-        islandThemeID = defaults.string(forKey: Keys.islandThemeID.rawValue) ?? "default"
-        islandLayoutID = defaults.string(forKey: Keys.islandLayoutID.rawValue) ?? "auto"
+        toastPosition = ToastPosition(rawValue: defaults.string(forKey: Keys.toastPosition.rawValue) ?? "") ?? .topRight
+        toastStyleID = defaults.string(forKey: Keys.toastStyleID.rawValue) ?? "default"
         panelWidth = defaults.object(forKey: Keys.panelWidth.rawValue) as? Double ?? 720
         panelHeight = defaults.object(forKey: Keys.panelHeight.rawValue) as? Double ?? 360
-        notchWidthOffset = defaults.object(forKey: Keys.notchWidthOffset.rawValue) as? Double ?? 0
-        notchHeightOffset = defaults.object(forKey: Keys.notchHeightOffset.rawValue) as? Double ?? 0
         showUrgency = defaults.object(forKey: Keys.showUrgency.rawValue) as? Bool ?? true
         showHistoryCount = defaults.object(forKey: Keys.showHistoryCount.rawValue) as? Bool ?? true
         soundEnabled = defaults.object(forKey: Keys.soundEnabled.rawValue) as? Bool ?? true
@@ -236,7 +152,6 @@ final class AppSettings {
         quietMode = QuietMode(rawValue: defaults.string(forKey: Keys.quietMode.rawValue) ?? "") ?? .off
         ageOutCriticals = defaults.object(forKey: Keys.ageOutCriticals.rawValue) as? Bool ?? true
         onboardingCompleted = defaults.object(forKey: Keys.onboardingCompleted.rawValue) as? Bool ?? false
-        showNotchCalibration = defaults.object(forKey: Keys.showNotchCalibration.rawValue) as? Bool ?? false
         globalPanelHotkeyEnabled = defaults.object(forKey: Keys.globalPanelHotkeyEnabled.rawValue) as? Bool ?? true
         apiUnixSocketEnabled = defaults.object(forKey: Keys.apiUnixSocketEnabled.rawValue) as? Bool ?? true
         apiHttpEnabled = defaults.object(forKey: Keys.apiHttpEnabled.rawValue) as? Bool ?? false
@@ -269,23 +184,15 @@ final class AppSettings {
         hoverToExpand = true
         hoverDelayMilliseconds = 150
         autoCollapseOnLeave = true
-        autoExpandOnMessage = true
-        normalMessagesPeek = false
         messageDwellSeconds = 5
-        hideWhenIdle = true
         hideInFullscreen = false
         enableHaptics = true
         excludeFromScreenRecording = true
-        miniSummaryOnNotchlessScreens = true
-        mirrorSummaryOnAllDisplays = false
         contentFontSize = 12
-        presentationStyle = .island
-        islandThemeID = "default"
-        islandLayoutID = "auto"
+        toastPosition = .topRight
+        toastStyleID = "default"
         panelWidth = 720
         panelHeight = 360
-        notchWidthOffset = 0
-        notchHeightOffset = 0
         showUrgency = true
         showHistoryCount = true
         soundEnabled = true
@@ -294,7 +201,6 @@ final class AppSettings {
         quietMode = .off
         ageOutCriticals = true
         onboardingCompleted = false
-        showNotchCalibration = false
         globalPanelHotkeyEnabled = true
         apiUnixSocketEnabled = true
         apiHttpEnabled = false
@@ -306,8 +212,7 @@ final class AppSettings {
         contentFontSize = 12
         panelWidth = 720
         panelHeight = 360
-        notchWidthOffset = 0
-        notchHeightOffset = 0
+        toastPosition = .topRight
     }
 
     /// Runtime-only, deliberately not persisted and not in `Keys`: whether
@@ -345,21 +250,31 @@ final class AppSettings {
         case hoverToExpand = "island.hoverToExpand"
         case hoverDelayMilliseconds = "island.hoverDelayMilliseconds"
         case autoCollapseOnLeave = "island.autoCollapseOnLeave"
+        // Retired with the notch island (toast became the only surface). The
+        // cases stay so `resetAllForTesting` keeps wiping the stale on-disk
+        // keys - user defaults are deliberately NOT cleaned, so a
+        // downgrade/rollback does not step on them.
         case autoExpandOnMessage = "island.autoExpandOnMessage"
         case normalMessagesPeek = "island.normalMessagesPeek"
         case messageDwellSeconds = "island.messageDwellSeconds"
+        // Retired with the notch island: an empty stack simply hides the
+        // window, so "idle" had nothing left to mean.
         case hideWhenIdle = "island.hideWhenIdle"
         case hideInFullscreen = "island.hideInFullscreen"
         case enableHaptics = "island.enableHaptics"
         case excludeFromScreenRecording = "island.excludeFromScreenRecording"
+        // Retired with the notch island (per-display summary bars).
         case miniSummaryOnNotchlessScreens = "island.miniSummaryOnNotchlessScreens"
         case mirrorSummaryOnAllDisplays = "island.mirrorSummaryOnAllDisplays"
         case contentFontSize = "island.contentFontSize"
-        case presentationStyle = "island.presentationStyle"
+        case toastStyleID = "toast.styleID"
+        case toastPosition = "toast.position"
+        // Retired with the notch island's JSON appearance DSL.
         case islandThemeID = "island.themeID"
         case islandLayoutID = "island.layoutID"
         case panelWidth = "island.panelWidth"
         case panelHeight = "island.panelHeight"
+        // Retired with the notch island's geometry escape hatches.
         case notchWidthOffset = "island.notchWidthOffset"
         case notchHeightOffset = "island.notchHeightOffset"
         case showUrgency = "island.showUrgency"
@@ -381,6 +296,7 @@ final class AppSettings {
         case quietMode = "island.quietMode"
         case ageOutCriticals = "island.ageOutCriticals"
         case onboardingCompleted = "island.onboardingCompleted"
+        // Retired with the notch island's calibration overlay.
         case showNotchCalibration = "island.showNotchCalibration"
         case debugGeometry = "island.debugGeometry"
         case globalPanelHotkeyEnabled = "island.globalPanelHotkeyEnabled"
@@ -445,9 +361,13 @@ enum QuietMode: String, CaseIterable, Identifiable {
 
 /// The three attention levels the app ships, shared by onboarding and the
 /// settings window. A preset is the unit a user reasons in; the underlying
-/// toggles (`autoExpandOnMessage`, `messageDwellSeconds`, `ageOutCriticals`)
-/// are what it writes - and the only thing that writes them from UI, so the
-/// two can never disagree about what a level means.
+/// toggles (`messageDwellSeconds`, `ageOutCriticals`) are what it writes — and
+/// the only thing that writes them from UI, so the two can never disagree
+/// about what a level means.
+///
+/// `quiet` no longer exists as a "do not expand" flag: every card arrives
+/// collapsed now. What varies between levels is only how long it sticks around
+/// and how long an untouched critical holds the screen.
 enum AttentionPreset: String, CaseIterable, Identifiable {
     case quiet
     case balanced
@@ -465,9 +385,9 @@ enum AttentionPreset: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .quiet: "到达不展开，只在摘要栏显示；适合高频脚本。critical 超时自动降级。"
-        case .balanced: "到达自动展开并停留 5 秒（默认）。critical 超时自动降级。"
-        case .instant: "到达即展开并停留 10 秒，critical 常驻直到手动处理。"
+        case .quiet: "卡片停留 3 秒；适合高频脚本。critical 5 分钟无人理会自动降级。"
+        case .balanced: "卡片停留 5 秒（默认）。critical 5 分钟无人理会自动降级。"
+        case .instant: "卡片停留 10 秒，critical 常驻直到手动处理。"
         }
     }
 
@@ -475,14 +395,12 @@ enum AttentionPreset: String, CaseIterable, Identifiable {
     func apply(to settings: AppSettings) {
         switch self {
         case .quiet:
-            settings.autoExpandOnMessage = false
+            settings.messageDwellSeconds = 3
             settings.ageOutCriticals = true
         case .balanced:
-            settings.autoExpandOnMessage = true
             settings.messageDwellSeconds = 5
             settings.ageOutCriticals = true
         case .instant:
-            settings.autoExpandOnMessage = true
             settings.messageDwellSeconds = 10
             settings.ageOutCriticals = false
         }
@@ -491,14 +409,9 @@ enum AttentionPreset: String, CaseIterable, Identifiable {
     /// The preset the current values correspond to, or nil when they form a
     /// custom combination (e.g. tuned by an older version's individual
     /// controls). Derived, never stored: there is one source of truth and it
-    /// is the values themselves. Note `.quiet` does not pin a dwell time, so
-    /// its derivation ignores `messageDwellSeconds` - exactly what `apply`
-    /// leaves untouched.
+    /// is the values themselves.
     @MainActor
     static func matching(_ settings: AppSettings) -> AttentionPreset? {
-        if !settings.autoExpandOnMessage {
-            return settings.ageOutCriticals ? .quiet : nil
-        }
         if settings.ageOutCriticals {
             return settings.messageDwellSeconds == 5 ? .balanced : nil
         }

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "午夜",
+  "collapse": { "shape": "card", "lines": 2 },
+  "tokens": {
+    "cardFill": "#0B0B10F2",
+    "textPrimary": "#ECECF4",
+    "textSubtle": "#FFFFFFB8",
+    "borderColor": "#4C8DFF3B",
+    "accent": "#8F7FF5",
+    "levelSuccess": "#49A88B",
+    "levelWarning": "#C89743",
+    "levelError": "#FF6B6B"
+  },
+  "flags": {
+    "showIcon": true,
+    "showTime": true,
+    "showLevel": true,
+    "showTags": true,
+    "showProgress": true,
+    "showOccurrences": true,
+    "marquee": true
+  },
+  "motion": { "enter": "zoom", "exit": "fade", "enterMs": 240, "exitMs": 180 }
+}

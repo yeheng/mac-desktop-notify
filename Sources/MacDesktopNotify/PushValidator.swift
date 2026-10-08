@@ -236,9 +236,9 @@ enum PushValidator {
     }
 
     /// The `island` object as the JSON ingresses decode it (HTTP body, WS
-    /// frame). Same tolerance as `ActionDTO`/`BlockDTO`, one notch stricter:
-    /// a wrongly-typed field decodes as nil (dropped), never as a decode
-    /// failure of the whole push - truncate, never reject.
+    /// frame) - the sender-driven status line. Same tolerance as
+    /// `ActionDTO`/`BlockDTO`: a wrongly-typed field decodes as nil (dropped),
+    /// never as a decode failure of the whole push - truncate, never reject.
     struct IslandDTO: Decodable {
         let text: String?
         let progress: Double?
@@ -262,14 +262,14 @@ enum PushValidator {
         }
     }
 
-    /// DTO → model, the one normalization gate for island content. Text is
+    /// DTO → model, the one normalization gate for the status line. Text is
     /// trimmed and capped; progress is clamped to 0...1 with NaN/Inf treated
     /// as "not provided" (the `clampedTimeout` precedent: a non-finite Double
     /// poisons every JSONEncoder on the way out); a blank icon is dropped.
-    /// An island whose fields all normalize away becomes nil, so the sender
-    /// cannot blank out the status line with `{}` - nil means "no island",
-    /// and the renderers keep their pre-island behavior for it.
-    static func normalizedIsland(_ dto: IslandDTO?) -> IslandContent? {
+    /// An entry whose fields all normalize away becomes nil, so the sender
+    /// cannot blank out the card's status line with `{}` - nil means "no
+    /// status line", and the renderers keep their default behaviour for it.
+    static func normalizedIsland(_ dto: IslandDTO?) -> StatusLine? {
         guard let dto else { return nil }
         var text = dto.text?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let t = text, t.count > maxIslandTextLength {
@@ -280,7 +280,7 @@ enum PushValidator {
         var icon = dto.icon?.trimmingCharacters(in: .whitespaces)
         if icon?.isEmpty == true { icon = nil }
         guard text != nil || progress != nil || icon != nil else { return nil }
-        return IslandContent(text: text, progress: progress, icon: icon)
+        return StatusLine(text: text, progress: progress, icon: icon)
     }
 
     static func makeNotification(
@@ -291,9 +291,9 @@ enum PushValidator {
         group: String?,
         actions: [NotificationAction],
         script: String? = nil,
-        island: IslandContent? = nil,
+        island: StatusLine? = nil,
         clickUrl: String? = nil
-    ) -> Result<NotchNotification, PushRejection> {
+    ) -> Result<CardPayload, PushRejection> {
         var rawTitle = title
         if let script {
             // §2.1：脚本推送的 title 可以为空——脚本会回填；占位标题让
@@ -310,7 +310,7 @@ enum PushValidator {
         )
         guard !fields.title.isEmpty else { return .failure(.missingTitle) }
 
-        return .success(NotchNotification(
+        return .success(CardPayload(
             title: fields.title,
             bodyMarkdown: fields.body,
             urgency: fields.urgency,

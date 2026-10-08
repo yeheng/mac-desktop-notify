@@ -32,7 +32,7 @@ final class ActionScriptTests: SettingsIsolatedTestCase {
             """)
 
         let action = NotificationAction(label: "批准", script: "approve", wantsComment: true)
-        var n = NotchNotification(title: "审批", bodyMarkdown: "发布 v2", urgency: .normal, timeout: 60)
+        var n = CardPayload(title: "审批", bodyMarkdown: "发布 v2", urgency: .normal, timeout: 60)
         n.actions = [action]
 
         await runner.runActionHook(action: action, notification: n, comment: "staging 没问题")
@@ -48,7 +48,7 @@ final class ActionScriptTests: SettingsIsolatedTestCase {
         let (runner, m) = makeRunner(dir: dir, source: "throw new Error('deny')")
 
         let action = NotificationAction(label: "批准", script: "approve")
-        var n = NotchNotification(title: "审批", bodyMarkdown: "x", urgency: .normal, timeout: 60)
+        var n = CardPayload(title: "审批", bodyMarkdown: "x", urgency: .normal, timeout: 60)
         n.actions = [action]
 
         await runner.runActionHook(action: action, notification: n, comment: nil)

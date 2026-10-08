@@ -47,7 +47,7 @@ final class NotificationActionHandler {
     /// comment). One parse at the door keeps every transport's click identical.
     func execute(
         _ action: NotificationAction,
-        for notification: NotchNotification,
+        for notification: CardPayload,
         comment: String? = nil
     ) {
         // §2.2：script 按钮与 URL 按钮同构——点击即退役（manager.performAction

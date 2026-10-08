@@ -24,25 +24,25 @@ final class FullscreenProbeTests: XCTestCase {
     }
 
     func testSamePIDLayerZeroCoveringScreenIsFullscreen() {
-        XCTAssertTrue(NotchPresenter.hasFullscreenWindow([window(pid: 42)], pid: 42, screenFrame: screen))
+        XCTAssertTrue(ScreenProbe.hidden(window(pid: 42), pid: 42, screenFrame: screen))
     }
 
     func testOtherProcessDoesNotMatch() {
-        XCTAssertFalse(NotchPresenter.hasFullscreenWindow([window(pid: 7)], pid: 42, screenFrame: screen))
+        XCTAssertFalse(ScreenProbe.hidden(window(pid: 7), pid: 42, screenFrame: screen))
     }
 
     func testNonZeroLayerDoesNotMatch() {
         // Menu bar / desktop / overlay windows are not fullscreen apps.
-        XCTAssertFalse(NotchPresenter.hasFullscreenWindow([window(pid: 42, layer: 1)], pid: 42, screenFrame: screen))
+        XCTAssertFalse(ScreenProbe.hidden(window(pid: 42, layer: 1), pid: 42, screenFrame: screen))
     }
 
     func testWindowSmallerThanScreenDoesNotMatch() {
         let small = window(pid: 42, size: CGSize(width: 800, height: 600))
-        XCTAssertFalse(NotchPresenter.hasFullscreenWindow([small], pid: 42, screenFrame: screen))
+        XCTAssertFalse(ScreenProbe.hidden(small, pid: 42, screenFrame: screen))
     }
 
-    func testEmptyWindowListIsNotFullscreen() {
-        XCTAssertFalse(NotchPresenter.hasFullscreenWindow([], pid: 42, screenFrame: screen))
+    func testAnotherProcessWindowDoesNotMatch() {
+        XCTAssertFalse(ScreenProbe.hidden(window(pid: 7), pid: 42, screenFrame: screen))
     }
 
     func testMalformedBoundsAreIgnored() {
@@ -51,6 +51,6 @@ final class FullscreenProbeTests: XCTestCase {
             kCGWindowLayer as String: 0,
             kCGWindowBounds as String: "not a dictionary",
         ]
-        XCTAssertFalse(NotchPresenter.hasFullscreenWindow([malformed], pid: 42, screenFrame: screen))
+        XCTAssertFalse(ScreenProbe.hidden(malformed, pid: 42, screenFrame: screen))
     }
 }

@@ -447,7 +447,7 @@ final class ScriptRunner {
 
     /// 脚本的 input：消息的已解析字段（设计 §1 契约）。
     /// action 的 url/script 按存在与否携带，缺省键不出现。
-    static func notificationInput(_ n: NotchNotification) -> ScriptValue {
+    static func notificationInput(_ n: CardPayload) -> ScriptValue {
         var fields: [String: ScriptValue] = [
             "id": .string(n.id.uuidString),
             "title": .string(n.title),
@@ -472,7 +472,7 @@ final class ScriptRunner {
 
     /// 推送已落地后执行脚本并回填（设计 §2.1 异步回填）。失败也是回填——
     /// 把错误写进消息本身就是诊断。无人等待：预算 15s 由看门狗兜底。
-    func backfill(notification: NotchNotification) async {
+    func backfill(notification: CardPayload) async {
         guard let name = notification.script else { return }
         let outcome = await run(named: name, input: Self.notificationInput(notification),
                                 budget: Self.backfillBudget)
@@ -490,7 +490,7 @@ final class ScriptRunner {
     /// 归一化全部交给 `PushValidator.normalize`：回填曾经是唯一绕过它的写入
     /// 路径，`{timeout: NaN}` 直接进模型 → `JSONEncoder` 抛错 → 被 `try?`
     /// 吞掉 → 整个会话不再落盘。脚本门和推送门现在共用同一道闸。
-    static func applySuccess(fields: [String: ScriptValue], to message: inout NotchNotification) {
+    static func applySuccess(fields: [String: ScriptValue], to message: inout CardPayload) {
         // Only fields the script actually returned may change. Each fallback
         // reads the model, so an absent key keeps today's value.
         var title = message.title
@@ -548,7 +548,7 @@ final class ScriptRunner {
     }
 
     static func applyFailure(error: String, logs: [String], scriptName: String,
-                             to message: inout NotchNotification) {
+                             to message: inout CardPayload) {
         message.bodyMarkdown = String(
             failureBody(error: error, logs: logs, context: message.bodyMarkdown)
                 .prefix(PushValidator.maxBodyLength))
@@ -563,7 +563,7 @@ final class ScriptRunner {
     /// input = {label, comment?, args?, notification:{字段}}（设计 §2.2；
     /// args = 按钮自定义参数，设计扩展）。
     /// 失败推一条 normal 级诊断通知（决策 #4，沿「推送格式错误」先例）。
-    func runActionHook(action: NotificationAction, notification: NotchNotification,
+    func runActionHook(action: NotificationAction, notification: CardPayload,
                        comment: String?) async {
         guard let name = action.script else { return }
         let input = ScriptValue.object([
@@ -576,7 +576,7 @@ final class ScriptRunner {
         guard let error = outcome.error else { return }
         let body = Self.failureBody(error: error, logs: outcome.logs,
                                     context: "触发：\(notification.title)")
-        targetManager.push(NotchNotification(
+        targetManager.push(CardPayload(
             title: "脚本失败：\(name)",
             bodyMarkdown: String(body.prefix(PushValidator.maxBodyLength)),
             urgency: .normal,
@@ -678,7 +678,6 @@ private func performScriptNotify(_ op: NotifyOp) -> String {
         case .success(let notification):
             switch NotificationManager.shared.push(notification) {
             case .displayed: return "displayed"
-            case .queued: return "queued"
             case .withheld: return "withheld"
             }
         case .failure(let rejection): return "rejected: \(rejection.description)"

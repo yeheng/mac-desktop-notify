@@ -16,19 +16,18 @@ extension NotificationManager {
     /// the live message too). Applying the transform to both copies ran it
     /// twice — an unwritten "must be idempotent" contract that the first
     /// non-idempotent transform (`occurrences += 1`) would have broken.
-    func update(id: UUID, _ transform: (inout NotchNotification) -> Void) {
+    func update(id: UUID, _ transform: (inout CardPayload) -> Void) {
         guard messages.update(id: id, transform) else { return }
-        if presentation?.item.id == id, var live = presentation,
+        if let index = presentations.firstIndex(where: { $0.item.id == id }),
            let updated = messages.history.first(where: { $0.id == id }) {
-            live.item = updated
-            presentation = live
-            // A rewritten live card must be re-ruled: the fields the dismiss and
+            presentations[index].item = updated
+            // A rewritten card must be re-ruled: the fields the dismiss and
             // dwell rules read have changed under them.
-            armLiveRules()
+            armLiveRules(for: id)
         }
         schedulePersist()
-        // A backfill can rewrite the island text the compact surfaces show,
-        // with no unread-count change alongside.
+        // A backfill can rewrite the island text a collapsed card shows, with
+        // no unread-count change alongside.
         notifyCompactStatusChanged()
     }
 
@@ -60,7 +59,6 @@ extension NotificationManager {
             // Unread messages are the reason to surface anything at launch; if
             // everything was already read, stay out of the way.
             if unreadCount > 0, !displaySuppressed {
-                displayState = .closed
                 presentCurrent()
             }
         case .unreadable:
@@ -104,17 +102,10 @@ extension NotificationManager {
     // MARK: - Read state (v4 §4)
     //
     // Read state is explicit: a message becomes 历史 (read) only when the user
-    // opened it. A deliberate panel open reads the live card; expanding a row
-    // reads that row (the views call `setRead`); clicking an action reads its
-    // message. Hover opens, automatic cards, timeouts and dismissals mark
-    // nothing - 没点开就是没点开.
-
-    /// A deliberate open is the user asking for the live message - the "点开"
-    /// that turns it into history.
-    func markCurrentRead() {
-        guard let current, !messages.readIDs.contains(current.id) else { return }
-        markRead(current.id)
-    }
+    // opens it. Clicking a card reads it, acting on a card reads it, and
+    // expanding a history row reads that row (the views call `setRead`).
+    // Hover expansion, automatic cards, timeouts and dwell dismissals mark
+    // nothing — 没点开就是没点开.
 
     func markRead(_ id: UUID) {
         messages.markRead(id)
@@ -182,7 +173,7 @@ extension NotificationManager {
     /// Snapshots the about-to-be-deleted messages so the undo toast can put
     /// them back. Consecutive deletions inside the window accumulate into one
     /// notice, and the countdown restarts on each.
-    private func journalDeletion(_ items: [NotchNotification], subject: String) {
+    private func journalDeletion(_ items: [CardPayload], subject: String) {
         guard !items.isEmpty else { return }
         deletionJournal.append(contentsOf: items.map { ($0, messages.readIDs.contains($0.id)) })
         let total = deletionJournal.count
@@ -214,40 +205,46 @@ extension NotificationManager {
         clear(group: key)
     }
 
-    /// Removes one entry from history (the live message included).
-    /// The single-message delete the trash-all button always needed beside it:
-    /// "clear everything" and "clear this" are different questions.
+    /// Removes one entry from history (a visible card included). The
+    /// single-message delete: "clear everything" and "clear this" are
+    /// different questions.
     func removeHistory(id: UUID) {
         if let item = messages.history.first(where: { $0.id == id }) {
             journalDeletion([item], subject: "「\(item.title)」")
         }
+        let wasVisible = presentations.contains { $0.item.id == id }
         messages.remove(id)
         recomputeUnread()
-        settleAfterRemoval(liveMessageRemoved: presentation?.item.id == id)
+        settleAfterRemoval(cardRemoved: wasVisible)
     }
 
-    /// 「清空历史」 (history window, menu bar, ⌘⇧⌫): everything already shown
-    /// and no longer live goes away; the current message is untouched.
-    /// Routed through the same removal settlement as a single
-    /// delete, so a panel emptied this way still hides itself.
+    /// 「清空历史」 (history window, menu bar): every message that is not a
+    /// visible card goes away. Routed through the same removal settlement as a
+    /// single delete, so an emptied stack still hides itself.
     func clearPastHistory() {
-        let ids = Set(pastHistory.map(\.id))
+        let visible = Set(presentations.map(\.item.id))
+        let ids = Set(messages.history.map(\.id)).subtracting(visible)
         guard !ids.isEmpty else { return }
         messages.removeAll(ids)
         recomputeUnread()
-        settleAfterRemoval(liveMessageRemoved: false)
+        settleAfterRemoval(cardRemoved: false)
     }
 
     /// Shared tail for the surgical deletes (`removeHistory`, `clear(group:)`):
-    /// when the live message is among the removed, the display retires it and
-    /// settles; an app left with nothing hides the notch; either way the
-    /// change is persisted. `clear()` does not belong here - it wipes
-    /// everything, timers and on-disk store included.
-    func settleAfterRemoval(liveMessageRemoved: Bool) {
-        if liveMessageRemoved {
-            advance()
-        } else if !hasContent {
-            displayState = .closed
+    /// a visible card among the removed is retired from the stack, an empty
+    /// stack hides the window; either way the change is persisted. `clear()`
+    /// does not belong here — it wipes everything, timers and on-disk store
+    /// included.
+    func settleAfterRemoval(cardRemoved: Bool) {
+        if cardRemoved {
+            let alive = Set(messages.history.map(\.id))
+            var changed = false
+            for card in presentations where !alive.contains(card.item.id) {
+                retireCard(card.item.id, readOnRetire: false)
+                changed = true
+            }
+            if changed { notifyCompactStatusChanged() }
+        } else if presentations.isEmpty {
             Task { await presenter?.reapply(on: self) }
         }
         schedulePersist()

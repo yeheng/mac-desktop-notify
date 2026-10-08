@@ -38,7 +38,7 @@ final class ScriptActionArgsTests: SettingsIsolatedTestCase {
                                  notify: { _ in "displayed" }),
             target: m)
 
-        var n = NotchNotification(title: "⏳ 脚本生成中：ci", bodyMarkdown: "",
+        var n = CardPayload(title: "⏳ 脚本生成中：ci", bodyMarkdown: "",
                                   urgency: .normal, timeout: 60)
         n.script = "ci"
         m.push(n)
@@ -66,7 +66,7 @@ final class ScriptActionArgsTests: SettingsIsolatedTestCase {
 
         let action = NotificationAction(label: "重试 prod", script: "ci-retry",
                                         args: .object(["env": .string("prod")]))
-        let n = NotchNotification(title: "审批", bodyMarkdown: "x", urgency: .normal, timeout: 60)
+        let n = CardPayload(title: "审批", bodyMarkdown: "x", urgency: .normal, timeout: 60)
 
         await runner.runActionHook(action: action, notification: n, comment: nil)
 

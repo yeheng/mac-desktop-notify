@@ -5,8 +5,8 @@ import XCTest
 /// 前两个用例在修复前失败（见 2026-09-09 评审 #1）。
 @MainActor
 final class BackfillRulesTests: SettingsIsolatedTestCase {
-    private func makeLiveCard(_ m: NotificationManager, timeout: Double = 60) -> NotchNotification {
-        var n = NotchNotification(title: "⏳ 脚本生成中", bodyMarkdown: "orig",
+    private func makeLiveCard(_ m: NotificationManager, timeout: Double = 60) -> CardPayload {
+        var n = CardPayload(title: "⏳ 脚本生成中", bodyMarkdown: "orig",
                                   urgency: .normal, timeout: timeout)
         n.script = "ci"
         m.push(n)
@@ -43,14 +43,14 @@ final class BackfillRulesTests: SettingsIsolatedTestCase {
     /// 面板先关掉——打开的面板会按设计 hold 住倒计时。
     func testBackfillToNormalGetsAFreshDwell() async throws {
         let m = NotificationManager()
-        var n = NotchNotification(title: "critical", bodyMarkdown: "x", urgency: .critical, timeout: nil)
+        var n = CardPayload(title: "critical", bodyMarkdown: "x", urgency: .critical, timeout: nil)
         n.script = "ci"
         m.push(n)
         XCTAssertNotNil(m.current)
 
         m.update(id: n.id) { $0.urgency = .normal; $0.timeout = 0.1 }
-        m.dismissPanel()
-        XCTAssertNotNil(m.current, "关面板后消息仍活着")
+        m.dismissExpandedCard()
+        XCTAssertNotNil(m.current, "收起后消息仍活着")
 
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertNil(m.current, "降级为普通消息后必须重新拥有 dwell 预算并按时退役")

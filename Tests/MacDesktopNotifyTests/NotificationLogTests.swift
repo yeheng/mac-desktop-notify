@@ -7,9 +7,15 @@ import XCTest
 @MainActor
 final class NotificationLogTests: SettingsIsolatedTestCase {
 
-    private func make(_ title: String, urgency: UrgencyLevel = .normal) -> NotchNotification {
+    private func make(_ title: String, urgency: UrgencyLevel = .normal) -> CardPayload {
         // Large timeout so the real dismiss timer never fires during a fast test.
-        NotchNotification(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60)
+        CardPayload(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60)
+    }
+
+    /// Pushes enough messages to overflow the visible stack, so the earlier
+    /// ones land in history where the row-level assertions can reach them.
+    private func pushOverflow(_ m: NotificationManager, _ titles: String...) {
+        for title in titles { m.push(make(title)) }
     }
 
     // MARK: - Immediate displacement (v4: no queue)
@@ -20,15 +26,25 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.current?.title, "a")
     }
 
-    /// The core v4 ruling: the newest push owns the screen at once - no
-    /// timeout, no queue. The displaced message is one row below, unread.
-    func testSecondPushDisplacesImmediately() {
+    /// The stack grows: the newest card is the anchor, and under the cap
+    /// nothing is displaced at all.
+    func testSecondPushJoinsTheStack() {
         let m = NotificationManager()
         m.push(make("a"))
         XCTAssertEqual(m.push(make("b")), .displayed)
-        XCTAssertEqual(m.current?.title, "b", "the latest push is always what the user sees")
-        XCTAssertEqual(m.pastHistory.map(\.title), ["a"], "coverage never erases the covered message")
-        XCTAssertEqual(m.unreadCount, 2, "displacing is not reading")
+        XCTAssertEqual(m.current?.title, "b", "the newest card is the anchor")
+        XCTAssertEqual(m.presentations.map(\.item.title), ["a", "b"])
+        XCTAssertEqual(m.unreadCount, 2, "arriving is not reading")
+    }
+
+    /// Overflow: past the cap, the oldest card leaves for history - still
+    /// unread, still reachable.
+    func testOverflowMovesTheOldestCardToHistory() {
+        let m = NotificationManager()
+        pushOverflow(m, "a", "b", "c", "d", "e", "f")
+        XCTAssertEqual(m.presentations.map(\.item.title), ["c", "d", "e", "f"])
+        XCTAssertEqual(m.pastHistory.map(\.title), ["a", "b"], "the overflowed cards survive in history")
+        XCTAssertEqual(m.unreadCount, 6, "leaving the stack is not reading")
     }
 
     /// A card with actions yields the screen too; its actions stay reachable
@@ -36,10 +52,10 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
     func testOperableCardIsDisplacedLikeAnyOther() {
         let action = NotificationAction(label: "ok", url: URL(string: "notch-notify://ack?token=t")!)
         let m = NotificationManager()
-        m.push(NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [action]))
+        m.push(CardPayload(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [action]))
         m.push(make("b"))
         XCTAssertEqual(m.current?.title, "b")
-        XCTAssertEqual(m.pastHistory.map(\.title), ["a"])
+        XCTAssertEqual(m.presentations.map(\.item.title), ["a", "b"])
     }
 
     /// Coverage never drops a message: every push survives in history, and
@@ -57,7 +73,7 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
-        m.advance()
+        for card in m.presentations { m.retireCard(card.item.id, readOnRetire: false) }
         XCTAssertNil(m.current, "no queue means nothing rotates in")
         XCTAssertEqual(m.historyCount, 2)
     }
@@ -66,7 +82,7 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
     func testRetiredMessageStaysUnread() {
         let m = NotificationManager()
         m.push(make("a"))
-        m.advance()
+        for card in m.presentations { m.retireCard(card.item.id, readOnRetire: false) }
         XCTAssertNil(m.current)
         XCTAssertEqual(m.unreadCount, 1, "a timeout must never turn a message into 历史")
     }
@@ -83,92 +99,74 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
 
     // MARK: - Read state (v4 §4: explicit opens only)
 
-    /// 自动弹卡无人进入 → 不清未读。
-    func testAutoExpandedPanelWithoutPointerStaysUnread() {
-        let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = true
-        defer { settings.autoExpandOnMessage = old }
+    /// 卡片到达无人点开 → 未读保留。
+    func testCollapsedCardWithoutClickStaysUnread() {
         let m = NotificationManager()
         m.push(make("a"))
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
-        XCTAssertEqual(m.unreadCount, 1)
+        XCTAssertFalse(m.presentations.last!.expanded, "a card arrives collapsed")
+        XCTAssertEqual(m.unreadCount, 1, "arriving is not reading")
     }
 
-    /// hover 打开（包括指针进入面板）都不标读：没点开就是没点开。
-    func testHoverOpenNeverMarksRead() async throws {
+    /// hover 展开不标读：没点开就是没点开。
+    func testHoverExpandNeverMarksRead() async throws {
         let settings = AppSettings.shared
-        let oldAutoExpand = settings.autoExpandOnMessage
         let oldHoverToExpand = settings.hoverToExpand
         let oldDelay = settings.hoverDelayMilliseconds
-        settings.autoExpandOnMessage = false
         settings.hoverToExpand = true
         settings.hoverDelayMilliseconds = 10
         defer {
-            settings.autoExpandOnMessage = oldAutoExpand
             settings.hoverToExpand = oldHoverToExpand
             settings.hoverDelayMilliseconds = oldDelay
         }
         let m = NotificationManager()
         m.push(make("a"))
-        m.setPointerNearIsland(true)
+        let id = m.current!.id
+        m.setHovering(true, for: id)
         try await Task.sleep(for: .milliseconds(80))
-        XCTAssertEqual(m.displayState, .opened(reason: .hover))
-        m.setHovering(true)    // pointer enters the panel
-        m.setHovering(false)
+        XCTAssertTrue(m.presentations.first(where: { $0.item.id == id })!.expandedByHover)
+        m.setHovering(false, for: id)   // pointer enters, then leaves
         XCTAssertEqual(m.unreadCount, 1, "hovering is looking, not opening - nothing marks read")
     }
 
-    /// 触发区不是面板：只靠近不进入，一个都不读。
+    /// 指针在卡片上不算点开：只靠近不点击，一个都不读。
     func testZonePresenceAloneDoesNotMarkRead() {
-        let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = true
-        defer { settings.autoExpandOnMessage = old }
         let m = NotificationManager()
         m.push(make("a"))
-        m.setPointerNearIsland(true)
-        XCTAssertEqual(m.unreadCount, 1, "near is not looking")
+        m.setHovering(true, for: m.current!.id)
+        XCTAssertEqual(m.unreadCount, 1, "near is not opening")
     }
 
-    /// click 打开 = 点开当前消息：当前卡即读，其余未读行必须逐条点开。
-    func testClickOpenMarksOnlyCurrentRead() {
+    /// click 展开 = 点开该张卡片：它即读，其余必须逐条点开。
+    func testClickExpandMarksOnlyThatCardRead() {
         let m = NotificationManager()
-        m.push(make("a"))
-        m.push(make("b"))
-        m.dismissPanel()
-        m.summaryClicked()
-        XCTAssertEqual(m.displayState, .opened(reason: .click))
-        XCTAssertTrue(m.current.map { m.isRead($0) } ?? false, "点开面板即点开当前消息")
-        XCTAssertEqual(m.unreadCount, 1, "the displaced message stays unread until it is opened itself")
-        XCTAssertFalse(m.isRead(m.pastHistory[0]))
+        for title in ["a", "b", "c", "d", "e"] { m.push(make(title)) }
+        m.expandCard(m.current!.id, byHover: false)
+        XCTAssertTrue(m.current.map { m.isRead($0) } ?? false, "点开卡片即点开这条消息")
+        XCTAssertEqual(m.unreadCount, 4, "the other cards stay unread until they are opened")
+        let other = m.presentations.first!
+        XCTAssertFalse(m.isRead(other.item), "a visible card is not read by expanding another")
     }
 
-    /// 从自动弹卡点开完整列表，同样是 deliberate open。
-    func testOpenMessageCenterMarksCurrentRead() {
-        let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = true
-        defer { settings.autoExpandOnMessage = old }
+    /// 打开历史窗口是 deliberate open：卡片即读。
+    func testOpenHistoryWindowMarksCardsRead() {
         let m = NotificationManager()
         m.push(make("a"))
+        m.markCardRead(m.current!.id)
         m.openMessageCenter()
-        XCTAssertEqual(m.displayState, .opened(reason: .click))
         XCTAssertEqual(m.unreadCount, 0)
     }
 
     /// 历史行展开（视图调 setRead）是逐条阅读的路径。
     func testExpandingRowMarksItRead() {
         let m = NotificationManager()
-        m.push(make("a"))
-        m.push(make("b"))
+        pushOverflow(m, "a", "b", "c", "d", "e")     // e holds the anchor; a-d are history
         let a = m.pastHistory[0]
         m.setRead(a.id, read: true)
         XCTAssertTrue(m.isRead(a))
-        XCTAssertEqual(m.unreadCount, 1)
+        XCTAssertEqual(m.unreadCount, 4)
         m.setRead(a.id, read: false)
         XCTAssertFalse(m.isRead(a))
-        XCTAssertEqual(m.unreadCount, 2)
+        XCTAssertEqual(m.unreadCount, 5)
     }
 
     /// 点了消息上的 action = 用户处理了这条消息。
@@ -177,7 +175,7 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
         var opened: URL?
         m.actionHandler.urlOpener = { opened = $0 }
         let action = NotificationAction(label: "允许", url: URL(string: "http://localhost:8080/ok")!)
-        m.push(NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [action]))
+        m.push(CardPayload(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [action]))
 
         m.performAction(action, for: m.current!)
 
@@ -192,14 +190,13 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
         var opened: URL?
         m.actionHandler.urlOpener = { opened = $0 }
         let action = NotificationAction(label: "允许", url: URL(string: "http://localhost:8080/ok")!)
-        m.push(NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [action]))
-        m.push(make("b"))
+        pushOverflow(m, "a", "b", "c", "d", "e")     // e holds the anchor; a-d are history
         let a = m.pastHistory[0]
 
         m.performAction(action, for: a)
 
         XCTAssertNotNil(opened)
-        XCTAssertEqual(m.current?.title, "b", "a history action does not touch the live card")
+        XCTAssertEqual(m.current?.title, "e", "a history action does not touch the stack")
         XCTAssertTrue(m.isRead(a))
     }
 
@@ -219,175 +216,99 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
     func testCriticalPushDisplacesAnything() {
         let action = NotificationAction(label: "ok", url: URL(string: "notch-notify://ack?token=t")!)
         let m = NotificationManager()
-        m.push(NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [action]))
+        m.push(CardPayload(title: "a", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [action]))
         m.push(make("c1", urgency: .critical))
         XCTAssertEqual(m.current?.title, "c1")
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
+        XCTAssertTrue(m.presentations.last!.expanded, "a critical arrives expanded")
         m.push(make("c2", urgency: .critical))
         XCTAssertEqual(m.current?.title, "c2")
-        XCTAssertEqual(m.pastHistory.filter { $0.urgency == .critical }.map(\.title), ["c1"],
-                       "the old critical waits in history, unread")
+        XCTAssertEqual(m.presentations.map(\.item.title), ["a", "c1", "c2"],
+                       "criticals hold their cards; nothing is displaced")
     }
 
-    /// 普通推送不顶 critical 占屏：消息存为未读（.queued），打开面板即见。
-    func testCriticalHoldsScreenAgainstNormalPush() {
+    /// 普通推送追加在栈上，critical 与它共存：两条都是未读。
+    func testNormalPushJoinsACriticalOnTheStack() {
         let m = NotificationManager()
         m.push(make("c", urgency: .critical))
-        XCTAssertEqual(m.push(make("n")), .queued)
-        XCTAssertEqual(m.current?.title, "c", "a critical keeps the screen")
-        XCTAssertEqual(m.pastHistory.map(\.title), ["n"])
-        XCTAssertEqual(m.unreadCount, 2, "parked behind a critical is still unread")
+        XCTAssertEqual(m.push(make("n")), .displayed)
+        XCTAssertEqual(m.presentations.map(\.item.title), ["c", "n"])
+        XCTAssertEqual(m.current?.title, "n")
+        XCTAssertEqual(m.unreadCount, 2, "nothing is displaced, so nothing is parked")
     }
 
     // MARK: - Escape semantics
 
-    /// Regression (2026-09-02 review §4-A2): a panel opened by keyboard (no
-    /// pointer involvement) must be closable with Esc.
-    func testKeyboardOpenedPanelCanBeDismissedWithEscape() {
-        let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = true
-        defer { settings.autoExpandOnMessage = old }
-
+    /// A card the user expanded by click is Esc-able: it was a deliberate act.
+    func testClickedExpansionIsEscAble() {
         let m = NotificationManager()
         m.push(make("a"))
-        m.dismissPanel()                                  // start collapsed: the keyboard-only world
-        XCTAssertEqual(m.displayState, .closed)
-        m.togglePanel()                                   // keyboard path: no pointer anywhere
-        XCTAssertEqual(m.displayState, .opened(reason: .click))
-        XCTAssertTrue(m.canDismissWithEscape, "a deliberately opened panel is Esc-able")
+        m.expandCard(m.current!.id, byHover: false)
+        XCTAssertTrue(m.canDismissWithEscape, "a deliberately expanded card is Esc-able")
     }
 
-    func testSelfExpandedPanelWithoutPointerIsNotEscAble() {
-        let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = true
-        defer { settings.autoExpandOnMessage = old }
-
-        let m = NotificationManager()
-        m.push(make("a"))                                // auto-expanded, pointer never arrived
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
-        XCTAssertFalse(m.canDismissWithEscape, "Esc must not reach into an untouched screen from other apps")
-    }
-
-    func testTogglePanelCycles() {
+    /// A hover expansion is not: the pointer is on it, and Esc belongs to
+    /// another app.
+    func testHoverExpansionIsNotEscAble() {
         let m = NotificationManager()
         m.push(make("a"))
-        m.dismissPanel()                                  // collapsed world: toggle means open
-        m.togglePanel()
-        XCTAssertEqual(m.displayState, .opened(reason: .click))
-        m.togglePanel()
-        XCTAssertEqual(m.displayState, .closed, "second toggle collapses to the pill while the message is live")
+        let id = m.current!.id
+        m.setHovering(true, for: id)
+        XCTAssertFalse(m.canDismissWithEscape, "Esc must not reach into a hover expansion")
     }
 
-    func testIslandClickedIgnoredWithoutContent() {
-        let m = NotificationManager()
-        m.summaryClicked()
-        XCTAssertEqual(m.displayState, .closed)
-    }
-
-    func testDismissedPanelDoesNotReexpandUntilPointerLeaves() async throws {
-        let settings = AppSettings.shared
-        let oldDelay = settings.hoverDelayMilliseconds
-        settings.hoverDelayMilliseconds = 10
-        defer { settings.hoverDelayMilliseconds = oldDelay }
-
+    /// A collapsed card is not Esc-able: there is nothing to close, and Esc
+    /// belongs to whatever app the user is in.
+    func testCollapsedCardIsNotEscAble() {
         let m = NotificationManager()
         m.push(make("a"))
-        m.dismissPanel()
-        XCTAssertEqual(m.displayState, .closed)
-
-        m.setPointerNearIsland(true)
-        try await Task.sleep(for: .milliseconds(80))
-        XCTAssertEqual(m.displayState, .closed)   // suppressed after manual dismissal
-
-        m.setPointerNearIsland(false)              // leaving the zone re-arms hover
-        m.setPointerNearIsland(true)
-        try await Task.sleep(for: .milliseconds(80))
-        XCTAssertEqual(m.displayState, .opened(reason: .hover))
+        XCTAssertFalse(m.canDismissWithEscape, "a collapsed card has nothing for Esc to close")
     }
 
-    // MARK: - Sneak Peek (display=peek)
-
-    /// The peek tier: a peek-flagged message lives its dwell in the compact
-    /// pill even though auto-expand is on — the panel never opens on its own.
-    func testPeekPushStaysCompactWhenAutoExpandEnabled() {
+    /// Esc collapses the clicked expansion and leaves the hovered ones to the
+    /// pointer.
+    func testEscapeCollapsesTheClickedExpansion() {
         let m = NotificationManager()
-        m.push(NotchNotification(title: "p", bodyMarkdown: "", urgency: .normal, timeout: 60, displayPeek: true))
-        XCTAssertEqual(m.displayState, .closed, "a peek message must not open the panel")
-        XCTAssertEqual(m.current?.displayPeek, true)
-    }
-
-    /// Critical never peeks: an urgent message that only flickered past in the
-    /// pill would be a lie. Resolution forces displayPeek off at the door.
-    func testCriticalIgnoresPeekAndBlocks() {
-        let m = NotificationManager()
-        m.push(NotchNotification(title: "c", bodyMarkdown: "", urgency: .critical, timeout: nil, displayPeek: true))
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
-        XCTAssertEqual(m.current?.displayPeek, false, "critical strips the peek flag at resolution")
-    }
-
-    /// The setting fills the gap for messages that arrive without an explicit
-    /// display parameter; a sender's override still wins.
-    func testNormalMessagesPeekSettingResolvesDisplayAtPush() {
-        let settings = AppSettings.shared
-        let old = settings.normalMessagesPeek
-        settings.normalMessagesPeek = true
-        defer { settings.normalMessagesPeek = old }
-
-        let m = NotificationManager()
-        m.push(make("a"))   // no explicit displayPeek → inherits the setting
-        XCTAssertEqual(m.current?.displayPeek, true)
-        XCTAssertEqual(m.displayState, .closed)
-
-        // A fresh run isolates the override from the first message's state.
-        let m2 = NotificationManager()
-        m2.push(NotchNotification(title: "b", bodyMarkdown: "", urgency: .normal, timeout: 60, displayPeek: false))
-        XCTAssertEqual(m2.displayState, .opened(reason: .notification), "an explicit display=expand overrides the setting")
-    }
-
-    /// Peek dwell: when the sender left the timeout to the app, a peek message
-    /// holds the pill for the short peek budget, not the full dwell setting.
-    /// §6/§7: peek degrades to "no auto card, Tier 0 only" - the pill dwell is
-    /// the sender timeout ?? the app's dwell setting; no special 3s budget.
-    func testPeekUsesStandardDwellBudget() {
-        let settings = AppSettings.shared
-        let old = settings.messageDwellSeconds
-        settings.messageDwellSeconds = 20
-        defer { settings.messageDwellSeconds = old }
-
-        let m = NotificationManager()
-        m.push(NotchNotification(title: "p", bodyMarkdown: "", urgency: .normal, timeout: nil, displayPeek: true))
-        XCTAssertEqual(m.displayState, .closed, "peek never opens the panel")
-        XCTAssertEqual(m.presentation?.remaining, .seconds(20))
+        m.push(make("a"))
+        m.push(make("b"))
+        m.expandCard(m.current!.id, byHover: false)
+        m.dismissExpandedCard()
+        XCTAssertEqual(m.presentations.last?.expanded, false, "the clicked expansion collapses")
+        XCTAssertEqual(m.presentations.count, 2, "Esc does not retire cards")
     }
 
     // MARK: - List model
 
-    func testPastHistoryExcludesOnlyCurrent() {
+    func testPastHistoryExcludesEveryVisibleCard() {
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
         m.push(make("c"))
-        XCTAssertEqual(m.pastHistory.map(\.title), ["a", "b"], "only the live card is excluded")
+        XCTAssertTrue(m.pastHistory.isEmpty, "under the cap every card is on screen")
     }
 
-    /// 「清空本区」on the history section removes only past messages; the
-    /// live message survives untouched.
-    func testClearPastHistoryKeepsCurrent() {
+    /// 「清空历史」 removes everything that is not a visible card; visible
+    /// cards survive untouched.
+    func testClearPastHistoryKeepsVisibleCards() {
         let m = NotificationManager()
-        m.push(make("old"))
-        m.push(make("live"))
-        XCTAssertEqual(m.pastHistory.map(\.title), ["old"])
+        m.push(make("a"))
+        m.push(make("b"))
+        m.push(make("c"))
+        m.push(make("d"))
+        m.push(make("overflow"))          // the fifth push overflows: "a" leaves the stack
+
+        let visible = Set(m.presentations.map(\.item.id))
+        XCTAssertEqual(m.pastHistory.map(\.title), ["a"], "only the overflowed card is past history")
+
         m.clearPastHistory()
-        XCTAssertTrue(m.pastHistory.isEmpty)
-        XCTAssertEqual(m.current?.title, "live")
-        XCTAssertEqual(m.historyCount, 1)
+        XCTAssertTrue(m.pastHistory.isEmpty, "everything not on a card is gone")
+        XCTAssertEqual(m.presentations.count, NotificationManager.visibleCardLimit, "the cards stay")
+        XCTAssertEqual(Set(m.history.map(\.id)), visible, "history is exactly what is on screen")
+        XCTAssertEqual(m.unreadCount, NotificationManager.visibleCardLimit, "and it is all still unread")
     }
 
     // MARK: - Deletion journal & undo (P1)
 
-    private func makeGroupedStore(_ items: [NotchNotification], read: Set<UUID> = []) throws -> NotificationHistoryStore {
+    private func makeGroupedStore(_ items: [CardPayload], read: Set<UUID> = []) throws -> NotificationHistoryStore {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("NotchUndoTests-\(UUID().uuidString)", isDirectory: true)
         let store = NotificationHistoryStore(fileURL: dir.appendingPathComponent("history.json"))
@@ -399,8 +320,7 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
     /// message and its read marker.
     func testUndoDeletionRestoresMessageAndReadState() {
         let m = NotificationManager()
-        m.push(make("a"))
-        m.push(make("b"))                    // b current, a past
+        pushOverflow(m, "a", "b", "c", "d", "e")     // e current; a-d past
         let a = m.pastHistory[0]
         m.setRead(a.id, read: true)
         m.removeHistory(id: a.id)
@@ -417,15 +337,14 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
     /// brings all of them back.
     func testConsecutiveDeletesMergeNoticeAndUndoRestoresAll() {
         let m = NotificationManager()
-        m.push(make("a"))
-        m.push(make("b"))
-        m.push(make("c"))                    // c current; a/b past
-        m.removeHistory(id: m.pastHistory[0].id)
-        m.removeHistory(id: m.pastHistory[0].id)
+        pushOverflow(m, "a", "b", "c", "d", "e", "f")   // c,d,e,f on screen; a,b in history
+        XCTAssertEqual(m.pastHistory.map(\.title), ["a", "b"])
+        m.removeHistory(id: m.pastHistory[0].id)        // remove a
+        m.removeHistory(id: m.pastHistory[0].id)        // remove b
         XCTAssertEqual(m.deletionNotice?.count, 2)
         XCTAssertNil(m.deletionNotice?.subject, "merged deletions lose the single-item label")
         m.undoDeletion()
-        XCTAssertEqual(m.historyCount, 3)
+        XCTAssertEqual(m.historyCount, 6, "the six pushes are all back")
         XCTAssertEqual(m.pastHistory.map(\.title), ["a", "b"])
     }
 
@@ -433,8 +352,7 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
     func testUndoWindowExpiryDropsTheSnapshot() async throws {
         let m = NotificationManager()
         m.undoWindow = .milliseconds(80)
-        m.push(make("a"))
-        m.push(make("b"))
+        pushOverflow(m, "a", "b", "c", "d", "e")
         m.removeHistory(id: m.pastHistory[0].id)
         XCTAssertNotNil(m.deletionNotice)
         try await Task.sleep(for: .milliseconds(250))
@@ -446,8 +364,8 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
     /// 整组删除 journals the whole cluster; undo puts every entry back with
     /// its read state.
     func testRemoveGroupWithUndoRestoresWholeGroup() throws {
-        let g1 = NotchNotification(title: "g1", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci")
-        let g2 = NotchNotification(title: "g2", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci")
+        let g1 = CardPayload(title: "g1", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci")
+        let g2 = CardPayload(title: "g2", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci")
         let store = try makeGroupedStore([g1, g2], read: [g1.id])
         let m = NotificationManager()
         m.restoreHistory(using: store)
@@ -463,9 +381,9 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
 
     /// 整组已读 toggles every entry carrying the key, both directions.
     func testSetGroupReadTogglesWholeGroup() throws {
-        let g1 = NotchNotification(title: "g1", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci")
-        let g2 = NotchNotification(title: "g2", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci")
-        let other = NotchNotification(title: "x", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "deploy")
+        let g1 = CardPayload(title: "g1", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci")
+        let g2 = CardPayload(title: "g2", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci")
+        let other = CardPayload(title: "x", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "deploy")
         let store = try makeGroupedStore([g1, g2, other])
         let m = NotificationManager()
         m.restoreHistory(using: store)
@@ -480,17 +398,16 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
 
     func testUpdateRewritesHistoryAndLiveCard() {
         let m = NotificationManager()
-        m.push(make("a"))
-        m.push(make("b"))                       // b live, a in history
+        pushOverflow(m, "a", "b", "c", "d", "e", "f")   // c,d,e,f on screen; a,b in history
         let bID = m.current!.id
         let aID = m.pastHistory[0].id
 
-        m.update(id: bID) { $0.title = "b2" }   // live card + history
+        m.update(id: bID) { $0.title = "f2" }   // live card + history
         m.update(id: aID) { $0.title = "a2" }   // history
 
-        XCTAssertEqual(m.current?.title, "b2")
-        XCTAssertEqual(m.pastHistory.map(\.title), ["a2"])
-        XCTAssertEqual(m.history.map(\.title).sorted(), ["a2", "b2"])
+        XCTAssertEqual(m.current?.title, "f2")
+        XCTAssertEqual(m.pastHistory.map(\.title), ["a2", "b"])
+        XCTAssertEqual(m.history.map(\.title).sorted(), ["a2", "b", "c", "d", "e", "f2"])
     }
 
     func testUpdateOnUnknownIDIsNoOp() {

@@ -36,7 +36,7 @@ echo "   可执行文件: ${EXE_PATH}"
 cp "${EXE_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 
-# SPM 把内置的 layouts/themes 打成可执行文件旁的 resource bundle；手工拼装的
+# SPM 把内置的 styles 打成可执行文件旁的 resource bundle；手工拼装的
 # .app 必须把它搬进 Contents/Resources。少了它内置预设会全部消失（BuiltinConfigs
 # 已做非致命兜底，不会像 Bundle.module 那样 fatalError），但这显然不是想要的包。
 RESOURCE_BUNDLE=$(find -L "${BUILD_DIR}" -maxdepth 4 -type d -name "${APP_NAME}_${APP_NAME}.bundle" | grep -E "Products/Release" | head -n 1)
@@ -47,8 +47,8 @@ fi
 echo "   内置配置: ${RESOURCE_BUNDLE}"
 rm -rf "${APP_BUNDLE}/Contents/Resources/${APP_NAME}_${APP_NAME}.bundle"
 cp -R "${RESOURCE_BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
-if [[ ! -d "${APP_BUNDLE}/Contents/Resources/${APP_NAME}_${APP_NAME}.bundle/Contents/Resources/layouts" ]]; then
-    echo "❌ 内置配置复制失败，.app 将没有内置 layouts/themes"
+if [[ ! -d "${APP_BUNDLE}/Contents/Resources/${APP_NAME}_${APP_NAME}.bundle/Contents/Resources/styles" ]]; then
+    echo "❌ 内置配置复制失败，.app 将没有内置 styles"
     exit 1
 fi
 

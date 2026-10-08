@@ -4,8 +4,8 @@ import XCTest
 @MainActor
 final class CriticalAgingTests: SettingsIsolatedTestCase {
 
-    private func make(_ title: String, urgency: UrgencyLevel = .normal) -> NotchNotification {
-        NotchNotification(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60)
+    private func make(_ title: String, urgency: UrgencyLevel = .normal) -> CardPayload {
+        CardPayload(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60)
     }
 
     /// "稍后处理" demotes a critical to a transient with a fresh budget - it
@@ -13,15 +13,16 @@ final class CriticalAgingTests: SettingsIsolatedTestCase {
     func testSnoozeDemotesCriticalToTransient() {
         let m = NotificationManager()
         m.push(make("crit", urgency: .critical))
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
-        XCTAssertNil(m.presentation?.remaining, "critical starts with no budget")
+        XCTAssertTrue(m.presentations.last?.item.urgency == .critical, "a critical takes a card, expanded")
+        XCTAssertTrue(m.presentations.last?.expanded == true, "a critical arrives expanded")
+        XCTAssertNil(m.presentations.last?.remaining, "critical starts with no budget")
 
         m.snoozeCurrentCritical()
 
-        XCTAssertEqual(m.presentation?.remaining, m.presentation?.policy.ageOutBudget,
-                       "snooze writes the table's budget into the same Presentation")
-        XCTAssertEqual(m.displayState, .closed, "snooze puts the pill back")
-        XCTAssertNotNil(m.dwellDeadline, "the dwell countdown is running again")
+        XCTAssertEqual(m.presentations.last?.remaining, m.presentations.last?.policy.ageOutBudget,
+                       "snooze writes the table's budget into the same card")
+        XCTAssertEqual(m.presentations.last?.expanded, false, "snooze collapses the card")
+        XCTAssertNotNil(m.dwellDeadlines[m.presentations.last!.item.id], "the dwell countdown is running again")
     }
 
     /// Snoozing is a no-op for non-criticals: their budget is the sender's
@@ -29,12 +30,12 @@ final class CriticalAgingTests: SettingsIsolatedTestCase {
     func testSnoozeIgnoresNormalMessages() {
         let m = NotificationManager()
         m.push(make("plain"))
-        let before = m.presentation?.remaining
+        let before = m.presentations.last?.remaining
 
         m.snoozeCurrentCritical()
 
-        XCTAssertEqual(m.presentation?.remaining, before)
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
+        XCTAssertEqual(m.presentations.last?.remaining, before, "a normal card is left alone")
+        XCTAssertEqual(m.presentations.last?.expanded, false, "it stays collapsed")
     }
 
     /// The backlog count drives the "处理全部" affordance.
@@ -46,7 +47,7 @@ final class CriticalAgingTests: SettingsIsolatedTestCase {
 
         m.push(make("c1", urgency: .critical))
         m.push(make("c2", urgency: .critical))
-        XCTAssertEqual(m.criticalBacklogCount, 2, "one live, one queued")
+        XCTAssertEqual(m.criticalBacklogCount, 2, "every unread critical counts, on screen or not")
     }
 
     /// Push rejection must be diagnosable, not silent: the parser reports why.

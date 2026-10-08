@@ -4,8 +4,8 @@ import XCTest
 @MainActor
 final class QuietModeTests: SettingsIsolatedTestCase {
 
-    private func make(_ title: String, urgency: UrgencyLevel = .normal, group: String? = nil) -> NotchNotification {
-        NotchNotification(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60, group: group)
+    private func make(_ title: String, urgency: UrgencyLevel = .normal, group: String? = nil) -> CardPayload {
+        CardPayload(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60, group: group)
     }
 
     /// Runs `body` with the quiet setting pinned, then puts it back.
@@ -17,14 +17,6 @@ final class QuietModeTests: SettingsIsolatedTestCase {
         let old = settings.quietMode
         settings.quietMode = mode
         defer { settings.quietMode = old }
-        try body()
-    }
-
-    private func withAutoExpand(_ value: Bool, _ body: () throws -> Void) rethrows {
-        let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = value
-        defer { settings.autoExpandOnMessage = old }
         try body()
     }
 
@@ -91,32 +83,27 @@ final class QuietModeTests: SettingsIsolatedTestCase {
 
     func testOffShowsEverythingWhileAway() {
         withQuietMode(.off) {
-            withAutoExpand(false) {
-                let m = NotificationManager()
-                m.setAway(true)
+            let m = NotificationManager()
+            m.setAway(true)
 
-                XCTAssertEqual(m.push(make("a")), .displayed)
-                XCTAssertEqual(m.current?.title, "a", "off must mean off, away or not")
-            }
+            XCTAssertEqual(m.push(make("a")), .displayed)
+            XCTAssertEqual(m.current?.title, "a", "off must mean off, away or not")
         }
     }
 
     // MARK: - Coming back
 
-    func testReturnAnnouncesTheBacklogWithAPill() {
+    func testReturnKeepsTheBacklogInHistory() {
         withQuietMode(.historyOnly) {
-            withAutoExpand(true) {
-                let m = NotificationManager()
-                m.setAway(true)
-                for i in 1...5 { m.push(make("job-\(i)")) }
-                XCTAssertEqual(m.displayState, .closed, "nothing shows while away")
+            let m = NotificationManager()
+            m.setAway(true)
+            for i in 1...5 { m.push(make("job-\(i)")) }
+            XCTAssertTrue(m.presentations.isEmpty, "nothing shows while away")
 
-                m.setAway(false)
+            m.setAway(false)
 
-                XCTAssertEqual(m.displayState, .closed, "the return must be announced")
-                XCTAssertEqual(m.unreadCount, 5, "all five must still be waiting")
-                XCTAssertNil(m.current, "and none of them may be unfolded onto the user")
-            }
+            XCTAssertEqual(m.unreadCount, 5, "all five must still be waiting")
+            XCTAssertTrue(m.presentations.isEmpty, "and none of them may be unfolded onto the user")
         }
     }
 
@@ -125,7 +112,7 @@ final class QuietModeTests: SettingsIsolatedTestCase {
             let m = NotificationManager()
             m.setAway(true)
             m.setAway(false)
-            XCTAssertEqual(m.displayState, .closed, "an empty return must not conjure a pill")
+            XCTAssertTrue(m.presentations.isEmpty, "an empty return must not conjure a card")
         }
     }
 
@@ -137,7 +124,8 @@ final class QuietModeTests: SettingsIsolatedTestCase {
 
             m.setAway(false)
 
-            XCTAssertEqual(m.displayState, .opened(reason: .notification), "a live critical must not be disturbed")
+            XCTAssertTrue(m.presentations.contains { $0.item.urgency == .critical },
+                          "a live critical must not be disturbed")
             XCTAssertEqual(m.current?.title, "critical")
         }
     }
@@ -149,43 +137,37 @@ final class QuietModeTests: SettingsIsolatedTestCase {
             m.setAway(true)
             m.push(make("a"))
             m.setAway(false)
-            XCTAssertEqual(m.displayState, .closed)
+            XCTAssertEqual(m.unreadCount, 1)
         }
     }
 
     // MARK: - Group collapse while away
 
-    func testWithheldGroupReplacementDoesNotLeaveAnEmptyExpandedPanel() {
+    func testWithheldGroupReplacementRetiresTheVisibleCard() {
         withQuietMode(.historyOnly) {
-            withAutoExpand(true) {
-                let m = NotificationManager()
-                m.push(make("run-1", group: "ci"))
-                XCTAssertEqual(m.current?.title, "run-1")
-                XCTAssertTrue(m.displayState.isOpened)
+            let m = NotificationManager()
+            m.push(make("run-1", group: "ci"))
+            XCTAssertEqual(m.current?.title, "run-1")
 
-                // The replacement collapses run-1 off the panel and is then withheld,
-                // which would otherwise leave an expanded panel with nothing in it.
-                m.setAway(true)
-                XCTAssertEqual(m.push(make("run-2", group: "ci")), .withheld)
+            // The replacement collapses run-1 off the stack and is then withheld,
+            // which would otherwise leave a card with nothing behind it.
+            m.setAway(true)
+            XCTAssertEqual(m.push(make("run-2", group: "ci")), .withheld)
 
-                XCTAssertNil(m.current)
-                XCTAssertFalse(m.displayState.isOpened, "the hole left by the collapse must be repaired")
-                XCTAssertEqual(m.history.map(\.title), ["run-2"], "and the replacement is what is kept")
-            }
+            XCTAssertNil(m.current, "the hole left by the collapse is repaired")
+            XCTAssertEqual(m.history.map(\.title), ["run-2"], "and the replacement is what is kept")
         }
     }
 
     func testWithholdingDoesNotLightUpAPillWhenNothingWasShowing() {
         withQuietMode(.historyOnly) {
-            withAutoExpand(false) {
                 let m = NotificationManager()
                 m.setAway(true)
                 m.push(make("a"))
 
-                XCTAssertEqual(m.displayState, .closed, "quiet must not surface a pill on the lock screen")
+                XCTAssertTrue(m.presentations.isEmpty, "quiet must not surface a card on the lock screen")
             }
         }
-    }
 
     // MARK: - Presence sources
 

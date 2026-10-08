@@ -6,7 +6,7 @@ enum URLNotificationParser {
     static let maxActionsPayloadLength = 1000
 
     /// Parses a `notch-notify://push?...` URL, reporting why it failed.
-    static func parsePushDetailed(_ url: URL) -> Result<NotchNotification, PushRejection> {
+    static func parsePushDetailed(_ url: URL) -> Result<CardPayload, PushRejection> {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let items = components?.queryItems ?? []
         func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
@@ -34,7 +34,7 @@ enum URLNotificationParser {
     }
 
     /// Parses a `notch-notify://push?...` URL. Returns `nil` when `title` is missing or blank.
-    static func parsePush(_ url: URL) -> NotchNotification? {
+    static func parsePush(_ url: URL) -> CardPayload? {
         guard case .success(let notification) = parsePushDetailed(url) else { return nil }
         return notification
     }

@@ -4,15 +4,12 @@ import XCTest
 @MainActor
 final class GroupDedupTests: SettingsIsolatedTestCase {
 
-    private func make(_ title: String, group: String? = nil, urgency: UrgencyLevel = .normal) -> NotchNotification {
-        NotchNotification(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60, group: group)
+    private func make(_ title: String, group: String? = nil, urgency: UrgencyLevel = .normal) -> CardPayload {
+        CardPayload(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60, group: group)
     }
 
-    private func manager(autoExpand: Bool = false) -> (NotificationManager, Bool) {
-        let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = autoExpand
-        return (NotificationManager(), old)
+    private func manager() -> NotificationManager {
+        NotificationManager()
     }
 
     // MARK: - URL parsing
@@ -42,8 +39,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
     // MARK: - Collapsing
 
     func testSameGroupReplacesTheMessageOnScreen() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("run-1", group: "ci"))
         XCTAssertEqual(m.current?.title, "run-1")
@@ -58,8 +54,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
     /// displacement moves a message into history, and the next same-group push
     /// still collapses it there instead of stacking.
     func testSameGroupReplacesADisplacedMessage() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("run-1", group: "ci"))
         m.push(make("unrelated"))               // displaces run-1 into history
@@ -70,8 +65,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
     }
 
     func testDifferentGroupsCoexist() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("a", group: "ci"))
         m.push(make("b", group: "deploy"))
@@ -81,8 +75,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
     }
 
     func testBlankGroupNeverCollapses() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("a", group: "   "))
         m.push(make("b", group: "   "))
@@ -91,11 +84,10 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
     }
 
     func testSupersededMessageDropsItsReadState() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("run-1", group: "ci"))
-        m.summaryClicked()                       // deliberate open: reads the live card
+        m.expandCard(m.current!.id, byHover: false)                       // deliberate open: reads the live card
         XCTAssertEqual(m.unreadCount, 0)
 
         m.push(make("run-2", group: "ci"))
@@ -114,8 +106,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
     /// The Nth push of a group knows it is the Nth: the count rides on the
     /// replacement, one entry per group still.
     func testRepeatedGroupPushesCountOccurrences() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("run-1", group: "ci"))
         m.push(make("run-2", group: "ci"))
@@ -128,8 +119,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
     /// Displacement into history is still the same group: the count follows
     /// the entry wherever it lives.
     func testOccurrenceCountSurvivesDisplacement() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("run-1", group: "ci"))
         m.push(make("unrelated"))
@@ -140,8 +130,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
 
     /// Clearing the group ends the job; the next one starts from one.
     func testClearGroupResetsTheCount() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("run-1", group: "ci"))
         m.push(make("run-2", group: "ci"))
@@ -152,8 +141,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
     }
 
     func testUngroupedMessagesStayAtOne() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("a"))
         m.push(make("b"))
@@ -164,8 +152,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
     // MARK: - Clearing one group
 
     func testClearGroupRemovesOnlyThatGroup() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("a", group: "ci"))
         m.push(make("b", group: "deploy"))
@@ -177,22 +164,20 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.current?.title, "c", "clearing a non-live message must not disturb the panel")
     }
 
-    func testClearGroupOnLiveItemRetiresThePanel() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+    func testClearGroupRetiresItsVisibleCard() {
+        let m = manager()
 
         m.push(make("a"))
-        m.push(make("b", group: "ci"))          // b displaced a and owns the screen
+        m.push(make("b", group: "ci"))
 
         m.clear(group: "ci")
 
-        XCTAssertNil(m.current, "clearing the live message retires it - there is no queue to promote")
-        XCTAssertEqual(m.history.map(\.title), ["a"])
+        XCTAssertEqual(m.presentations.map(\.item.title), ["a"], "the group's card leaves the stack")
+        XCTAssertEqual(m.history.map(\.title), ["a"], "the cleared message leaves history too")
     }
 
     func testClearUnknownGroupIsANoOp() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("a"))
         m.clear(group: "nope")
@@ -201,8 +186,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
     }
 
     func testClearBlankGroupIsANoOp() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("a"))
         m.clear(group: "   ")
@@ -216,8 +200,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
     /// deliberate open no longer marks anything read, so both messages start
     /// unread here.)
     func testClearGroupKeepsUnreadConsistent() {
-        let (m, old) = manager()
-        defer { AppSettings.shared.autoExpandOnMessage = old }
+        let m = manager()
 
         m.push(make("old", group: "ci"))         // compact pill only: surfaced, not opened
         m.push(make("live", group: "deploy"))    // displaces "old" into history

@@ -1,156 +1,56 @@
 import AppKit
 import SwiftUI
 
-/// Pure placement: where a toast surface sits on a screen.
-///
-/// Top-right corner, a fixed margin inside the screen's `visibleFrame` (which
-/// already excludes the menu bar and Dock), clamped to the frame so an
-/// oversized panel can never hang off a small display. Free of AppKit windows
-/// for the same reason `MiniSummaryBars.layoutFrame` is: the rule is testable
-/// without a window server behind it.
-enum ToastLayout {
-    static let margin: CGFloat = 12
-
-    static func anchoredFrame(
-        contentSize: NSSize,
-        visibleFrame: NSRect,
-        minWidth: CGFloat = 0,
-        minHeight: CGFloat = 0
-    ) -> NSRect {
-        let width = max(minWidth, min(contentSize.width, visibleFrame.width - 2 * margin))
-        let height = max(minHeight, min(contentSize.height, visibleFrame.height - 2 * margin))
-        return NSRect(
-            x: visibleFrame.maxX - margin - width,
-            y: visibleFrame.maxY - margin - height,
-            width: width,
-            height: height
-        )
-    }
-}
-
-/// A borderless panel that never activates the app - the toast is information
-/// plus a click target, not a surface to type into (same contract as the mini
-/// summary bar's panel).
+/// A borderless panel that never activates the app: the toast is information
+/// plus a click target, not a surface to type into.
 private final class ToastPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 }
 
-/// The compact toast: urgency icon, the message's title, the unread badge.
+/// The toast presentation: a stack of floating cards anchored to one corner of
+/// a screen, for users whose display has no notch or who prefer the toast
+/// shape.
 ///
-/// Same information contract as the island pill and the mini bar - a live
-/// island status line wins, otherwise the newest unread title, otherwise the
-/// bare count - but rendered as a floating card instead of a notch-shaped
-/// pill, because this surface is not anchored to anything physical.
-private struct ToastSummaryView: View {
-    /// Bounded so a long title cannot stretch the card across the screen.
-    private static let maxTextWidth: CGFloat = 220
-
-    private var manager: NotificationManager { .shared }
-    private var settings: AppSettings { .shared }
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.islandTokens) private var theme
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if settings.showUrgency {
-                Image(systemName: manager.current?.island?.icon
-                      ?? manager.displayUrgency?.symbolName ?? "sparkles")
-                    .font(theme.font(size: 11, weight: .bold))
-                    .foregroundStyle(theme.urgencyColor(manager.displayUrgency))
-                    .accessibilityHidden(true)
-            }
-            MarqueeText(
-                text: headline,
-                font: theme.font(size: 12, weight: .semibold, design: theme.fontDesign.design),
-                maxWidth: Self.maxTextWidth,
-                speed: 22,
-                paused: reduceMotion
-            )
-            if settings.showHistoryCount, manager.unreadCount > 1 {
-                Text("×\(manager.unreadCount)")
-                    .font(theme.font(size: 10, weight: .bold, design: theme.fontDesign.design))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(theme.badgeFill, in: Capsule())
-                    .accessibilityLabel("\(manager.unreadCount) 条未读")
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(theme.panelFill, in: RoundedRectangle(cornerRadius: theme.panelRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: theme.panelRadius, style: .continuous)
-                .strokeBorder(theme.panelBorder, lineWidth: 1)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
-        .foregroundStyle(theme.textPrimary)
-        .fixedSize()
-        .contentShape(RoundedRectangle(cornerRadius: theme.panelRadius, style: .continuous))
-        // Clicking opens the panel, exactly as tapping the pill or the mini
-        // bar does. There is no hover expansion here: the toast has no
-        // activation zone to watch, so opening is an explicit click (or ⌃⌥N).
-        .onTapGesture { manager.summaryClicked() }
-        // Status and count changes shift the card's width; the presenter
-        // re-derives the window frame from the content's fitting size. The
-        // manager posts compactStatusDidChange at its state writers — the
-        // view only renders.
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("通知：\(headline)")
-        .modifier(IslandContextMenu(expanded: false))
-        .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
-    }
-
-    /// The one line the collapsed toast says — the manager's single headline
-    /// precedence (island text, then title, then the bare status).
-    private var headline: String {
-        manager.compactHeadline
-    }
-}
-
-/// The toast presentation: floating cards anchored to a screen's top-right
-/// corner, for users whose display has no notch or who prefer the toast shape.
+/// One presenter behind the `SurfacePresenting` seam, so the state machine
+/// never learns where pixels land. One window holds the whole stack, and the
+/// cards are ordinary SwiftUI views inside it — the window exists to float
+/// above other apps and to survive a fullscreen space, not to be a card.
 ///
-/// Path A from the multi-surface review: one active presenter behind the
-/// existing `NotchPresenting` seam, so the state machine never learns this
-/// surface exists. The expanded panel IS the island's panel -
-/// `IslandExpandedView` is geometry-independent (it sizes from the panel
-/// settings) - and the summary is this surface's own compact form. What the
-/// island has and the toast deliberately does not:
+/// What this presenter deliberately does not do:
 ///
-/// - pointer following (the toast re-anchors at the next presentation or
-///   screen reconfiguration, not mid-flight - there is no mouse-move monitor
-///   burning cycles to move a card nobody is chasing),
-/// - hover expansion (no activation zone; opening is an explicit click),
-/// - per-display mirroring (one toast, like one island: mirroring is a
-///   summary-only affordance and the panel must stay single-click).
+/// - pointer following (the stack re-anchors at the next presentation or screen
+///   reconfiguration, not mid-flight — there is no mouse-move monitor burning
+///   cycles to move a card nobody is chasing; hover expansion needs only to
+///   know which card the pointer is on, which the cards report themselves),
+/// - per-display mirroring (one stack, anchored to the pointer's display: the
+///   full backlog lives in the history window),
+/// - a separate expanded panel (a card expands in place, so an expanded stack
+///   is one taller window, not two windows to keep in step).
 ///
-/// Suppression still works, but event-driven instead of pointer-driven: the
-/// only way a fullscreen app can appear or vanish without the pointer moving
-/// is a workspace event, so those events re-derive the answer.
+/// Suppression is event-driven rather than pointer-driven: the only way a
+/// fullscreen app can appear or vanish without the pointer moving is a
+/// workspace event, so those events re-derive the answer.
 @MainActor
-final class ToastPresenter: NotchPresenting {
-    /// The display the toast currently belongs to, set at every presentation.
-    /// Drives the event-driven suppression probe and the screen-change check.
+final class ToastPresenter: SurfacePresenting {
+    /// The display the stack currently belongs to. Drives the event-driven
+    /// suppression probe and the screen-change check.
     private var currentScreenID: CGDirectDisplayID?
 
-    private var summaryPanel: ToastPanel?
-    private var expandedPanel: ToastPanel?
+    private var stackPanel: ToastPanel?
 
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
     private var observers: [NSObjectProtocol] = []
     /// Coalesced event-driven suppression probe; nil while idle.
     private var suppressionProbe: Task<Void, Never>?
-    /// Coalesced replay after a display-behavior setting flips (panel size
-    /// sliders fire a didSet per tick).
-    /// Coalesced replay after a display-behavior setting flip.
+    /// Coalesced replay after a display-behavior setting flips (the position
+    /// picker and card-limit slider fire a didSet per tick).
     private let behaviorReplay = Debouncer(delay: .milliseconds(250))
 
     init() {}
 
-    // MARK: - NotchPresenting
+    // MARK: - SurfacePresenting
 
     func standUp() async {
         installClickMonitors()
@@ -159,8 +59,7 @@ final class ToastPresenter: NotchPresenting {
     }
 
     func standDown() async {
-        summaryPanel?.orderOut(nil)
-        expandedPanel?.orderOut(nil)
+        stackPanel?.orderOut(nil)
         if let globalClickMonitor {
             NSEvent.removeMonitor(globalClickMonitor)
             self.globalClickMonitor = nil
@@ -180,32 +79,18 @@ final class ToastPresenter: NotchPresenting {
         currentScreenID = nil
     }
 
-    func expand() async {
+    func showStack() async {
         guard let screen = targetScreen else { return }
         currentScreenID = screen.displayID
-        // The summary under an open panel is double vision (island precedent).
-        summaryPanel?.orderOut(nil)
-        show(expandedPanel ?? makeExpandedPanel(), on: screen)
-    }
-
-    func compact() async {
-        guard let screen = targetScreen else { return }
-        currentScreenID = screen.displayID
-        expandedPanel?.orderOut(nil)
-        // The settle paths never call compact on empty history
-        // (`settlesHidden` decides hide instead), but a defensive stand-down
-        // here keeps a bare "通知中心" card from ever floating on its own.
-        guard NotificationManager.shared.hasContent else { return }
-        show(summaryPanel ?? makeSummaryPanel(), on: screen)
+        show(stackPanel ?? makeStackPanel(), on: screen)
     }
 
     func hide() async {
-        summaryPanel?.orderOut(nil)
-        expandedPanel?.orderOut(nil)
+        stackPanel?.orderOut(nil)
     }
 
     /// A fresh answer, awaited by the manager right before anything is
-    /// presented. The probe is the one island implementation
+    /// presented. The probe is the one implementation
     /// (`NotchPresenter.probeFullscreen`), run off the main actor.
     func probeDisplaySuppressed() async -> Bool {
         guard AppSettings.shared.hideInFullscreen else { return false }
@@ -215,7 +100,7 @@ final class ToastPresenter: NotchPresenting {
 
     // MARK: - Screens
 
-    /// The screen the toast belongs to: the one it last presented on, or
+    /// The display the toast belongs to: the one it last presented on, or
     /// wherever the pointer is right now for the first presentation.
     private var targetScreen: NSScreen? {
         if let currentScreenID,
@@ -233,14 +118,17 @@ final class ToastPresenter: NotchPresenting {
         panel.orderFrontRegardless()
     }
 
-    /// Re-derives the frame from the content's fitting size - the same
-    /// discipline as the mini bar, so badge and title changes resize the
-    /// window instead of clipping.
+    /// Re-derives the frame from the content's fitting size — the same
+    /// discipline as the mini bar, so a card growing (or the stack gaining a
+    /// card) resizes the window instead of clipping.
     private func layout(_ panel: ToastPanel, on screen: NSScreen) {
         panel.setFrame(
-            ToastLayout.anchoredFrame(
+            ToastLayout.frame(
                 contentSize: panel.contentView?.fittingSize ?? .zero,
-                visibleFrame: screen.visibleFrame
+                visibleFrame: screen.visibleFrame,
+                position: AppSettings.shared.toastPosition,
+                minWidth: 320,
+                minHeight: 0
             ),
             display: true
         )
@@ -248,57 +136,45 @@ final class ToastPresenter: NotchPresenting {
 
     private func relayoutVisible() {
         guard let screen = targetScreen else { return }
-        for panel in [summaryPanel, expandedPanel].compactMap({ $0 }) where panel.isVisible {
+        if let panel = stackPanel, panel.isVisible {
             layout(panel, on: screen)
         }
     }
 
-    /// Screen-capture exclusion follows the setting on every presentation -
+    /// Screen-capture exclusion follows the setting on every presentation —
     /// these are plain windows, so nothing else re-applies it for them.
     private func applySharingType() {
         let sharingType: NSWindow.SharingType = AppSettings.shared.excludeFromScreenRecording ? .none : .readOnly
-        for panel in [summaryPanel, expandedPanel].compactMap({ $0 }) {
+        if let panel = stackPanel {
             panel.sharingType = sharingType
         }
     }
 
     // MARK: - Panels
 
-    private func makePanel(_ content: some View) -> ToastPanel {
+    private func makeStackPanel() -> ToastPanel {
         let panel = ToastPanel(
             contentRect: .zero,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        panel.contentView = NSHostingView(rootView: IslandEnvironmentScope { content })
+        panel.contentView = NSHostingView(rootView: ToastStackView())
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.level = .screenSaver
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         panel.isMovable = false
-        return panel
-    }
-
-    private func makeSummaryPanel() -> ToastPanel {
-        let panel = makePanel(ToastSummaryView())
-        summaryPanel = panel
-        return panel
-    }
-
-    private func makeExpandedPanel() -> ToastPanel {
-        let panel = makePanel(IslandExpandedView())
-        expandedPanel = panel
+        stackPanel = panel
         return panel
     }
 
     // MARK: - Clicks
 
-    /// Outside clicks close a click-opened panel - the toast floats over
-    /// other apps' content, so "click away to dismiss" is how a floating card
-    /// behaves, not a nicety. The manager applies its own guards
-    /// (`autoCollapseOnLeave`, panel hover).
+    /// Outside clicks collapse a hover-expanded card — the toast floats over
+    /// other apps' content, so "click away to put it back" is how a floating
+    /// card behaves, not a nicety.
     private func installClickMonitors() {
         // Global taps fire only for clicks that landed in OTHER apps' windows,
         // so any event here is definitionally outside the toast.
@@ -315,18 +191,18 @@ final class ToastPresenter: NotchPresenting {
     }
 
     private func reportOutsideClick(excluding window: NSWindow?) {
-        guard let panel = expandedPanel, panel.isVisible else { return }
+        guard let panel = stackPanel, panel.isVisible else { return }
         if let window, window === panel { return }
         guard !panel.frame.contains(NSEvent.mouseLocation) else { return }
-        NotificationManager.shared.clickedOutsideSummary()
+        NotificationManager.shared.clickedOutsideStack()
     }
 
     // MARK: - Environment observers
 
-    /// The toast has no pointer path, so workspace events are the only notice
-    /// that a fullscreen app came or went without a presentation in between.
-    /// Without this, a toast parked under suppression would never come back
-    /// when the fullscreen session ended.
+    /// The toast has no pointer path for suppression, so workspace events are
+    /// the only notice that a fullscreen app came or went without a
+    /// presentation in between. Without this, a stack parked under suppression
+    /// would never come back when the fullscreen session ended.
     private func installObservers() {
         let workspace = NSWorkspace.shared.notificationCenter
         let workspaceNames: [Notification.Name] = [
@@ -340,9 +216,8 @@ final class ToastPresenter: NotchPresenting {
                 self?.scheduleSuppressionProbe()
             })
         }
-        observers.append(addObserverOnMain(forName: NotificationManager.unreadCountDidChange) { [weak self] in
-            self?.relayoutVisible()
-        })
+        // A card arriving, leaving, or expanding changes the stack's height;
+        // the state writers post this, the view only renders.
         observers.append(addObserverOnMain(forName: NotificationManager.compactStatusDidChange) { [weak self] in
             self?.relayoutVisible()
         })
@@ -360,11 +235,10 @@ final class ToastPresenter: NotchPresenting {
     }
 
     /// A display was added, removed, or resized. The stale screen anchor is
-    /// dropped (the toast's display may be gone, or its geometry changed),
-    /// and the display state is replayed through the shared `reapply` — the
-    /// same convergence the island runs after a reconfiguration, so what was
-    /// on screen re-lands on the pointer's display instead of waiting for the
-    /// next event.
+    /// dropped (the toast's display may be gone, or its geometry changed), and
+    /// the display state is replayed through the shared `reapply` — the same
+    /// convergence, so what was on screen re-lands on the pointer's display
+    /// instead of waiting for the next event.
     private func screensChanged() {
         currentScreenID = nil
         Task { await reapply(on: NotificationManager.shared) }
@@ -375,7 +249,7 @@ final class ToastPresenter: NotchPresenting {
     /// and each costs a WindowServer round-trip.
     private func scheduleSuppressionProbe() {
         guard AppSettings.shared.hideInFullscreen else { return }
-        guard NotificationManager.shared.hasContent else { return }
+        guard !NotificationManager.shared.presentations.isEmpty else { return }
         suppressionProbe?.cancel()
         suppressionProbe = Task {
             guard let screen = targetScreen else { return }
@@ -394,7 +268,7 @@ final class ToastPresenter: NotchPresenting {
         let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1
         let frame = screen.frame
         return await Task.detached(priority: .utility) {
-            NotchPresenter.probeFullscreen(pid: pid, screenFrame: frame)
+            ScreenProbe.suppressed(pid: pid, screenFrame: frame)
         }.value
     }
 }

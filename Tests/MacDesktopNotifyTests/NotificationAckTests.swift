@@ -18,8 +18,8 @@ final class NotificationAckTests: XCTestCase {
         return NotificationAckStore(directoryURL: dir)
     }
 
-    private func make(_ title: String) -> NotchNotification {
-        NotchNotification(title: title, bodyMarkdown: "", urgency: .normal, timeout: 60)
+    private func make(_ title: String) -> CardPayload {
+        CardPayload(title: title, bodyMarkdown: "", urgency: .normal, timeout: 60)
     }
 
     // MARK: - Parsing
@@ -61,7 +61,7 @@ final class NotificationAckTests: XCTestCase {
             label: "允许",
             url: URL(string: "notch-notify://ack?token=deploy-42&label=%E5%85%81%E8%AE%B8")!
         )
-        let note = NotchNotification(title: "审批", bodyMarkdown: "", urgency: .critical,
+        let note = CardPayload(title: "审批", bodyMarkdown: "", urgency: .critical,
                                      timeout: 60, actions: [action])
         m.push(note)
 
@@ -82,7 +82,7 @@ final class NotificationAckTests: XCTestCase {
         m.actionHandler.ackWriter = { receipts.append($0) }
 
         let action = NotificationAction(label: "允许", url: URL(string: "http://localhost:8080/ok")!)
-        let note = NotchNotification(title: "审批", bodyMarkdown: "", urgency: .normal,
+        let note = CardPayload(title: "审批", bodyMarkdown: "", urgency: .normal,
                                      timeout: 60, actions: [action])
         m.push(note)
         m.performAction(action, for: note)
@@ -95,7 +95,7 @@ final class NotificationAckTests: XCTestCase {
         let m = NotificationManager()
         m.actionHandler.ackWriter = { _ in }
         let action = NotificationAction(label: "允许", url: URL(string: "notch-notify://ack?token=t1")!)
-        m.push(NotchNotification(title: "a", bodyMarkdown: "", urgency: .normal,
+        m.push(CardPayload(title: "a", bodyMarkdown: "", urgency: .normal,
                                  timeout: 60, actions: [action]))
 
         m.performAction(action, for: m.current!)
@@ -256,7 +256,7 @@ final class NotificationAckTests: XCTestCase {
             label: "允许",
             url: URL(string: "notch-notify://ack?token=t1")!
         )
-        let note = NotchNotification(title: "审批", bodyMarkdown: "", urgency: .critical,
+        let note = CardPayload(title: "审批", bodyMarkdown: "", urgency: .critical,
                                      timeout: 60, actions: [action])
 
         let observer = NotificationCenter.default.addObserver(

@@ -225,7 +225,7 @@ final class ScriptRunnerTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         let runner = makeRunner(dir: dir, target: m)
 
-        var n = NotchNotification(title: "⏳ 脚本生成中：ci", bodyMarkdown: "orig",
+        var n = CardPayload(title: "⏳ 脚本生成中：ci", bodyMarkdown: "orig",
                                   urgency: .normal, timeout: 60)
         n.script = "ci"
         m.push(n)
@@ -243,7 +243,7 @@ final class ScriptRunnerTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         let runner = makeRunner(dir: dir, target: m)
 
-        var n = NotchNotification(title: "⏳ 脚本生成中：bad", bodyMarkdown: "orig",
+        var n = CardPayload(title: "⏳ 脚本生成中：bad", bodyMarkdown: "orig",
                                   urgency: .normal, timeout: 60)
         n.script = "bad"
         m.push(n)
@@ -259,7 +259,7 @@ final class ScriptRunnerTests: SettingsIsolatedTestCase {
     /// 回填曾经是唯一绕过 `PushValidator` 的写入路径：`{timeout: NaN}` 直写模型，
     /// `JSONEncoder` 随即抛错、被 `try?` 吞掉，本会话后续落盘全部失效。
     func testBackfillCannotWriteANonFiniteTimeout() throws {
-        var message = NotchNotification(title: "t", bodyMarkdown: "", urgency: .normal, timeout: 30)
+        var message = CardPayload(title: "t", bodyMarkdown: "", urgency: .normal, timeout: 30)
 
         ScriptRunner.applySuccess(fields: ["timeout": .number(.nan)], to: &message)
 
@@ -268,7 +268,7 @@ final class ScriptRunnerTests: SettingsIsolatedTestCase {
     }
 
     func testBackfillClampsTimeoutAndCapsGroupAndTitle() throws {
-        var message = NotchNotification(title: "t", bodyMarkdown: "", urgency: .normal, timeout: nil)
+        var message = CardPayload(title: "t", bodyMarkdown: "", urgency: .normal, timeout: nil)
         let longTitle = String(repeating: "宽", count: 400)
 
         ScriptRunner.applySuccess(fields: [
@@ -284,7 +284,7 @@ final class ScriptRunnerTests: SettingsIsolatedTestCase {
 
     /// 脚本回填没有返回 urgency 时，非法值既不能进模型，也不能把现有值抹掉。
     func testBackfillKeepsUrgencyWhenTheScriptSendsGarbage() throws {
-        var message = NotchNotification(title: "t", bodyMarkdown: "", urgency: .critical, timeout: nil)
+        var message = CardPayload(title: "t", bodyMarkdown: "", urgency: .critical, timeout: nil)
 
         ScriptRunner.applySuccess(fields: ["urgency": .string("banana")], to: &message)
 

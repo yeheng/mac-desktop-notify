@@ -18,7 +18,7 @@ import Observation
 /// them; the class remains the only writer.
 
 @MainActor
-protocol NotchPresenting: AnyObject {
+protocol SurfacePresenting: AnyObject {
     // Surface primitives. The state machine never calls these directly —
     // its only presenter vocabulary is `reapply(on:)` below.
 
@@ -36,12 +36,15 @@ protocol NotchPresenting: AnyObject {
     /// unregisters every monitor/observer it installed.
     ///
     /// Must be safe to call on a presenter that never stood up, and twice in a
-    /// row. The router does both.
+    /// row.
     func standDown() async
 
-    func expand() async
-    func compact() async
+    /// Shows the whole stack of visible cards, newest last.
+    func showStack() async
+
+    /// Withdraws every card and the window they live in.
     func hide() async
+
     /// Make the screen match the manager's current state, whatever that is
     /// when this runs. The derivation is supplied by the extension below —
     /// one copy for every presenter, spy included.
@@ -53,35 +56,27 @@ protocol NotchPresenting: AnyObject {
     func probeDisplaySuppressed() async -> Bool
 }
 
-extension NotchPresenting {
-    /// The one settle derivation: suppressed stands down, an open state
-    /// expands, empty-or-idle history hides, everything else shows the
-    /// compact summary.
+extension SurfacePresenting {
+    /// The one settle derivation: suppressed stands down, a non-empty stack
+    /// shows the toast window, an empty stack hides it.
     ///
     /// The state reads happen HERE — at execution time, not at call time —
     /// which is what makes the manager's fire-and-forget `Task { reapply }`
     /// calls harmless: two reapplies landing in either order converge on the
     /// same answer, because the last one re-derives from the state as it
-    /// actually is. The old per-site `expand`/`compact`/`hide` picks could
-    /// race a hover-expand against a peek push and wedge the screen against
-    /// the machine with no later event to correct it; this replay has no
-    /// such wedge.
+    /// actually is.
     func reapply(on manager: NotificationManager) async {
-        if manager.displaySuppressed { await hide(); return }
-        if manager.displayState.isOpened { await expand(); return }
-        if manager.closedMeansHidden { await hide(); return }
-        await compact()
+        if manager.displaySuppressed || manager.presentations.isEmpty { await hide(); return }
+        await showStack()
     }
 
     /// Presenters with no fullscreen knowledge report "nothing to suppress".
     func probeDisplaySuppressed() async -> Bool { false }
 
-    /// A display-behavior setting flipped (hideWhenIdle, the fullscreen
-    /// rule, panel size). The stored `displaySuppressed` flag can be stale
-    /// in either direction after a flip, so the answer is re-probed fresh;
-    /// then the layout replays, so the change lands without waiting for the
-    /// next event. `on` is explicit rather than a `.shared` default so the
-    /// test spy can replay against its own manager instance.
+    /// A display-behavior setting flipped (card limit, position, style).
+    /// The stored `displaySuppressed` flag can be stale in either direction
+    /// after a flip, so the answer is re-probed fresh; then the layout
+    /// replays, so the change lands without waiting for the next event.
     func displayBehaviorChanged(on manager: NotificationManager) async {
         let suppressed = await probeDisplaySuppressed()
         if suppressed != manager.displaySuppressed {
@@ -107,26 +102,30 @@ extension NotchPresenting {
 struct Presentation: Sendable {
     /// `var` solely so the script-backfill path (`update(id:)`) can rewrite the
     /// live card's fields in place; nothing else mutates it after presentation.
-    var item: NotchNotification
+    var item: CardPayload
     var remaining: Duration?
     var actionsHoldReleased = false
     /// The lifetime rules this card runs under, resolved from its fields and the
     /// settings when it became live (`armLiveRules`) - so a card that grows
     /// actions or turns critical is ruled by its new shape, not its old one.
     var policy: DwellPolicy
+    /// Whether this card shows its full body and actions instead of the
+    /// collapsed summary. Per-card, not per-window: one expanded card must
+    /// not expand its neighbours.
+    var expanded: Bool
+    /// Whether `expanded` was reached by hovering (as opposed to a click).
+    /// Hover expansion collapses again when the pointer leaves; a clicked
+    /// expansion is deliberate and stays.
+    var expandedByHover: Bool
 }
 
 /// What happened to a pushed message. Every outcome implies the message is in
 /// history - the difference is only what the user saw.
 enum PushOutcome: Sendable, Equatable {
-    /// The push became the live message. "Displayed" here means it owns the
-    /// display state, not that pixels are guaranteed this instant: under
-    /// fullscreen suppression a critical still becomes live (and still sounds)
-    /// but holds its panel until suppression lifts.
+    /// The push became a visible card. "Displayed" here means it owns a card,
+    /// not that pixels are guaranteed this instant: under fullscreen
+    /// suppression it is still recorded, but its card waits for the screen.
     case displayed
-    /// A critical holds the screen, so the message waits as an unread history
-    /// entry; it surfaces in the list the moment the user opens the panel.
-    case queued
     /// Stored but not surfaced, because the user is away and quiet mode holds.
     case withheld
 }
@@ -158,9 +157,12 @@ final class NotificationManager {
 
     // MARK: - State
 
-    /// The live message together with the dwell budget that retires it.
+    /// The visible cards, oldest first. Every entry carries its own dwell
+    /// budget, lifetime policy and expansion state: a card is a first-class
+    /// value, not a singleton with a queue bolted on.
+    ///
     /// Observed storage: `current` reads it, so the UI invalidates when it changes.
-    var presentation: Presentation?
+    var presentations: [Presentation] = []
 
     /// Pure history/read-state data, extracted so the invariants live in
     /// one place; the facades below keep the observed surface stable.
@@ -168,7 +170,6 @@ final class NotificationManager {
     /// messages 本身被注册才触发重绘。push 至今能刷新是因为 presentation/
     /// unreadCount 总是同变；脚本回填只改字段时会踩空——update(id:) 依赖它。
     var messages = NotificationLog()
-    var displayState: NotchDisplayState = .closed
     var unreadCount = 0
 
     /// Where the pointer is relative to the island, as one value (see
@@ -183,21 +184,23 @@ final class NotificationManager {
     /// Every delayed effect the manager needs (dwell, hover, collapse, aging,
     /// persist), keyed so re-arming replaces and nothing leaks.
     @ObservationIgnored let delayed = DelayedEvents()
-    /// Set only while the countdown is actually running; nil while it is held.
-    @ObservationIgnored var dwellDeadline: ContinuousClock.Instant?
+    /// When each card's countdown fires. Set only while the countdown is
+    /// actually running; nil while it is held (an expanded card, an actions
+    /// hold) or idle.
+    @ObservationIgnored var dwellDeadlines: [UUID: ContinuousClock.Instant] = [:]
     /// Nil until the app hands over a store, which keeps tests off the real disk.
     @ObservationIgnored var historyStore: NotificationHistoryStore?
     /// Tests swap in a fresh store-less handler; production attaches one owning
     /// an ack store. Same pattern below for `soundPlayer`.
     @ObservationIgnored private(set) var actionHandler = NotificationActionHandler()
     @ObservationIgnored let clock = ContinuousClock()
-    @ObservationIgnored weak var presenter: NotchPresenting?
+    @ObservationIgnored weak var presenter: SurfacePresenting?
     /// Whether a push that took the display should make noise. Attached by the
     /// app delegate (the throttling, low-urgency mute, and `AppSettings`
     /// reading all live there); the manager only guarantees the timing: one
     /// call per push, exactly when it turns `.displayed`. Attached once at
     /// launch, so unlike `actionHandler` there is no re-attach churn to model.
-    @ObservationIgnored var soundPlayer: ((NotchNotification) -> Void)?
+    @ObservationIgnored var soundPlayer: ((CardPayload) -> Void)?
     /// Retained so the observers outlive the launch scope that installed them.
     @ObservationIgnored private var presenceMonitor: PresenceMonitor?
     /// Backing store for `isAway`. The public setter runs the return transition,
@@ -220,7 +223,7 @@ final class NotificationManager {
     /// +History: the undo payload - what was deleted and whether it was read.
     /// Lives outside observation — the journal itself is not UI state, only
     /// `deletionNotice` is.
-    @ObservationIgnored var deletionJournal: [(item: NotchNotification, wasRead: Bool)] = []
+    @ObservationIgnored var deletionJournal: [(item: CardPayload, wasRead: Bool)] = []
     /// Observed so the panel's context menu can label 静默/取消静默 correctly
     /// without a manual refresh pass.
     private(set) var quietOverrideUntil: Date?
@@ -228,86 +231,65 @@ final class NotificationManager {
     /// +Dwell: the message a 「稍后提醒」 will bring back. It left the screen
     /// at reminder time (still in history, unread); nil when nothing is
     /// pending. One reminder at a time — the `DelayedEvents` key replaces.
-    @ObservationIgnored var snoozedReminderItem: NotchNotification?
+    @ObservationIgnored var snoozedReminderItem: CardPayload?
 
     init() {}
 
-    init(presenter: NotchPresenting) {
+    init(presenter: SurfacePresenting) {
         self.presenter = presenter
     }
 
-    func attach(_ presenter: NotchPresenting) {
+    func attach(_ presenter: SurfacePresenting) {
         self.presenter = presenter
     }
 
     // MARK: - Derived
 
-    /// The message on screen, derived from `presentation` so the two cannot disagree.
-    var current: NotchNotification? { presentation?.item }
-    var history: [NotchNotification] { messages.history }
+    /// The newest visible card's message, derived from `presentations` so the
+    /// two cannot disagree.
+    var current: CardPayload? { presentations.last?.item }
+    var history: [CardPayload] { messages.history }
     var historyCount: Int { messages.history.count }
-    var hasContent: Bool { !messages.history.isEmpty }
-    var latestNotification: NotchNotification? { messages.history.last }
+    var hasContent: Bool { !presentations.isEmpty }
 
-    /// The newest message that has not been read. The compact pill uses this for
-    /// its title marquee, so a collapsed island still says what is waiting.
-    var latestUnread: NotchNotification? {
+    /// The newest message that has not been read. The collapsed card uses this
+    /// for its title marquee, so a collapsed stack still says what is waiting.
+    var latestUnread: CardPayload? {
         messages.history.last { !isRead($0) }
     }
 
-    /// The urgency the pill and panel header should be tinted with: the live
+    /// The urgency the toast should be tinted with: the newest visible card's
     /// message if there is one, otherwise the most recent history entry.
     var displayUrgency: UrgencyLevel? { current?.urgency ?? latestNotification?.urgency }
 
-    /// History items that are not currently shown.
-    var pastHistory: [NotchNotification] {
-        messages.pastHistory(current: current)
+    /// The newest entry in history — the live card included, since the log
+    /// holds it too.
+    var latestNotification: CardPayload? { messages.history.last }
+
+    /// History items that are not currently shown as cards.
+    var pastHistory: [CardPayload] {
+        let visible = Set(presentations.map(\.item.id))
+        return messages.history.filter { !visible.contains($0.id) }
     }
 
-    /// The one island-aware status accessor: a live message carrying island
-    /// text shows it verbatim; everything else keeps the pre-island wording.
-    /// The mini bar and the panel header both read this, so they follow
-    /// automatically (`display=peek` included - that is island's main stage).
-    var compactStatus: String {
-        if let current {
-            if let text = current.island?.text { return text }
-            return current.urgency == .critical ? "需要注意" : "新消息"
-        }
-        return unreadCount > 0 ? "\(unreadCount) 条未读" : ""
-    }
-
-    /// The one headline a compact surface says: island text verbatim, then the
-    /// live message's (or newest unread's) title, then the bare status. The
-    /// toast used to re-derive this precedence locally under a comment claiming
-    /// it matched the pill — one accessor beats copies that drift.
+    /// The one headline a collapsed card says: the newest visible card's
+    /// title, then the newest unread's, then the bare status.
     var compactHeadline: String {
         if let text = current?.island?.text { return text }
         if let title = (current ?? latestUnread)?.title { return title }
-        return compactStatus
+        return unreadCount > 0 ? "\(unreadCount) 条未读" : ""
     }
 
-    /// Whether the panel shows the message center (the full list) instead of
-    /// the live message's card: anything that opened the panel for another
-    /// reason than a notification push, or an open with nothing live behind
-    /// it. One definition — the panel body, the panel header, and the island
-    /// binding all used to spell this out themselves.
-    var showsFullList: Bool {
-        displayState.openReason != .notification || current == nil
-    }
-
-    func isRead(_ notification: NotchNotification) -> Bool {
+    func isRead(_ notification: CardPayload) -> Bool {
         messages.readIDs.contains(notification.id)
     }
-    /// Observed: the compact pill brightens while the pointer is inside its
-    /// activation zone, as a pre-expansion cue (see `CompactIslandView`).
-    var pointerNearIsland: Bool { pointer.nearIsland }
 
-    /// True while the pointer is over the expanded panel or inside the compact
-    /// activation zone. Used to scope Esc so it cannot fire from other apps.
-    var pointerNearPanel: Bool { pointer.onPanel || pointer.nearIsland }
+    /// True while the pointer is over any card. Used to scope Esc so it cannot
+    /// fire from other apps.
+    var pointerNearStack: Bool { pointer.onCardID != nil }
 
     /// How many critical messages still wait for attention (unread, the live
-    /// one included) - drives the "处理全部" affordance when criticals pile up.
+    /// card included) - drives the "处理全部" affordance when criticals pile up.
     var criticalBacklogCount: Int {
         messages.history.reduce(0) {
             $0 + ($1.urgency == .critical && !messages.readIDs.contains($1.id) ? 1 : 0)
@@ -327,53 +309,38 @@ final class NotificationManager {
 
     // MARK: - Ingress
 
-    /// Records a message and, unless the user is away or a critical holds the
-    /// screen, makes it the live message immediately.
+    /// Records a message and, unless the user is away and quiet or the stack is
+    /// full, makes it a visible card.
     ///
-    /// v4: there is no pending queue. The push always takes the screen at once,
-    /// displacing whatever was live; the displaced message stays in history,
-    /// unread, one row below - coverage never means "never shown".
+    /// v4: every push joins the stack at once; the stack never displaces what
+    /// is already there, except when the cap or a critical forces it. Nothing
+    /// waits in a queue.
     ///
     /// The outcome is what the user saw, not whether the message survived:
     /// every outcome leaves the message in history, so `.withheld` means
     /// "stored, not shown" — never "dropped".
     @discardableResult
-    func push(_ notification: NotchNotification) -> PushOutcome {
-        // Resolve the display style once, at the door: the sender's override
-        // wins, the setting fills the gap, and critical never peeks - an urgent
-        // message that only flickered past in the pill would be a lie.
-        var resolved = notification
-        if resolved.urgency == .critical {
-            resolved.displayPeek = false
-        } else {
-            resolved.displayPeek = resolved.displayPeek ?? AppSettings.shared.normalMessagesPeek
-        }
-        let incoming = collapseGroup(resolved)
+    func push(_ notification: CardPayload) -> PushOutcome {
+        let incoming = collapseGroup(notification)
 
         messages.record(incoming)
         recomputeUnread()
         schedulePersist()
 
         if isQuiet(for: incoming) {
-            // Collapsing a group may have retired the message that was on screen.
-            // Nothing replaces it, so the display has to settle on its own.
-            settleAfterWithdrawal()
+            // A withheld message never reaches the stack: it is in history, and
+            // an empty stack means the window is already gone.
             return .withheld
         }
 
         if incoming.urgency == .critical {
             present(incoming)
-            soundPlayer?(resolved)
+            soundPlayer?(incoming)
             return .displayed
         }
 
-        // A critical on screen keeps it - its exits are the action, idle aging,
-        // or a manual close. The normal message waits as an unread history
-        // entry and is the first thing the user sees on the next open.
-        guard presentation?.item.urgency != .critical else { return .queued }
-
         present(incoming)
-        soundPlayer?(resolved)
+        soundPlayer?(incoming)
         return .displayed
     }
 
@@ -405,14 +372,13 @@ final class NotificationManager {
 
         // Coming back. The backlog stays in history — unfolding a dozen messages
         // on top of someone who just unlocked their screen would be hostile — so
-        // the return is announced with a pill they can open if they want to.
-        guard presentation == nil, !displaySuppressed, unreadCount > 0 else { return }
-        displayState = .closed
+        // the return shows the stack of what arrived while away.
+        guard !displaySuppressed, unreadCount > 0 else { return }
         presentCurrent()
     }
 
     /// Whether this message should be withheld because the user is away.
-    func isQuiet(for notification: NotchNotification) -> Bool {
+    func isQuiet(for notification: CardPayload) -> Bool {
         if isSilenced { return true }
         guard isAway else { return false }
         switch AppSettings.shared.quietMode {
@@ -422,32 +388,17 @@ final class NotificationManager {
         }
     }
 
-    /// Re-settles the display after a message was withheld.
-    ///
-    /// Only group collapsing can punch a hole: it retires the message that was on
-    /// screen, and a withheld replacement will not fill it. An expanded panel with
-    /// no message behind it is the one state that must be repaired.
-    ///
-    /// Everything else is left strictly alone. Retiring to a compact pill here
-    /// would light up the pill on a locked screen, which is the opposite of quiet.
-    private func settleAfterWithdrawal() {
-        guard presentation == nil, displayState.isOpened else { return }
-        advance()
-    }
-
     /// Collapses `notification` onto any earlier message in the same group, so a
     /// repeating job updates one entry instead of stacking a fresh one every run.
-    /// The on-screen entry is not spared: the sender explicitly replaced it, so
-    /// the update takes the screen right away.
     ///
     /// The replacement carries the group's occurrence count: Nth report of the
     /// same job, not the first one again. The count lives on the message so the
     /// card and history row can both show it; clearing the group resets it.
-    private func collapseGroup(_ notification: NotchNotification) -> NotchNotification {
+    private func collapseGroup(_ notification: CardPayload) -> CardPayload {
         guard let key = notification.groupingKey else { return notification }
 
         var incoming = notification
-        // `history` holds the live message too, so the entry being displaced is
+        // `history` holds the visible cards too, so the entry being replaced is
         // counted without a second lookup path.
         let previous = messages.history.filter { $0.groupingKey == key }
         if let highest = previous.map(\.occurrences).max() {
@@ -456,15 +407,12 @@ final class NotificationManager {
 
         // The group's earlier entries are gone from history/read state in
         // one sweep, so the replacement re-enters as the group's only entry.
-        _ = messages.removeGroup(key)
+        let removed = messages.removeGroup(key)
 
-        // The on-screen message carried the same group: drop it so `push` presents
-        // the replacement, which updates the panel instead of yanking the card later.
-        if presentation?.item.groupingKey == key {
-            presentation = nil
-            // Cancel the retired countdown outright rather than relying on the
-            // id guard in `startDwell` to ignore it later.
-            stopDwell()
+        // A visible card carried the same group: retire it so `push` presents
+        // the replacement, which updates the stack instead of yanking the card later.
+        for id in removed where presentations.contains(where: { $0.item.id == id }) {
+            retireCard(id, readOnRetire: false)
         }
         return incoming
     }
@@ -478,8 +426,8 @@ final class NotificationManager {
         guard !removed.isEmpty else { return }
 
         recomputeUnread()
-        let liveWasRemoved = presentation.map { removed.contains($0.item.id) } ?? false
-        settleAfterRemoval(liveMessageRemoved: liveWasRemoved)
+        let cardWasRemoved = presentations.contains { removed.contains($0.item.id) }
+        settleAfterRemoval(cardRemoved: cardWasRemoved)
     }
 
     func clear() {
@@ -491,8 +439,11 @@ final class NotificationManager {
         deletionJournal = []
         deletionNotice = nil
         recomputeUnread()
-        presentation = nil
-        displayState = .closed
+        for card in presentations {
+            stopDwell(for: card.item.id)
+            stopAgingTimers(for: card.item.id)
+        }
+        presentations = []
         reduce(.cleared)
         notifyCompactStatusChanged()
         historyStore?.delete()
@@ -503,19 +454,20 @@ final class NotificationManager {
 
     /// Where an action's click goes: the handler records ack receipts or opens
     /// the URL; the manager's only stake is that acting on a message marks it
-    /// read (the user engaged with it) and, when it is the live message,
-    /// retires it, exactly like any other action.
+    /// read (the user engaged with it) and retires its card, exactly like any
+    /// other action.
     func performAction(
         _ action: NotificationAction,
-        for notification: NotchNotification,
+        for notification: CardPayload,
         comment: String? = nil
     ) {
         actionHandler.execute(action, for: notification, comment: comment)
         if !messages.readIDs.contains(notification.id) {
             markRead(notification.id)
         }
-        if notification.id == current?.id {
-            dismissCurrent()
+        if presentations.contains(where: { $0.item.id == notification.id }) {
+            reduce(.cardDismissed)
+            retireCard(notification.id, readOnRetire: false)
         }
     }
 
@@ -524,11 +476,15 @@ final class NotificationManager {
     }
 
     /// 点击通知卡直达发送方的 `clickUrl`：与操作按钮同一条处理路径——
-    /// 打开 URL、标记已读、退役当前卡。没有链接的卡片维持原行为，
+    /// 打开 URL、标记已读、退役卡片。没有链接的卡片维持原行为，
     /// 调用方不必判断。
-    func openClickURL(of notification: NotchNotification) {
+    func openClickURL(of notification: CardPayload) {
         guard let url = notification.clickURL else { return }
         performAction(NotificationAction(label: "打开链接", url: url), for: notification)
+    }
+
+    private func cancelTimers() {
+        delayed.cancelAll()
     }
 
     // MARK: - Silence
@@ -551,10 +507,6 @@ final class NotificationManager {
     var isSilenced: Bool {
         if let quietOverrideUntil { return quietOverrideUntil > Date() }
         return false
-    }
-
-    private func cancelTimers() {
-        delayed.cancelAll()
     }
 
     // MARK: - Status change fan-out

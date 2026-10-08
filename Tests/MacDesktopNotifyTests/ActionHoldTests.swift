@@ -12,8 +12,8 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
         _ title: String,
         timeout: TimeInterval = 60,
         actions: [NotificationAction] = []
-    ) -> NotchNotification {
-        NotchNotification(title: title, bodyMarkdown: "body", urgency: .normal, timeout: timeout, actions: actions)
+    ) -> CardPayload {
+        CardPayload(title: title, bodyMarkdown: "body", urgency: .normal, timeout: timeout, actions: actions)
     }
 
     private let approveAction = NotificationAction(
@@ -26,13 +26,14 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
     func testMessageWithActionsDoesNotAutoDismiss() async throws {
         let m = NotificationManager()
         m.push(make("approve", timeout: 0.3, actions: [approveAction]))
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
+        let id = m.presentations.last!.item.id
+        m.expandCard(id, byHover: false)          // the sender is awaiting a decision
 
         try await Task.sleep(for: .seconds(1))          // far past the 0.3 s budget
         XCTAssertEqual(m.current?.title, "approve",
                        "a message with unanswered actions must not retire itself")
-        XCTAssertNil(m.dwellDeadline, "the dwell is held, not running")
-        XCTAssertNotNil(m.presentation?.remaining, "the budget survives the hold")
+        XCTAssertNil(m.dwellDeadlines[id], "the dwell is held, not running")
+        XCTAssertNotNil(m.presentations.last?.remaining, "the budget survives the hold")
     }
 
     /// Idle release: untouched for the aging window, the hold converts to the
@@ -44,8 +45,8 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
 
         try await Task.sleep(for: .seconds(1))          // aging fired at 0.3 s
         XCTAssertEqual(m.current?.title, "approve", "aging releases the hold, it does not dismiss")
-        XCTAssertNotNil(m.dwellDeadline, "the released message runs on its own dwell budget now")
-        XCTAssertEqual(m.presentation?.remaining, .seconds(5),
+        XCTAssertNotNil(m.dwellDeadlines[m.current!.id], "the released message runs on its own dwell budget now")
+        XCTAssertEqual(m.presentations.last?.remaining, .seconds(5),
                        "the budget is the message's own timeout, not a snooze constant")
     }
 
@@ -67,9 +68,6 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
     /// layer, so the push stays off the panel for the budget to govern.
     func testMessageWithoutActionsStillAutoDismisses() async throws {
         let settings = AppSettings.shared
-        let old = settings.autoExpandOnMessage
-        settings.autoExpandOnMessage = false
-        defer { settings.autoExpandOnMessage = old }
 
         let m = NotificationManager()
         m.dwellTiming.actionHoldIdle = .milliseconds(300)      // must be irrelevant here
@@ -101,17 +99,17 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
     func testSnoozingCriticalWithActionsRearmsTheHoldTimer() async throws {
         let m = NotificationManager()
         m.dwellTiming.actionHoldIdle = .milliseconds(60)
-        let critical = NotchNotification(
+        let critical = CardPayload(
             title: "审批", bodyMarkdown: "x", urgency: .critical, timeout: nil,
             actions: [approveAction])
         m.push(critical)
-        XCTAssertFalse(m.delayed.isActive(.actionHoldAging), "前置：critical 的 hold 尚未激活")
+        XCTAssertFalse(m.delayed.isActive(.actionHoldAging(critical.id)), "前置：critical 的 hold 尚未激活")
 
         m.snoozeCurrentCritical()
-        XCTAssertTrue(m.delayed.isActive(.actionHoldAging), "snooze 后必须重新武装释放定时器")
+        XCTAssertTrue(m.delayed.isActive(.actionHoldAging(critical.id)), "snooze 后必须重新武装释放定时器")
 
         try await Task.sleep(for: .milliseconds(400))
-        XCTAssertEqual(m.presentation?.actionsHoldReleased, true, "无人理会的 hold 必须被释放")
+        XCTAssertEqual(m.presentations.last?.actionsHoldReleased, true, "无人理会的 hold 必须被释放")
     }
 
     /// 定时器 fire 时用户恰好看着面板，不能永久放弃——必须重新排队，
@@ -120,10 +118,11 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.dwellTiming.actionHoldIdle = .milliseconds(60)
         m.push(make("approve", timeout: 60, actions: [approveAction]))
-        m.openMessageCenter()                 // openReason == .click，首次 fire 必然 guard 失败
+        let id = m.current!.id
+        m.setHovering(true, for: id)          // being looked at, the fire requeues
 
         try await Task.sleep(for: .milliseconds(250))
-        XCTAssertTrue(m.delayed.isActive(.actionHoldAging), "被看到的卡片应重新排队而不是放弃")
-        XCTAssertEqual(m.presentation?.actionsHoldReleased, false)
+        XCTAssertTrue(m.delayed.isActive(.actionHoldAging(id)), "被看到的卡片应重新排队而不是放弃")
+        XCTAssertEqual(m.presentations.last?.actionsHoldReleased, false)
     }
 }

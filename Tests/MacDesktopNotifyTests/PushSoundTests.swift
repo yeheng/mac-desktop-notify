@@ -7,14 +7,14 @@ import XCTest
 @MainActor
 final class PushSoundTests: SettingsIsolatedTestCase {
 
-    private func make(_ title: String, urgency: UrgencyLevel = .normal) -> NotchNotification {
-        NotchNotification(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60)
+    private func make(_ title: String, urgency: UrgencyLevel = .normal) -> CardPayload {
+        CardPayload(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60)
     }
 
     /// A recorder the manager calls; asserts the notification it heard.
     private final class SoundSpy {
         var heard: [String] = []
-        var player: (NotchNotification) -> Void { { [weak self] in self?.heard.append($0.title) } }
+        var player: (CardPayload) -> Void { { [weak self] in self?.heard.append($0.title) } }
     }
 
     func testDisplayedPushPlaysExactlyOnce() {
@@ -46,14 +46,14 @@ final class PushSoundTests: SettingsIsolatedTestCase {
         XCTAssertEqual(spy.heard, [], "quiet mode stores without a sound")
     }
 
-    func testPushBehindCriticalStaysSilent() {
+    func testSecondPushBehindCriticalStillSounds() {
         let m = NotificationManager()
         let spy = SoundSpy()
         m.soundPlayer = spy.player
 
         XCTAssertEqual(m.push(make("c", urgency: .critical)), .displayed)
-        XCTAssertEqual(m.push(make("b")), .queued, "precondition: a critical holds the screen")
-        XCTAssertEqual(spy.heard, ["c"], "only the critical that took the screen sounds")
+        XCTAssertEqual(m.push(make("b")), .displayed, "a second card joins the critical on the stack")
+        XCTAssertEqual(spy.heard, ["c", "b"], "every push that reaches a card sounds once")
     }
 
     func testGroupCollapseStillSoundsOnce() {
@@ -62,7 +62,7 @@ final class PushSoundTests: SettingsIsolatedTestCase {
         m.soundPlayer = spy.player
 
         _ = m.push(make("n1", urgency: .normal))
-        let outcome = m.push(NotchNotification(
+        let outcome = m.push(CardPayload(
             title: "n2", bodyMarkdown: "", urgency: .normal, timeout: 60, group: "ci"
         ))
         XCTAssertEqual(outcome, .displayed)

@@ -3,7 +3,7 @@ import XCTest
 
 final class URLNotificationParserTests: XCTestCase {
 
-    private func parse(_ string: String) -> NotchNotification? {
+    private func parse(_ string: String) -> CardPayload? {
         URLNotificationParser.parsePush(URL(string: string)!)
     }
 

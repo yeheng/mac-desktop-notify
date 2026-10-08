@@ -17,7 +17,7 @@ final class WSEventHub {
         let center = NotificationCenter.default
         // Both observers register with `queue: .main` and bridge into the actor
         // with `MainActor.assumeIsolated`: the handler runs inline on delivery
-        // instead of one Task hop later. `Notification` is not Sendable, so its
+        // instead of one Task hop later. `CardPayload` is not Sendable, so its
         // payload is still unpacked before the value enters the @MainActor
         // closure — the isolation boundary moved from the old Task hop to
         // closure formation, but the discipline is the same.

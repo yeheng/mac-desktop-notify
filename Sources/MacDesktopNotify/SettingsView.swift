@@ -352,26 +352,21 @@ private struct GeneralSettingsContent: View {
 
     var body: some View {
         Section {
-            Picker("呈现方式", selection: $settings.presentationStyle) {
-                ForEach(PresentationStyle.allCases) { style in
-                    Text(style.title).tag(style)
-                }
-            }
-            SectionFooter(settings.presentationStyle.detail)
-            Toggle("悬停时展开面板", isOn: $settings.hoverToExpand)
+            Toggle("悬停时展开卡片", isOn: $settings.hoverToExpand)
             Toggle("鼠标离开时自动收起", isOn: $settings.autoCollapseOnLeave)
-            Toggle("无活跃消息时自动隐藏", isOn: $settings.hideWhenIdle)
             Toggle("全屏应用中隐藏", isOn: $settings.hideInFullscreen)
             CaptionedToggle(
                 "屏幕录制时隐藏",
-                caption: "共享屏幕、录屏与截图时刘海不入画面，会议演示不会泄露消息内容。",
+                caption: "共享屏幕、录屏与截图时通知不入画面，会议演示不会泄露消息内容。",
                 isOn: $settings.excludeFromScreenRecording
             )
             CaptionedToggle(
                 "触觉反馈",
-                caption: "指针进入触发区、点击刘海与手势关闭时，触控板给出轻戳确认。",
+                caption: "鼠标移入卡片并展开时，触控板给出轻戳确认。",
                 isOn: $settings.enableHaptics
             )
+        } footer: {
+            SectionFooter("悬停只展开指针所在的那张卡片，其余卡片继续倒计时。点击卡片才是显式动作——标记已读并收起。")
         }
 
         Section {
@@ -387,18 +382,14 @@ private struct GeneralSettingsContent: View {
         }
 
         Section {
-            CaptionedToggle(
-                "无刘海屏幕显示迷你摘要条",
-                caption: "没有物理刘海的显示器（iMac、Mac mini、外接屏）无法显示刘海摘要栏，改为在屏幕顶部居中显示一枚小胶囊：紧急度、标题与未读数量。",
-                isOn: $settings.miniSummaryOnNotchlessScreens
-            )
-            CaptionedToggle(
-                "所有屏幕都显示摘要",
-                caption: "默认摘要只跟随指针所在的屏幕。开启后每块屏幕都显示摘要，展开的面板仍只出现在指针所在屏幕——始终只有一个面板可以操作。",
-                isOn: $settings.mirrorSummaryOnAllDisplays
-            )
+            Picker("出现位置", selection: $settings.toastPosition) {
+                ForEach(ToastPosition.allCases) { position in
+                    Text(position.title).tag(position)
+                }
+            }
+            SectionFooter(settings.toastPosition.detail)
         } header: {
-            Text("显示器")
+            Text("位置")
         }
 
         Section {
@@ -444,133 +435,24 @@ private struct AppearanceSettingsContent: View {
 
     var body: some View {
         Section {
-            SliderRow(
-                title: "宽度",
-                value: $settings.panelWidth,
-                range: 320...720,
-                step: 10,
-                minimum: "320",
-                maximum: "720",
-                valueText: "\(Int(settings.panelWidth)) pt"
-            )
-            SliderRow(
-                title: "高度上限",
-                value: $settings.panelHeight,
-                range: 220...620,
-                step: 10,
-                minimum: "220",
-                maximum: "620",
-                valueText: "\(Int(settings.panelHeight)) pt"
-            )
-            SliderRow(
-                title: "内容字号",
-                value: $settings.contentFontSize,
-                range: 10...18,
-                step: 1,
-                minimum: "10",
-                maximum: "18",
-                valueText: "\(Int(settings.contentFontSize)) pt"
-            )
-        } header: {
-            Text("面板尺寸")
-        } footer: {
-            SectionFooter("面板会随内容收缩，「高度上限」是它能长到的最大值。")
-        }
-
-        Section {
-            Toggle("显示紧急度图标", isOn: $settings.showUrgency)
-            Toggle("显示未读数量", isOn: $settings.showHistoryCount)
-        } header: {
-            Text("摘要栏")
-        }
-
-        Section {
-            Picker("主题", selection: $settings.islandThemeID) {
-                ForEach(IslandThemeStore.shared.themeIDs, id: \.self) { id in
-                    Text(themeLabel(id)).tag(id)
+            Picker("卡片样式", selection: $settings.toastStyleID) {
+                ForEach(ToastStyleStore.shared.styleIDs, id: \.self) { id in
+                    Text(styleLabel(id)).tag(id)
                 }
             }
-            Picker("布局", selection: $settings.islandLayoutID) {
-                Text("自动（island.json）").tag(IslandLayoutStore.autoID)
-                Text("不用自定义布局").tag(IslandLayoutStore.builtinID)
-                ForEach(IslandLayoutStore.shared.layoutIDs, id: \.self) { id in
-                    Text(layoutLabel(id)).tag(id)
-                }
-            }
-            Button("打开配置文件夹") {
-                NSWorkspace.shared.open(IslandPaths.supportDirectory)
-            }
+            SectionFooter("样式放 styles/<名>.json，同名文件覆盖内置预设；没有文件或解析失败时使用默认。改文件即时生效。")
         } header: {
-            Text("主题与布局")
-        } footer: {
-            SectionFooter("主题放 themes/<名>.json，布局放 layouts/<名>.json；「自动」沿用根目录的 island.json。没有文件或解析失败时使用内置默认。")
+            Text("样式")
         }
 
-        themeDiagnostics
-
-        Section {
-            if let node = IslandLayoutStore.shared.node(for: .expanded) {
-                IslandEnvironmentScope { IslandNodeView(node: node) }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 150)
-                    .background(Color.black)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .environment(\.colorScheme, .dark)
-            } else {
-                Text(IslandLayoutStore.shared.hasCustomLayout
-                     ? "当前布局未定义 expanded，该面使用内置视图。"
-                     : "当前没有启用自定义布局，四个面都使用内置视图。")
-                    .foregroundStyle(.secondary)
-            }
-        } header: {
-            Text("布局预览（expanded）")
-        } footer: {
-            SectionFooter("island.json 存在且该 surface 可解析时即时生效；坏的 surface 只回退它自己。")
-        }
-
-        layoutDiagnostics
-
-        // Geometry micro-adjustment and the calibration overlay are escape
-        // hatches for a macOS release that moves the menu bar, not everyday
-        // settings - a ±20pt slider is an admission that detection failed,
-        // and most users never need to make that admission. The section
-        // surfaces only when enabled from the CLI:
-        // `defaults write com.yeheng.macdesktopnotify island.debugGeometry -bool true`
-        if settings.debugGeometryEnabled {
-            Section {
-                SliderRow(
-                    title: "刘海宽度偏移",
-                    value: $settings.notchWidthOffset,
-                    range: -20...20,
-                    step: 1,
-                    minimum: "-20",
-                    maximum: "20",
-                    valueText: "\(Int(settings.notchWidthOffset)) pt"
-                )
-                SliderRow(
-                    title: "刘海高度偏移",
-                    value: $settings.notchHeightOffset,
-                    range: -20...20,
-                    step: 1,
-                    minimum: "-20",
-                    maximum: "20",
-                    valueText: "\(Int(settings.notchHeightOffset)) pt"
-                )
-                CaptionedToggle(
-                    "显示刘海校准框",
-                    caption: "将当前检测到的刘海命中区域画出来，用于核对几何是否正确。核对完请关闭。",
-                    isOn: $settings.showNotchCalibration
-                )
-            } header: {
-                Text("高级")
-            } footer: {
-                SectionFooter("0 表示使用 macOS 检测到的默认值。若系统更新后刘海区域错位，在此微调。")
-            }
-        }
+        styleDiagnostics
 
         Section {
             HStack {
                 Spacer()
+                Button("打开配置文件夹") {
+                    NSWorkspace.shared.open(ToastPaths.stylesDirectory)
+                }
                 Button("恢复默认") {
                     settings.resetDisplayDefaults()
                 }
@@ -581,17 +463,16 @@ private struct AppearanceSettingsContent: View {
 
     /// Bundled presets are marked so it is obvious which ids the app ships and
     /// which ones come from the user's directory.
-    private func themeLabel(_ id: String) -> String {
-        if id == IslandThemeStore.defaultThemeID { return "默认" }
-        return IslandThemeStore.shared.builtinThemeIDs.contains(id) ? "\(id)（内置）" : id
+    private func styleLabel(_ id: String) -> String {
+        if id == ToastStyleStore.defaultStyleID { return "默认" }
+        return ToastStyleStore.shared.builtinStyleIDs.contains(id) ? "\(id)（内置）" : id
     }
 
-    private func layoutLabel(_ id: String) -> String {
-        IslandLayoutStore.shared.builtinLayoutIDs.contains(id) ? "\(id)（内置）" : id
+    private var styleDiagnostics: some View {
+        diagnosticsSection(header: "样式诊断", messages: ToastStyleStore.shared.diagnostics)
     }
 
-    /// The two DSL stores' diagnostics render identically, so one section
-    /// builder serves both — the copies used to drift in styling.
+    /// The style-store diagnostics render the same way the transport errors do.
     @ViewBuilder
     private func diagnosticsSection(header: String, messages: [String]) -> some View {
         if !messages.isEmpty {
@@ -608,13 +489,6 @@ private struct AppearanceSettingsContent: View {
         }
     }
 
-    private var themeDiagnostics: some View {
-        diagnosticsSection(header: "主题诊断", messages: IslandThemeStore.shared.diagnostics)
-    }
-
-    private var layoutDiagnostics: some View {
-        diagnosticsSection(header: "布局诊断", messages: IslandLayoutStore.shared.diagnostics)
-    }
 }
 
 // MARK: - 通知
@@ -652,16 +526,10 @@ private struct NotificationSettingsContent: View {
         }
 
         Section {
-            Toggle("普通消息使用轻提醒", isOn: $settings.normalMessagesPeek)
-        } footer: {
-            SectionFooter("开启后，normal 与 low 消息不展开面板，只在摘要栏停留；停留时长取消息自带的 timeout，未传则用本档位的停留时长。摘要栏本身只显示紧急度与未读数，标题在通知卡与消息中心里。单条推送可用 URL 参数 display=expand 或 display=peek 覆盖。")
-        }
-
-        Section {
             Toggle("退出后保留历史消息", isOn: $settings.persistHistory)
             Toggle("启用声音效果", isOn: $settings.soundEnabled)
         } footer: {
-            SectionFooter("声音使用 macOS 系统通知音。Critical 消息保持展开，直到手动收起或清除；「安静」「平衡」档下 5 分钟无人理会会自动降级到摘要栏（保留在历史与未读中），「即时」档不降级。")
+            SectionFooter("声音使用 macOS 系统通知音。Critical 消息保持展开，直到手动收起或清除；「安静」「平衡」档下 5 分钟无人理会会自动降级为普通卡片（保留在历史与未读中），「即时」档不降级。")
         }
 
         Section {

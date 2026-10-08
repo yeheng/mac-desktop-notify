@@ -75,14 +75,12 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 12) {
             stepHeader("第 1 步 · 看一眼效果", "发一条真实的通知，亲眼看看它长什么样。")
             Button {
-                let outcome = NotificationIngress.deliver(NotchNotification(
+                let outcome = NotificationIngress.deliver(CardPayload(
                     title: "试一试", bodyMarkdown: "这是引导发送的测试通知", urgency: .normal, timeout: 10
                 ))
                 switch outcome {
                 case .displayed:
-                    testFeedback = "测试通知已发送，请查看屏幕顶部；全屏时请先退出全屏。"
-                case .queued:
-                    testFeedback = "有紧急消息正在占屏；测试通知已存入历史（未读），可打开历史信息查看。"
+                    testFeedback = "测试通知已发送，请查看屏幕上的通知卡片；全屏时请先退出全屏。"
                 case .withheld:
                     testFeedback = "测试通知已保存；静默或离开状态下不会弹出，可在历史信息中查看。"
                 }

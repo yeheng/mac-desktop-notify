@@ -110,26 +110,26 @@ final class DwellPolicyTests: SettingsIsolatedTestCase {
     /// to re-derive it from the message.
     func testLiveCardCarriesItsResolvedPolicy() {
         let m = NotificationManager()
-        m.push(NotchNotification(title: "info", bodyMarkdown: "", urgency: .normal, timeout: 30))
+        m.push(CardPayload(title: "info", bodyMarkdown: "", urgency: .normal, timeout: 30))
 
-        XCTAssertEqual(m.presentation?.policy.budget, .seconds(30))
-        XCTAssertEqual(m.presentation?.remaining, .seconds(30))
-        XCTAssertEqual(m.presentation?.policy.autoCloseAfter, DwellTiming.standard.autoClose)
+        XCTAssertEqual(m.presentations.last?.policy.budget, .seconds(30))
+        XCTAssertEqual(m.presentations.last?.remaining, .seconds(30))
+        XCTAssertEqual(m.presentations.last?.policy.autoCloseAfter, DwellTiming.standard.autoClose)
     }
 
     /// A script backfill that turns a plain card critical must re-resolve: the
     /// card cannot keep the rules of the message it used to be.
     func testBackfillReResolvesThePolicy() {
         let m = NotificationManager()
-        var n = NotchNotification(title: "was normal", bodyMarkdown: "x", urgency: .normal, timeout: 30)
+        var n = CardPayload(title: "was normal", bodyMarkdown: "x", urgency: .normal, timeout: 30)
         n.script = "ci"
         m.push(n)
-        XCTAssertNotNil(m.presentation?.policy.autoCloseAfter)
+        XCTAssertNotNil(m.presentations.last?.policy.autoCloseAfter)
 
         m.update(id: n.id) { $0.urgency = .critical; $0.timeout = nil }
 
-        XCTAssertNil(m.presentation?.policy.budget, "a critical blocks, whatever it used to be")
-        XCTAssertNil(m.presentation?.policy.autoCloseAfter)
-        XCTAssertEqual(m.presentation?.policy.ageOutAfter, DwellTiming.standard.criticalIdle)
+        XCTAssertNil(m.presentations.last?.policy.budget, "a critical blocks, whatever it used to be")
+        XCTAssertNil(m.presentations.last?.policy.autoCloseAfter)
+        XCTAssertEqual(m.presentations.last?.policy.ageOutAfter, DwellTiming.standard.criticalIdle)
     }
 }

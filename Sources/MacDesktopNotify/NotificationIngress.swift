@@ -25,7 +25,7 @@ enum NotificationIngress {
     /// a withheld message or stay silent about a shown one.
     @discardableResult
     static func deliver(
-        _ notification: NotchNotification,
+        _ notification: CardPayload,
         to manager: NotificationManager = .shared,
         runner: ScriptRunner = .shared
     ) -> PushOutcome {

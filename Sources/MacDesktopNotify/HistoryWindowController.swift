@@ -57,7 +57,7 @@ private struct HistoryView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Newest first, matching the panel's ordering.
-    private var items: [NotchNotification] {
+    private var items: [CardPayload] {
         manager.history.reversed().filter { item in
             (searchText.isEmpty || item.title.localizedStandardContains(searchText)
                 || item.bodyMarkdown.localizedStandardContains(searchText))
@@ -176,7 +176,7 @@ private struct HistoryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func status(of notification: NotchNotification) -> HistoryRowStatus {
+    private func status(of notification: CardPayload) -> HistoryRowStatus {
         if manager.current?.id == notification.id { return .current }
         return manager.isRead(notification) ? .past : .unread
     }
@@ -186,7 +186,7 @@ private struct HistoryView: View {
 /// badges, and the always-visible 已读/删除 pair. Tapping expands the
 /// rendered Markdown body inline.
 private struct HistoryWindowRow: View {
-    let notification: NotchNotification
+    let notification: CardPayload
     let status: HistoryRowStatus
     let isUnread: Bool
     let isExpanded: Bool

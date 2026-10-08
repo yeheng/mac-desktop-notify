@@ -395,13 +395,9 @@ extension APIResponse {
 
 extension PushOutcome {
     /// Wire name for the API surface. Matches the enum case by design.
-    /// v4: `queued` no longer means "waiting for screen time" - there is no
-    /// queue; it means a critical holds the screen and the message waits as
-    /// an unread history entry.
     var label: String {
         switch self {
         case .displayed: "displayed"
-        case .queued: "queued"
         case .withheld: "withheld"
         }
     }
@@ -422,7 +418,7 @@ struct HistoryItemDTO: Codable {
     let group: String?
     let read: Bool
 
-    init(item: NotchNotification, read: Bool) {
+    init(item: CardPayload, read: Bool) {
         self.id = item.id
         self.title = item.title
         self.body = item.bodyMarkdown

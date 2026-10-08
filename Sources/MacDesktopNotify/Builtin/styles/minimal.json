@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "极简",
+  "collapse": { "shape": "card", "lines": 2 },
+  "tokens": {
+    "cardFill": "#FFFFFFFF",
+    "textPrimary": "#1A1A1F",
+    "textSubtle": "#1A1A1FA8",
+    "borderColor": "#00000000",
+    "accent": "#5B5BD6",
+    "levelSuccess": "#2E7D5B",
+    "levelWarning": "#96690F",
+    "levelError": "#B3261E"
+  },
+  "flags": {
+    "showIcon": false,
+    "showTime": false,
+    "showLevel": false,
+    "showTags": false,
+    "showProgress": false,
+    "showOccurrences": true,
+    "marquee": false
+  },
+  "motion": { "enter": "fade", "exit": "fade", "enterMs": 180, "exitMs": 140 }
+}

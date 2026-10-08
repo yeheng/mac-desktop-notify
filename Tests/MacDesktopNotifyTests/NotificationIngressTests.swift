@@ -35,8 +35,8 @@ final class NotificationIngressTests: SettingsIsolatedTestCase {
         )
     }
 
-    private func make(_ title: String, script: String? = nil) -> NotchNotification {
-        var n = NotchNotification(title: title, bodyMarkdown: "orig", urgency: .normal, timeout: 60)
+    private func make(_ title: String, script: String? = nil) -> CardPayload {
+        var n = CardPayload(title: title, bodyMarkdown: "orig", urgency: .normal, timeout: 60)
         n.script = script
         return n
     }
@@ -89,9 +89,9 @@ final class NotificationIngressTests: SettingsIsolatedTestCase {
         XCTAssertEqual(NotificationIngress.deliver(make("a"), to: manager, runner: runner), .displayed)
 
         // A critical owns the screen, so a normal message waits as unread history.
-        let critical = NotchNotification(title: "crit", bodyMarkdown: "", urgency: .critical, timeout: nil)
+        let critical = CardPayload(title: "crit", bodyMarkdown: "", urgency: .critical, timeout: nil)
         XCTAssertEqual(NotificationIngress.deliver(critical, to: manager, runner: runner), .displayed)
-        XCTAssertEqual(NotificationIngress.deliver(make("b"), to: manager, runner: runner), .queued)
+        XCTAssertEqual(NotificationIngress.deliver(make("b"), to: manager, runner: runner), .displayed)
         XCTAssertTrue(manager.history.contains { $0.title == "b" }, "a queued message is still stored")
     }
 }

@@ -1,9 +1,10 @@
 import XCTest
 @testable import MacDesktopNotify
 
-/// §3.1: 收起规则的单一裁决点。信息卡 10s；指针进入取消计时；进入后
-/// 离开立即收起；可操作卡不计时。v4：新推送总是立即顶卡（无保护期、
-/// 无队列），被顶掉的消息在历史里保持未读；收起与超时绝不标读。
+/// §3.1: 收起规则的单一裁决点。信息卡 10s；指针在该卡上取消计时；点击展开
+/// 离开后由 hover 收起；可操作卡不计时。v4：新推送追加到栈上（不顶替，
+/// 只有超上限才会把最早的挤出栈），被挤掉的消息在历史里未读；收起与超时
+/// 绝不标读。
 @MainActor
 final class DismissRulesTests: SettingsIsolatedTestCase {
 
@@ -12,8 +13,8 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
         urgency: UrgencyLevel = .normal,
         timeout: TimeInterval = 60,
         actions: [NotificationAction] = []
-    ) -> NotchNotification {
-        NotchNotification(title: title, bodyMarkdown: "body", urgency: urgency, timeout: timeout, actions: actions)
+    ) -> CardPayload {
+        CardPayload(title: title, bodyMarkdown: "body", urgency: urgency, timeout: timeout, actions: actions)
     }
 
     private let action = NotificationAction(
@@ -21,108 +22,144 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
         url: URL(string: "notch-notify://ack?token=t&result=ok")!
     )
 
-    /// 信息卡：无人理睬 10s（测试收缩为 120ms）后收起并退役，未读保留。
-    func testInfoCardClosesAfterDelay() async throws {
-        AppSettings.shared.autoExpandOnMessage = true
+    /// 信息卡：无人理睬到 dwell 到期后退役，未读保留。
+    func testInfoCardRetiresAfterDelay() async throws {
         let m = NotificationManager()
-        m.dwellTiming.autoClose = .milliseconds(120)
-        m.push(make("info"))
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
+        m.push(make("info", timeout: 0.3))
+        let id = m.presentations.last!.item.id
 
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertEqual(m.displayState, .closed, "an unattended info card must retire via the auto-close rule")
-        XCTAssertNil(m.current)
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertFalse(m.presentations.contains { $0.item.id == id }, "an unattended card retires on its own")
         XCTAssertEqual(m.unreadCount, 1, "never opened, so never read")
     }
 
-    /// 指针进入面板 → 取消计时：卡片停在屏上。
+    /// 悬停只展开、不退役：指针离开后卡片回到收起态并继续倒计时。
+    func testHoverOnlyExpandsAndKeepsCountingDown() async throws {
+        let settings = AppSettings.shared
+        let oldDelay = settings.hoverDelayMilliseconds
+        settings.hoverDelayMilliseconds = 10
+        defer { settings.hoverDelayMilliseconds = oldDelay }
+
+        let m = NotificationManager()
+        m.push(make("info", timeout: 0.5))
+        let id = m.presentations.last!.item.id
+
+        m.setHovering(true, for: id)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(m.presentations.last?.expanded, true, "hover expands the card it is over")
+        XCTAssertNil(m.dwellDeadlines[id], "the hovered card holds its countdown")
+
+        m.setHovering(false, for: id)
+        XCTAssertEqual(m.presentations.last?.expanded, false, "leaving collapses the hover expansion")
+        XCTAssertNotNil(m.dwellDeadlines[id], "and the countdown resumes")
+
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertFalse(m.presentations.contains { $0.item.id == id }, "the budget runs out on its own")
+        XCTAssertEqual(m.unreadCount, 1, "hovering is looking, not opening")
+    }
+
+    /// 指针进入卡片 → 取消计时：卡片停在屏上。
     func testPointerOnCardCancelsAutoClose() async throws {
-        AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
         m.dwellTiming.autoClose = .milliseconds(120)
         m.push(make("info"))
-        m.setHovering(true)
+        let id = m.presentations.last!.item.id
+        m.setHovering(true, for: id)
 
         try await Task.sleep(for: .milliseconds(400))
-        XCTAssertEqual(m.displayState, .opened(reason: .notification), "an engaged card keeps the panel")
+        XCTAssertTrue(m.presentations.contains { $0.item.id == id }, "an engaged card keeps the stack")
         XCTAssertEqual(m.current?.title, "info")
     }
 
-    /// 进入后离开 → 立即收起（不等 10s）。v4：看过不等于点开，未读保留。
-    func testLeaveAfterEnteringCollapsesCard() async throws {
-        AppSettings.shared.autoExpandOnMessage = true
+    /// 点击展开后离开 → 由 hover 收起（不是自动计时）。v4：看过不等于点开，
+    /// 但点击是显式动作——展开即已读。
+    func testLeaveAfterEnteringCollapsesHoverExpansion() {
         let m = NotificationManager()
-        m.dwellTiming.autoClose = .seconds(10)
         m.push(make("info"))
-        m.setHovering(true)
-        XCTAssertEqual(m.unreadCount, 1, "v4: entering the panel is looking, not opening")
+        let id = m.presentations.last!.item.id
+        m.setHovering(true, for: id)
+        XCTAssertNotNil(m.presentations.first(where: { $0.item.id == id })?.expanded)
 
-        m.setHovering(false)
-        XCTAssertEqual(m.displayState, .closed, "leave-after-enter collapses now, not at 10s")
-        XCTAssertNil(m.current)
-        XCTAssertEqual(m.unreadCount, 1, "retiring is not reading either - the message waits to be opened")
+        m.setHovering(false, for: id)
+        XCTAssertEqual(m.presentations.first(where: { $0.item.id == id })?.expanded, false,
+                       "leave collapses the hover expansion")
+        XCTAssertEqual(m.unreadCount, 1, "hovering is looking, not opening - the message waits to be read")
     }
 
     /// 可操作卡：不计时，永不自动收起（aging 是唯一无人路径）。
     func testOperableCardNeverAutoCloses() async throws {
-        AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
         m.dwellTiming.autoClose = .milliseconds(120)
         m.push(make("approve", actions: [action]))
+        let id = m.presentations.last!.item.id
+
         try await Task.sleep(for: .milliseconds(400))
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
+        XCTAssertTrue(m.presentations.contains { $0.item.id == id }, "an operable card holds its slot")
         XCTAssertEqual(m.current?.title, "approve")
     }
 
-    /// critical 同样不计时。
+    /// critical 同样不计时，且展开常驻。
     func testCriticalCardNeverAutoCloses() async throws {
-        AppSettings.shared.autoExpandOnMessage = true
         let m = NotificationManager()
         m.dwellTiming.autoClose = .milliseconds(120)
         m.push(make("crit", urgency: .critical))
+        let id = m.presentations.last!.item.id
+
         try await Task.sleep(for: .milliseconds(400))
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
-        XCTAssertEqual(m.current?.title, "crit")
+        XCTAssertTrue(m.presentations.contains { $0.item.id == id }, "a critical blocks its slot")
+        XCTAssertEqual(m.presentations.first(where: { $0.item.id == id })?.expanded, true,
+                       "a critical arrives expanded")
     }
 
-    /// v4：指针在卡上不再保护——最新状态永远立即上屏；被顶掉的消息就在
-    /// 下方第一行，未读不丢。
-    func testEngagedCardIsDisplacedByPush() {
-        AppSettings.shared.autoExpandOnMessage = true
-        let m = NotificationManager()
-        m.push(make("a"))
-        m.setHovering(true)
-
-        XCTAssertEqual(m.push(make("b")), .displayed)
-        XCTAssertEqual(m.current?.title, "b")
-        XCTAssertEqual(m.pastHistory.map(\.title), ["a"], "the displaced card is one row below, unread")
-
-        XCTAssertEqual(m.push(make("c", urgency: .critical)), .displayed)
-        XCTAssertEqual(m.current?.title, "c", "a critical takes the screen too")
-    }
-
-    /// 顶卡：无人值守的信息卡让位给新到达，旧卡进历史（未读），计时重武装。
-    func testUnattendedInfoCardYieldsToFreshPush() {
-        AppSettings.shared.autoExpandOnMessage = true
+    /// v4：新推送追加到栈上，不顶替。被挤超出上限的那条进历史（未读）。
+    func testPushAppendsInsteadOfDisplacing() {
         let m = NotificationManager()
         m.push(make("a"))
         XCTAssertEqual(m.push(make("b")), .displayed)
-        XCTAssertEqual(m.current?.title, "b", "latest wins the unattended surface")
-        XCTAssertEqual(m.pastHistory.map(\.title), ["a"], "the displaced card stays in history, unread")
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
+        XCTAssertEqual(m.presentations.map(\.item.title), ["a", "b"], "both cards are on screen")
+        XCTAssertEqual(m.current?.title, "b", "the newest card is the anchor")
+        XCTAssertEqual(m.unreadCount, 2, "arriving is not reading")
     }
 
-    /// v4 无轮换：信息卡 10s 收工后没有"下一条"可顶上，面板关、消息留未读。
-    func testAutoCloseRetiresWithoutRotation() async throws {
-        AppSettings.shared.autoExpandOnMessage = true
+    /// 溢出上限：最早的卡片退役，新卡片顶上，未读保留。
+    func testOverflowRetiresTheOldestCard() {
         let m = NotificationManager()
-        m.dwellTiming.autoClose = .milliseconds(200)
-        m.push(make("a"))
-        m.push(make("b"))                          // b displaced a; a waits in history
+        for title in ["a", "b", "c", "d", "e"] { m.push(make(title)) }
+        XCTAssertEqual(m.presentations.map(\.item.title), ["b", "c", "d", "e"], "the cap retires the oldest card")
+        XCTAssertEqual(m.presentations.count, NotificationManager.visibleCardLimit)
+        XCTAssertEqual(m.unreadCount, 5, "the retired card is still in history, unread")
+    }
 
-        try await Task.sleep(for: .milliseconds(300))
-        XCTAssertNil(m.current, "no queue means nothing rotates in when the card retires")
-        XCTAssertEqual(m.displayState, .closed)
-        XCTAssertEqual(m.unreadCount, 2, "both messages wait unread until the user opens them")
+    /// critical 挤掉最早的非 critical 卡片：紧急消息不容排队。
+    func testCriticalTakesASlotFromTheOldestNormal() {
+        let m = NotificationManager()
+        for title in ["a", "b", "c", "d"] { m.push(make(title)) }
+        m.push(make("crit", urgency: .critical))
+        XCTAssertEqual(m.presentations.map(\.item.title), ["b", "c", "d", "crit"],
+                       "a critical takes the stack from the oldest normal card")
+    }
+
+    /// 点击卡片 = 显式打开：标记已读并退役。
+    func testTapMarksReadAndRetires() {
+        let m = NotificationManager()
+        m.push(make("info"))
+        let id = m.presentations.last!.item.id
+        m.expandCard(id, byHover: false)
+        XCTAssertTrue(m.messages.readIDs.contains(id), "expanding by click marks it read")
+
+        m.tapCard(id)
+        XCTAssertFalse(m.presentations.contains { $0.item.id == id }, "a second tap retires the card")
+    }
+
+    /// 点击带 clickUrl 的卡片：打开链接 + 已读 + 退役，与操作按钮同一条路径。
+    func testTapOnClickURLOpensAndReads() {
+        let url = URL(string: "notch-notify://ack?token=smoke")!
+        let m = NotificationManager()
+        m.push(CardPayload(title: "报告", bodyMarkdown: "", urgency: .normal, timeout: 60, actions: [], clickURL: url))
+        let id = m.presentations.last!.item.id
+
+        m.tapCard(id)
+        XCTAssertFalse(m.presentations.contains { $0.item.id == id })
+        XCTAssertTrue(m.messages.readIDs.contains(id), "acting on the card reads it")
     }
 }

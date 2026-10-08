@@ -4,8 +4,8 @@ import XCTest
 @MainActor
 final class RemindLaterTests: SettingsIsolatedTestCase {
 
-    private func make(_ title: String, urgency: UrgencyLevel = .normal) -> NotchNotification {
-        NotchNotification(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60)
+    private func make(_ title: String, urgency: UrgencyLevel = .normal) -> CardPayload {
+        CardPayload(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60)
     }
 
     /// Reminding retires the live message the way every retirement does: no
@@ -15,7 +15,7 @@ final class RemindLaterTests: SettingsIsolatedTestCase {
         m.push(make("deploy"))
         let item = m.current!
 
-        m.remindMeLater(for: .seconds(1800))
+        m.remindMeLater(for: item.id, duration: .seconds(1800))
 
         XCTAssertNil(m.current, "the reminder retires the card - there is no queue to promote")
         XCTAssertEqual(m.historyCount, 1, "the message stays in history")
@@ -31,11 +31,11 @@ final class RemindLaterTests: SettingsIsolatedTestCase {
         m.push(make("deploy"))
         let item = m.current!
 
-        m.remindMeLater(for: .seconds(1800))
+        m.remindMeLater(for: item.id, duration: .seconds(1800))
         m.resurfaceReminder()
 
         XCTAssertEqual(m.current?.id, item.id, "the same message returns, not a copy")
-        XCTAssertEqual(m.displayState, .opened(reason: .notification))
+        XCTAssertTrue(m.presentations.contains { $0.item.id == item.id }, "the reminder re-presents as a card")
         XCTAssertEqual(m.historyCount, 1, "the reminder must not re-record the message")
         XCTAssertNil(m.snoozedReminderItem, "one firing consumes the reminder")
     }
@@ -46,7 +46,7 @@ final class RemindLaterTests: SettingsIsolatedTestCase {
         m.push(make("deploy"))
         let item = m.current!
 
-        m.remindMeLater(for: .milliseconds(50))
+        m.remindMeLater(for: item.id, duration: .milliseconds(50))
         try? await Task.sleep(for: .milliseconds(300))
 
         XCTAssertEqual(m.current?.id, item.id, "the armed reminder resurfaced on its own")
@@ -59,7 +59,7 @@ final class RemindLaterTests: SettingsIsolatedTestCase {
         m.push(make("deploy"))
         let item = m.current!
 
-        m.remindMeLater(for: .seconds(1800))
+        m.remindMeLater(for: item.id, duration: .seconds(1800))
         m.setRead(item.id, read: true)
         m.resurfaceReminder()
 
@@ -73,7 +73,7 @@ final class RemindLaterTests: SettingsIsolatedTestCase {
         m.push(make("deploy"))
         let item = m.current!
 
-        m.remindMeLater(for: .seconds(1800))
+        m.remindMeLater(for: item.id, duration: .seconds(1800))
         m.removeHistory(id: item.id)
         m.resurfaceReminder()
 
@@ -82,17 +82,18 @@ final class RemindLaterTests: SettingsIsolatedTestCase {
     }
 
     /// A critical holding the screen keeps it, exactly like `push`: the normal
-    /// message's reminder waits as an unread history row.
-    func testResurfaceDefersToHoldingCritical() {
+    /// A critical reminder joins the stack regardless of what else is on it.
+    func testCriticalReminderJoinsTheStack() {
         let m = NotificationManager()
-        m.push(make("deploy"))
-        m.remindMeLater(for: .seconds(1800))
-        m.push(make("crit", urgency: .critical))     // takes and holds the screen
+        m.push(make("crit", urgency: .critical))
+        m.remindMeLater(for: m.current!.id, duration: .seconds(1800))
+        m.push(make("plain"))
 
         m.resurfaceReminder()
 
-        XCTAssertEqual(m.current?.urgency, .critical, "the holding critical is not displaced")
-        XCTAssertEqual(m.unreadCount, 2, "the deferred message joins the critical as unread history")
+        XCTAssertEqual(m.presentations.map(\.item.title), ["plain", "crit"],
+                       "the reminder rejoins the stack the moment it comes back")
+        XCTAssertEqual(m.unreadCount, 2, "neither message has been opened")
     }
 
     /// A critical reminder displaces whatever holds the screen, as any
@@ -101,7 +102,7 @@ final class RemindLaterTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.push(make("crit", urgency: .critical))
         let item = m.current!
-        m.remindMeLater(for: .seconds(1800))
+        m.remindMeLater(for: item.id, duration: .seconds(1800))
         m.push(make("plain"))                        // owns the screen now
 
         m.resurfaceReminder()
@@ -115,7 +116,7 @@ final class RemindLaterTests: SettingsIsolatedTestCase {
     func testResurfaceStaysDownWhileQuiet() {
         let m = NotificationManager()
         m.push(make("deploy"))
-        m.remindMeLater(for: .seconds(1800))
+        m.remindMeLater(for: m.current!.id, duration: .seconds(1800))
 
         AppSettings.shared.quietMode = .historyOnly
         m.isAway = true
@@ -128,11 +129,11 @@ final class RemindLaterTests: SettingsIsolatedTestCase {
     func testNewRemindReplacesThePendingOne() {
         let m = NotificationManager()
         m.push(make("first"))
-        m.remindMeLater(for: .seconds(1800))
+        m.remindMeLater(for: m.current!.id, duration: .seconds(1800))
 
         m.push(make("second"))
         let second = m.current!
-        m.remindMeLater(for: .seconds(3600))
+        m.remindMeLater(for: second.id, duration: .seconds(3600))
 
         XCTAssertEqual(m.snoozedReminderItem?.id, second.id, "the newest reminder wins")
         XCTAssertEqual(m.unreadCount, 2, "the dropped reminder leaves the first message unread in history")

@@ -18,8 +18,8 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
         return NotificationHistoryStore(fileURL: dir.appendingPathComponent("history.json"))
     }
 
-    private func make(_ title: String, urgency: UrgencyLevel = .normal) -> NotchNotification {
-        NotchNotification(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60)
+    private func make(_ title: String, urgency: UrgencyLevel = .normal) -> CardPayload {
+        CardPayload(title: title, bodyMarkdown: "", urgency: urgency, timeout: 60)
     }
 
     /// The decoded snapshot, or nil when the file is absent/unusable - the two
@@ -35,7 +35,7 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
     func testSnapshotRoundTripsThroughDisk() throws {
         let store = makeStore()
         let action = NotificationAction(label: "允许", url: URL(string: "http://localhost:8080/ok")!)
-        let item = NotchNotification(
+        let item = CardPayload(
             title: "构建完成",
             bodyMarkdown: "## 摘要\n- ✅ 通过\n- `code`",
             urgency: .critical,
@@ -143,8 +143,8 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.restoreHistory(using: store)
 
-        XCTAssertEqual(m.displayState, .closed, "unread history should surface at launch")
-        XCTAssertEqual(m.compactStatus, "2 条未读")
+        XCTAssertEqual(m.unreadCount, 2, "unread history is restored")
+        XCTAssertTrue(m.presentations.isEmpty, "restoring history alone shows nothing - nothing is live")
     }
 
     func testRestoreStaysHiddenWhenEverythingIsRead() throws {
@@ -155,7 +155,7 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.restoreHistory(using: store)
 
-        XCTAssertEqual(m.displayState, .closed, "nothing unread means nothing to show")
+        XCTAssertEqual(m.unreadCount, 0, "nothing unread means nothing to surface")
     }
 
     func testPushPersistsHistory() async throws {
@@ -264,9 +264,9 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
     /// island 随快照落盘并原样读回——进度推进到 100% 的消息重启后不应失忆。
     func testIslandRoundTripsThroughDisk() throws {
         let store = makeStore()
-        let item = NotchNotification(
+        let item = CardPayload(
             title: "构建完成", bodyMarkdown: "", urgency: .normal, timeout: nil,
-            island: IslandContent(text: "构建中 100%", progress: 1, icon: "hammer.fill"))
+            island: StatusLine(text: "构建中 100%", progress: 1, icon: "hammer.fill"))
 
         try store.save(HistorySnapshot(items: [item], readIDs: []))
         let loaded = try XCTUnwrap(snapshot(from: store))
@@ -298,7 +298,7 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
     /// 点击直达链接随快照往返——重启后卡片仍可点开发送方的链接。
     func testClickURLRoundTripsThroughDisk() throws {
         let store = makeStore()
-        let item = NotchNotification(
+        let item = CardPayload(
             title: "构建失败", bodyMarkdown: "", urgency: .critical, timeout: nil,
             clickURL: URL(string: "https://ci.example.com/runs/42")!)
 

@@ -8,25 +8,26 @@ import Foundation
 /// dictionary-shaped: scheduling the same key again replaces the pending task,
 /// cancelling drops it, and nothing can leak past `cancelAll`.
 ///
-/// Like the tasks it replaces, a fired effect runs its callback on the main
-/// actor, and cancellation is the only way out — there is no tick loop polling
-/// a clock, because every one of these delays is a one-shot (dwell countdown,
-/// hover debounce, panel collapse, idle aging, history persist).
+/// The per-card keys carry the card's id, so a stack of cards runs one timer
+/// each and retiring one never cancels its neighbours'.
 @MainActor
 final class DelayedEvents {
     enum Key: Hashable {
-        case dwell
-        case hoverExpand
-        case manualCollapse
-        case criticalAging
-        /// The actions-hold release: fires when a message with unanswered
-        /// actions sat untouched long enough to earn a normal dwell budget.
-        case actionHoldAging
+        /// The per-card dwell countdown. One per visible card.
+        case dwell(UUID)
+        /// The critical-idle demotion timer. One per blocking critical.
+        case criticalAging(UUID)
+        /// The actions-hold release. One per card running a hold.
+        case actionHoldAging(UUID)
+        /// The debounced hover expansion, keyed by the card that will expand.
+        case hoverExpand(UUID)
+        /// The debounced collapse after the pointer leaves a hover-expanded card.
+        case manualCollapse(UUID)
         case persist
         /// The undo toast's countdown: fires to drop the deletion journal.
         case deletionUndoExpiry
-        /// §3.1: the informational card's auto-close countdown.
-        case notificationAutoClose
+        /// §3.1: an expanded card's auto-close countdown.
+        case notificationAutoClose(UUID)
         /// 「稍后提醒」的到点重现：一条被用户主动推迟的消息按约回来。
         case remindResurface
     }
@@ -55,7 +56,7 @@ final class DelayedEvents {
         tasks[key] = nil
     }
 
-    /// Replaces the dwell/hover/collapse/aging timers' manual null-out with one call.
+    /// Replaces the per-card timers' manual null-out with one call.
     func cancelAll() {
         for (_, task) in tasks { task.cancel() }
         tasks.removeAll()
