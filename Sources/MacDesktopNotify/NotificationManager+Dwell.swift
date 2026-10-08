@@ -24,7 +24,6 @@ extension NotificationManager {
         demoted.policy = demoted.policy.demotedToSnooze(hasActions: !demoted.item.actions.isEmpty, timing: dwellTiming)
         demoted.remaining = demoted.policy.budget
         demoted.expanded = false
-        demoted.expandedByHover = false
         presentations[index] = demoted
         applyDismissRules()
         // The hold only exists once the card has a countdown, so it is armed
@@ -67,7 +66,6 @@ extension NotificationManager {
             demoted.policy = demoted.policy.demotedToSnooze(hasActions: !demoted.item.actions.isEmpty, timing: self.dwellTiming)
             demoted.remaining = demoted.policy.budget
             demoted.expanded = false
-            demoted.expandedByHover = false
             self.presentations[index] = demoted
             // Same transition as an explicit snooze, so the same hold rule
             // applies: an aged-out critical with actions now has a countdown
@@ -137,7 +135,12 @@ extension NotificationManager {
                 stopDwell(for: card.item.id)
                 continue
             }
+            // A card holds while the display is suppressed, while it has
+            // unanswered actions, while it is expanded, or while the pointer
+            // is on it — hovering holds the countdown (the user is reading)
+            // but never expands the card.
             let held = dwellHeldOpen || dwellHeldForActions(card) || card.expanded
+                || pointer.onCardID == card.item.id
             if held {
                 pauseDwell(for: card.item.id)
             } else if !delayed.isActive(.dwell(card.item.id)) {

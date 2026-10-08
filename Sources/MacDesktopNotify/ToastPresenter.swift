@@ -8,6 +8,20 @@ private final class ToastPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// A hosting view that reports every SwiftUI layout pass. State-driven
+/// relayout notifications fire *inside* the state write, before SwiftUI has
+/// re-rendered, so measuring `fittingSize` there reads the pre-change layout
+/// (the card then renders squeezed into the old window). Following the layout
+/// pass instead measures after the content has actually settled.
+private final class StackHostingView: NSHostingView<ToastStackView> {
+    var onLayout: (() -> Void)?
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+}
+
 /// The toast presentation: a stack of floating cards anchored to one corner of
 /// a screen, for users whose display has no notch or who prefer the toast
 /// shape.
@@ -21,7 +35,7 @@ private final class ToastPanel: NSPanel {
 ///
 /// - pointer following (the stack re-anchors at the next presentation or screen
 ///   reconfiguration, not mid-flight — there is no mouse-move monitor burning
-///   cycles to move a card nobody is chasing; hover expansion needs only to
+///   cycles to move a card nobody is chasing; the dwell hold needs only to
 ///   know which card the pointer is on, which the cards report themselves),
 /// - per-display mirroring (one stack, anchored to the pointer's display: the
 ///   full backlog lives in the history window),
@@ -33,6 +47,10 @@ private final class ToastPanel: NSPanel {
 /// workspace event, so those events re-derive the answer.
 @MainActor
 final class ToastPresenter: SurfacePresenting {
+    /// The window's resize animation, matched to the card stack's
+    /// `.easeOut(duration: 0.2)` so window and cards move on one clock.
+    private static let layoutAnimationDuration: TimeInterval = 0.2
+
     /// The display the stack currently belongs to. Drives the event-driven
     /// suppression probe and the screen-change check.
     private var currentScreenID: CGDirectDisplayID?
@@ -47,6 +65,10 @@ final class ToastPresenter: SurfacePresenting {
     /// Coalesced replay after a display-behavior setting flips (the position
     /// picker and card-limit slider fire a didSet per tick).
     private let behaviorReplay = Debouncer(delay: .milliseconds(250))
+    /// The last frame handed to the stack window (its animation target while
+    /// one is in flight), so layout passes triggered by the resize itself do
+    /// not restart the animation.
+    private var lastRequestedFrame: NSRect?
 
     init() {}
 
@@ -113,7 +135,7 @@ final class ToastPresenter: SurfacePresenting {
     }
 
     private func show(_ panel: ToastPanel, on screen: NSScreen) {
-        layout(panel, on: screen)
+        layout(panel, on: screen, animated: panel.isVisible)
         applySharingType()
         panel.orderFrontRegardless()
     }
@@ -121,28 +143,49 @@ final class ToastPresenter: SurfacePresenting {
     /// Re-derives the frame from the content's fitting size — the same
     /// discipline as the mini bar, so a card growing (or the stack gaining a
     /// card) resizes the window instead of clipping.
-    private func layout(_ panel: ToastPanel, on screen: NSScreen) {
-        panel.setFrame(
-            ToastLayout.frame(
-                contentSize: panel.contentView?.fittingSize ?? .zero,
-                visibleFrame: screen.visibleFrame,
-                position: AppSettings.shared.toastPosition,
-                minWidth: 396,          // 380 stack + 8 padding each side
-                minHeight: 0
-            ),
-            display: true
+    ///
+    /// Two order-of-operations rules keep the window and the cards on one
+    /// clock:
+    ///
+    /// - This runs either for a fresh window (no rendered state to be stale
+    ///   on) or from `StackHostingView.onLayout`, which fires *after* SwiftUI
+    ///   has rendered the state change. Measuring at state-write time would
+    ///   read the pre-change layout and squeeze the new content into the old
+    ///   window.
+    /// - An already-visible window animates to its new frame on the same
+    ///   curve and duration the cards use; an instant jump next to an
+    ///   animated card stack reads as a teleport. A window that is not yet
+    ///   on screen takes its frame instantly instead.
+    private func layout(_ panel: ToastPanel, on screen: NSScreen, animated: Bool) {
+        panel.contentView?.layoutSubtreeIfNeeded()
+        let frame = ToastLayout.frame(
+            contentSize: panel.contentView?.fittingSize ?? .zero,
+            visibleFrame: screen.visibleFrame,
+            position: AppSettings.shared.toastPosition,
+            minWidth: 396,          // 380 stack + 8 padding each side
+            minHeight: 0
         )
-    }
-
-    private func relayoutVisible() {
-        guard let screen = targetScreen else { return }
-        if let panel = stackPanel, panel.isVisible {
-            layout(panel, on: screen)
+        if animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            // During the window's own resize animation every frame re-lays
+            // out the hosting view, which re-enters here through `onLayout`;
+            // re-issuing the same target would restart the animation each
+            // frame, so identical requests are dropped.
+            guard frame != lastRequestedFrame else { return }
+            lastRequestedFrame = frame
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Self.layoutAnimationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                context.allowsImplicitAnimation = true
+                panel.animator().setFrame(frame, display: true)
+            }
+        } else {
+            lastRequestedFrame = frame
+            guard frame != panel.frame else { return }
+            panel.setFrame(frame, display: true)
         }
     }
 
-    /// Screen-capture exclusion follows the setting on every presentation —
-    /// these are plain windows, so nothing else re-applies it for them.
+    /// Screen-capture exclusion follows the setting on every presentation —    /// these are plain windows, so nothing else re-applies it for them.
     private func applySharingType() {
         let sharingType: NSWindow.SharingType = AppSettings.shared.excludeFromScreenRecording ? .none : .readOnly
         if let panel = stackPanel {
@@ -159,7 +202,16 @@ final class ToastPresenter: SurfacePresenting {
             backing: .buffered,
             defer: false
         )
-        panel.contentView = NSHostingView(rootView: ToastStackView())
+        let hosting = StackHostingView(rootView: ToastStackView())
+        // The window follows the rendered content: SwiftUI applies state
+        // changes at its own pace, and this layout pass is the first moment
+        // the new size is measurable. State-change notifications fire too
+        // early (inside the write, pre-render).
+        hosting.onLayout = { [weak self, weak panel] in
+            guard let self, let panel, panel.isVisible, let screen = self.targetScreen else { return }
+            self.layout(panel, on: screen, animated: true)
+        }
+        panel.contentView = hosting
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
@@ -172,9 +224,9 @@ final class ToastPresenter: SurfacePresenting {
 
     // MARK: - Clicks
 
-    /// Outside clicks collapse a hover-expanded card — the toast floats over
+    /// Outside clicks pile a fanned-out deck again — the toast floats over
     /// other apps' content, so "click away to put it back" is how a floating
-    /// card behaves, not a nicety.
+    /// pile behaves, not a nicety.
     private func installClickMonitors() {
         // Global taps fire only for clicks that landed in OTHER apps' windows,
         // so any event here is definitionally outside the toast.
@@ -216,11 +268,6 @@ final class ToastPresenter: SurfacePresenting {
                 self?.scheduleSuppressionProbe()
             })
         }
-        // A card arriving, leaving, or expanding changes the stack's height;
-        // the state writers post this, the view only renders.
-        observers.append(addObserverOnMain(forName: NotificationManager.compactStatusDidChange) { [weak self] in
-            self?.relayoutVisible()
-        })
         observers.append(addObserverOnMain(forName: AppSettings.screenRecordingDidChange) { [weak self] in
             self?.applySharingType()
         })

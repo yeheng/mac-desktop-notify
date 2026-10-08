@@ -1,22 +1,18 @@
 import Foundation
 
 /// Where the pointer is relative to the toast stack, as one value. Tracked
-/// (not ignored) because the hover rules derive from it: which card is being
-/// hovered decides which card expands and which card's countdown holds.
+/// (not ignored) because two rules derive from it: a card under the pointer
+/// holds its dwell countdown, and Esc is scoped to the card the pointer is on.
 /// All transitions flow through `NotificationManager.reduce(_:)` (+Pointer);
 /// nothing else writes it.
 ///
 /// Per-card, not per-window: a stack of cards is hovered one card at a time,
-/// so `onCardID` is the whole state. There is no activation zone to track
-/// (that was the notch's), and no panel/pill split.
+/// so `onCardID` is the whole state. Hovering never expands a card — expansion
+/// is click-only; the pointer's only jobs are the countdown hold and the Esc
+/// scope.
 struct PointerState: Equatable {
     /// The card the pointer is currently on, or nil.
     var onCardID: UUID?
-
-    /// The latch a dismissal arms: re-expansion on hover stays banned until
-    /// the pointer genuinely leaves, so a 1px jiggle cannot reopen a card the
-    /// user just closed. A deliberate click overrides it.
-    var hoverDismissed = false
 
     /// Whether the pointer is on card `id`.
     func onCard(_ id: UUID) -> Bool { onCardID == id }
@@ -26,7 +22,6 @@ struct PointerState: Equatable {
 
     mutating func reset() {
         onCardID = nil
-        hoverDismissed = false
     }
 }
 
@@ -38,13 +33,11 @@ enum PointerIntent {
     case hoverBegan(UUID)
     /// The pointer left card `id`.
     case hoverEnded(UUID)
-    /// A card was dismissed: hover stays banned on it until a genuine leave.
+    /// A card was dismissed: forget which card the pointer was on.
     case cardDismissed
     /// A fullscreen app took the display: forget the hover, the presenter
     /// stands down entirely.
     case displaySuppressed
-    /// A deliberate click: the user overrides the ban.
-    case cardClicked(UUID)
     /// `clear()`: everything resets.
     case cleared
 }

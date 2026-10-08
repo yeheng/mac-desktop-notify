@@ -87,7 +87,7 @@ final class GroupDedupTests: SettingsIsolatedTestCase {
         let m = manager()
 
         m.push(make("run-1", group: "ci"))
-        m.expandCard(m.current!.id, byHover: false)                       // deliberate open: reads the live card
+        m.expandCard(m.current!.id)                       // deliberate open: reads the live card
         XCTAssertEqual(m.unreadCount, 0)
 
         m.push(make("run-2", group: "ci"))

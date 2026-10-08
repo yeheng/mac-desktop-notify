@@ -1,10 +1,10 @@
 import XCTest
 @testable import MacDesktopNotify
 
-/// §3.1: 收起规则的单一裁决点。信息卡 10s；指针在该卡上取消计时；点击展开
-/// 离开后由 hover 收起；可操作卡不计时。v4：新推送追加到栈上（不顶替，
-/// 只有超上限才会把最早的挤出栈），被挤掉的消息在历史里未读；收起与超时
-/// 绝不标读。
+/// §3.1: 收起规则的单一裁决点。信息卡 10s；指针在该卡上取消计时；展开是点击
+/// 专属——悬停只暂停倒计时，永不展开；可操作卡不计时。v4：新推送追加到栈上
+/// （不顶替，只有超上限才会把最早的挤出栈），被挤掉的消息在历史里未读；
+/// 收起与超时绝不标读。
 @MainActor
 final class DismissRulesTests: SettingsIsolatedTestCase {
 
@@ -33,25 +33,19 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.unreadCount, 1, "never opened, so never read")
     }
 
-    /// 悬停只展开、不退役：指针离开后卡片回到收起态并继续倒计时。
-    func testHoverOnlyExpandsAndKeepsCountingDown() async throws {
-        let settings = AppSettings.shared
-        let oldDelay = settings.hoverDelayMilliseconds
-        settings.hoverDelayMilliseconds = 10
-        defer { settings.hoverDelayMilliseconds = oldDelay }
-
+    /// 悬停只暂停倒计时，永不展开：指针离开后倒计时继续，卡片全程保持收起态。
+    func testHoverHoldsCountdownWithoutExpanding() async throws {
         let m = NotificationManager()
         m.push(make("info", timeout: 0.5))
         let id = m.presentations.last!.item.id
 
         m.setHovering(true, for: id)
         try await Task.sleep(for: .milliseconds(80))
-        XCTAssertEqual(m.presentations.last?.expanded, true, "hover expands the card it is over")
+        XCTAssertEqual(m.presentations.last?.expanded, false, "hovering never expands — expansion is click-only")
         XCTAssertNil(m.dwellDeadlines[id], "the hovered card holds its countdown")
 
         m.setHovering(false, for: id)
-        XCTAssertEqual(m.presentations.last?.expanded, false, "leaving collapses the hover expansion")
-        XCTAssertNotNil(m.dwellDeadlines[id], "and the countdown resumes")
+        XCTAssertNotNil(m.dwellDeadlines[id], "leaving resumes the countdown")
 
         try await Task.sleep(for: .seconds(1))
         XCTAssertFalse(m.presentations.contains { $0.item.id == id }, "the budget runs out on its own")
@@ -71,19 +65,30 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.current?.title, "info")
     }
 
-    /// 点击展开后离开 → 由 hover 收起（不是自动计时）。v4：看过不等于点开，
-    /// 但点击是显式动作——展开即已读。
-    func testLeaveAfterEnteringCollapsesHoverExpansion() {
+    /// 点击展开后指针离开 → 展开保留：点击是显式动作，不收起、不退役。
+    /// v4：看过不等于点开，但点击是显式动作——展开即已读。
+    func testClickExpansionSurvivesPointerLeave() {
         let m = NotificationManager()
         m.push(make("info"))
         let id = m.presentations.last!.item.id
-        m.setHovering(true, for: id)
-        XCTAssertNotNil(m.presentations.first(where: { $0.item.id == id })?.expanded)
+        m.expandCard(id)
+        XCTAssertEqual(m.presentations.first(where: { $0.item.id == id })?.expanded, true)
 
+        m.setHovering(true, for: id)
         m.setHovering(false, for: id)
-        XCTAssertEqual(m.presentations.first(where: { $0.item.id == id })?.expanded, false,
-                       "leave collapses the hover expansion")
-        XCTAssertEqual(m.unreadCount, 1, "hovering is looking, not opening - the message waits to be read")
+        XCTAssertEqual(m.presentations.first(where: { $0.item.id == id })?.expanded, true,
+                       "a clicked expansion is deliberate — the pointer leaving does not collapse it")
+        XCTAssertEqual(m.unreadCount, 0, "the deliberate open already marked it read")
+    }
+
+    /// 关闭按钮 = 显式关闭：标记已读并退役（与超时退役的「未读保留」相反）。
+    func testCloseButtonMarksReadAndRetires() {
+        let m = NotificationManager()
+        m.push(make("info"))
+        let id = m.presentations.last!.item.id
+        m.closeCard(id)
+        XCTAssertFalse(m.presentations.contains { $0.item.id == id }, "the card leaves the screen")
+        XCTAssertEqual(m.unreadCount, 0, "a deliberate close means the user saw it")
     }
 
     /// 可操作卡：不计时，永不自动收起（aging 是唯一无人路径）。
@@ -144,7 +149,7 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.push(make("info"))
         let id = m.presentations.last!.item.id
-        m.expandCard(id, byHover: false)
+        m.expandCard(id)
         XCTAssertTrue(m.messages.readIDs.contains(id), "expanding by click marks it read")
 
         m.tapCard(id)

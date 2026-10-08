@@ -8,12 +8,8 @@ import AppKit
 /// completion. Anything more becomes buzzing.
 @MainActor
 enum SurfaceHaptics {
-    /// Pointer entered the compact island's activation zone: a light tick that
-    /// says "you hit the target" during the hover-expansion delay, before any
-    /// pixels change.
-    static func zoneEntered() { perform(.alignment) }
-
-    /// A deliberate manipulation completed: click-to-open, swipe-to-dismiss.
+    /// A deliberate manipulation completed: click-to-expand, close, fan the
+    /// deck out.
     static func actionConfirmed() { perform(.generic) }
 
     private static func perform(_ pattern: NSHapticFeedbackManager.FeedbackPattern) {

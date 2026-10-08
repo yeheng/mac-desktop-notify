@@ -4,55 +4,36 @@ import Foundation
 ///
 /// `reduce(_:)` is the single switch every pointer edge flows through: what
 /// `pointer` becomes, and the effects that follow. No other code writes it.
+///
+/// Hover never expands a card — expansion is click-only (`tapCard`). What
+/// hover still owns: a card under the pointer holds its dwell countdown (the
+/// user is reading it), and Esc scopes to that card.
 extension NotificationManager {
     func reduce(_ intent: PointerIntent) {
         switch intent {
         case .hoverBegan(let id):
             guard !pointer.onCard(id) else { return }
             pointer.onCardID = id
-            delayed.cancel(.manualCollapse(id))
-            delayed.schedule(.hoverExpand(id), after: hoverDelay()) { [weak self] in
-                guard let self, self.pointer.onCard(id) else { return }
-                self.expandCard(id, byHover: true)
-            }
+            reconcileDwell()
 
         case .hoverEnded(let id):
             guard pointer.onCard(id) else { return }
             pointer.onCardID = nil
-            delayed.cancel(.hoverExpand(id))
-            // A hover expansion collapses on leave; a clicked one stays.
-            if let index = presentations.firstIndex(where: { $0.item.id == id }),
-               presentations[index].expandedByHover {
-                collapseCard(id)
-                // A 260ms grace: leaving the card and coming straight back
-                // (crossing a button, say) must not collapse and re-expand.
-                delayed.schedule(.manualCollapse(id), after: .milliseconds(260)) { [weak self] in
-                    guard let self, self.pointer.onCardID == nil else { return }
-                    self.reconcileDwell()
-                }
-            }
             reconcileDwell()
 
         case .cardDismissed:
-            // Nothing re-expands until the pointer genuinely leaves, so a
-            // jiggle cannot reopen the card that was just put away.
-            pointer.hoverDismissed = true
             pointer.onCardID = nil
 
         case .displaySuppressed:
             pointer.onCardID = nil
-
-        case .cardClicked(let id):
-            // A deliberate click overrides the re-expansion ban.
-            pointer.hoverDismissed = false
-            delayed.cancel(.hoverExpand(id))
 
         case .cleared:
             pointer.reset()
         }
     }
 
-    /// Called by a card's hover. Expands that card and holds only its dwell.
+    /// Called by a card's hover. Records which card the pointer is on; the
+    /// dwell hold and the Esc scope derive from that.
     func setHovering(_ hovering: Bool, for id: UUID) {
         reduce(hovering ? .hoverBegan(id) : .hoverEnded(id))
     }
@@ -68,7 +49,6 @@ extension NotificationManager {
         for card in presentations {
             delayed.cancel(.notificationAutoClose(card.item.id))
             guard card.expanded,
-                  !card.expandedByHover,
                   card.item.urgency != .critical,
                   let after = card.policy.autoCloseAfter else { continue }
             let id = card.item.id
@@ -81,17 +61,12 @@ extension NotificationManager {
         }
     }
 
-    /// Whether `Esc` may close a card. Derived, not stored: an expanded card
-    /// that the user expanded deliberately (a click, not a hover) is Esc-able.
-    /// A hover expansion is not — the pointer is already on it, and a card that
-    /// expanded itself must not be collapsed by an `Esc` meant for another app.
+    /// Whether `Esc` may close a card. Derived, not stored: the expanded card
+    /// the pointer is on is Esc-able. A card that is not under the pointer is
+    /// not — an `Esc` meant for another app must not reach into the toast.
     var canDismissWithEscape: Bool {
         guard let id = pointer.onCardID,
               let card = presentations.first(where: { $0.item.id == id }) else { return false }
-        return card.expanded && !card.expandedByHover
-    }
-
-    private func hoverDelay() -> Duration {
-        Duration.milliseconds(Int(AppSettings.shared.hoverDelayMilliseconds))
+        return card.expanded
     }
 }

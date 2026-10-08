@@ -30,9 +30,6 @@ final class AppSettings {
 
     @ObservationIgnored private let defaults: UserDefaults
 
-    var hoverToExpand: Bool { didSet { save(hoverToExpand, key: Keys.hoverToExpand) } }
-    var hoverDelayMilliseconds: Double { didSet { save(hoverDelayMilliseconds, key: Keys.hoverDelayMilliseconds) } }
-    var autoCollapseOnLeave: Bool { didSet { save(autoCollapseOnLeave, key: Keys.autoCollapseOnLeave) } }
     var messageDwellSeconds: Double { didSet { save(messageDwellSeconds, key: Keys.messageDwellSeconds) } }
     var hideInFullscreen: Bool {
         didSet {
@@ -132,9 +129,6 @@ final class AppSettings {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        hoverToExpand = defaults.object(forKey: Keys.hoverToExpand.rawValue) as? Bool ?? true
-        hoverDelayMilliseconds = defaults.object(forKey: Keys.hoverDelayMilliseconds.rawValue) as? Double ?? 150
-        autoCollapseOnLeave = defaults.object(forKey: Keys.autoCollapseOnLeave.rawValue) as? Bool ?? true
         messageDwellSeconds = defaults.object(forKey: Keys.messageDwellSeconds.rawValue) as? Double ?? 5
         hideInFullscreen = defaults.object(forKey: Keys.hideInFullscreen.rawValue) as? Bool ?? false
         enableHaptics = defaults.object(forKey: Keys.enableHaptics.rawValue) as? Bool ?? true
@@ -181,9 +175,6 @@ final class AppSettings {
     /// way it needs its init line. Production never calls it.
     func resetForTests() {
         resetAllForTesting()
-        hoverToExpand = true
-        hoverDelayMilliseconds = 150
-        autoCollapseOnLeave = true
         messageDwellSeconds = 5
         hideInFullscreen = false
         enableHaptics = true
@@ -247,6 +238,11 @@ final class AppSettings {
     /// list. Internal (not private) so `@testable` tests can derive from it
     /// instead of maintaining a copy.
     enum Keys: String, CaseIterable {
+        // Retired with click-only expansion: hover never expands a card, so
+        // there is nothing to toggle, delay, or auto-collapse. The cases stay
+        // so `resetAllForTesting` keeps wiping the stale on-disk keys - user
+        // defaults are deliberately NOT cleaned, so a downgrade/rollback does
+        // not step on them.
         case hoverToExpand = "island.hoverToExpand"
         case hoverDelayMilliseconds = "island.hoverDelayMilliseconds"
         case autoCollapseOnLeave = "island.autoCollapseOnLeave"
@@ -303,34 +299,6 @@ final class AppSettings {
         case apiUnixSocketEnabled = "island.apiUnixSocketEnabled"
         case apiHttpEnabled = "island.apiHttpEnabled"
         case apiHttpPort = "island.apiHttpPort"
-    }
-}
-
-/// Which presenter draws the notifications: the notch island or a floating
-/// toast in the screen's top-right corner. The two shapes share everything
-/// behind the `NotchPresenting` seam - message stream, history, dwell rules,
-/// sounds - and differ only in where pixels land, so this is a launch-time
-/// choice, not a per-message one.
-enum PresentationStyle: String, CaseIterable, Identifiable {
-    /// The Dynamic Notch island (needs a display with a physical notch).
-    case island
-    /// A toast card anchored to the top-right corner; works on any display.
-    case toast
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .island: "灵动岛"
-        case .toast: "浮动 Toast"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .island: "消息出现在刘海区域，悬停或点击展开。需要带刘海的显示器。"
-        case .toast: "消息以卡片形式出现在屏幕右上角，点击展开面板。任何显示器都可用；悬停展开与指针跟随不生效。"
-        }
     }
 }
 

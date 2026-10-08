@@ -107,23 +107,14 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
         XCTAssertEqual(m.unreadCount, 1, "arriving is not reading")
     }
 
-    /// hover 展开不标读：没点开就是没点开。
-    func testHoverExpandNeverMarksRead() async throws {
-        let settings = AppSettings.shared
-        let oldHoverToExpand = settings.hoverToExpand
-        let oldDelay = settings.hoverDelayMilliseconds
-        settings.hoverToExpand = true
-        settings.hoverDelayMilliseconds = 10
-        defer {
-            settings.hoverToExpand = oldHoverToExpand
-            settings.hoverDelayMilliseconds = oldDelay
-        }
+    /// 悬停不展开、不标读：没点开就是没点开。
+    func testHoverNeverExpandsNorMarksRead() {
         let m = NotificationManager()
         m.push(make("a"))
         let id = m.current!.id
         m.setHovering(true, for: id)
-        try await Task.sleep(for: .milliseconds(80))
-        XCTAssertTrue(m.presentations.first(where: { $0.item.id == id })!.expandedByHover)
+        XCTAssertFalse(m.presentations.first(where: { $0.item.id == id })!.expanded,
+                       "hovering never expands — expansion is click-only")
         m.setHovering(false, for: id)   // pointer enters, then leaves
         XCTAssertEqual(m.unreadCount, 1, "hovering is looking, not opening - nothing marks read")
     }
@@ -140,7 +131,7 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
     func testClickExpandMarksOnlyThatCardRead() {
         let m = NotificationManager()
         for title in ["a", "b", "c", "d", "e"] { m.push(make(title)) }
-        m.expandCard(m.current!.id, byHover: false)
+        m.expandCard(m.current!.id)
         XCTAssertTrue(m.current.map { m.isRead($0) } ?? false, "点开卡片即点开这条消息")
         XCTAssertEqual(m.unreadCount, 4, "the other cards stay unread until they are opened")
         let other = m.presentations.first!
@@ -242,18 +233,19 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
     func testClickedExpansionIsEscAble() {
         let m = NotificationManager()
         m.push(make("a"))
-        m.expandCard(m.current!.id, byHover: false)
+        m.expandCard(m.current!.id)
         XCTAssertTrue(m.canDismissWithEscape, "a deliberately expanded card is Esc-able")
     }
 
-    /// A hover expansion is not: the pointer is on it, and Esc belongs to
-    /// another app.
-    func testHoverExpansionIsNotEscAble() {
+    /// Hovering a collapsed card is not Esc-able: hover never expands, so
+    /// there is nothing to close, and Esc belongs to whatever app the user
+    /// is in.
+    func testHoverAloneIsNotEscAble() {
         let m = NotificationManager()
         m.push(make("a"))
         let id = m.current!.id
         m.setHovering(true, for: id)
-        XCTAssertFalse(m.canDismissWithEscape, "Esc must not reach into a hover expansion")
+        XCTAssertFalse(m.canDismissWithEscape, "Esc must not reach into a collapsed, merely-hovered card")
     }
 
     /// A collapsed card is not Esc-able: there is nothing to close, and Esc
@@ -264,13 +256,12 @@ final class NotificationLogTests: SettingsIsolatedTestCase {
         XCTAssertFalse(m.canDismissWithEscape, "a collapsed card has nothing for Esc to close")
     }
 
-    /// Esc collapses the clicked expansion and leaves the hovered ones to the
-    /// pointer.
+    /// Esc collapses the clicked expansion and retires nothing.
     func testEscapeCollapsesTheClickedExpansion() {
         let m = NotificationManager()
         m.push(make("a"))
         m.push(make("b"))
-        m.expandCard(m.current!.id, byHover: false)
+        m.expandCard(m.current!.id)
         m.dismissExpandedCard()
         XCTAssertEqual(m.presentations.last?.expanded, false, "the clicked expansion collapses")
         XCTAssertEqual(m.presentations.count, 2, "Esc does not retire cards")

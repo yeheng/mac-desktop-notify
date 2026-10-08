@@ -40,7 +40,7 @@ class UtilityWindowController: NSObject, NSWindowDelegate {
         window?.close()
     }
 
-    func windowWillClose(_ notification: CardPayload) {
+    func windowWillClose(_ notification: Notification) {
         WindowShortcuts.remove(keyMonitor)
         keyMonitor = nil
         window = nil

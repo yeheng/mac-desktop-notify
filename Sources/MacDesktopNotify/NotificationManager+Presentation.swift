@@ -2,7 +2,7 @@ import Foundation
 
 /// The card-stack lifecycle: how a push joins the stack (`present`), how a
 /// card leaves it (`retireCard`), and the per-card entry points the views and
-/// the presenter call (tap = read + retire, hover = expand).
+/// the presenter call (tap = expand → read → retire, close = read + retire).
 extension NotificationManager {
     /// The number of cards on screen at once. Overflowing pushes still land in
     /// history, unread — they surface through the badge and the history window.
@@ -26,14 +26,17 @@ extension NotificationManager {
             remaining: nil,
             actionsHoldReleased: false,
             policy: resolvePolicy(for: item),
-            expanded: item.urgency == .critical,
-            expandedByHover: false
+            expanded: item.urgency == .critical
         )
         new.remaining = new.policy.budget
         while presentations.count >= Self.visibleCardLimit, presentations.first?.item.urgency != .critical {
             retireCard(presentations[0].item.id, readOnRetire: false)
         }
         presentations.append(new)
+        // A fresh push re-piles the deck: the new card is the front of the
+        // pile, and a fanned-out list left over from earlier messages would
+        // bury it at the far end.
+        stackExpanded = false
         notifyCompactStatusChanged()
         armLiveRules(for: item.id)
         // Presenting is what puts the window on screen; the push itself has
@@ -52,6 +55,7 @@ extension NotificationManager {
         stopAgingTimers(for: id)
         presentations.remove(at: index)
         if readOnRetire { markRead(id) }
+        reconcileDeck()
         notifyCompactStatusChanged()
     }
 
@@ -67,30 +71,17 @@ extension NotificationManager {
         if !card.expanded {
             // First tap expands instead of retiring: a tap on a collapsed card
             // is "show me more", not "done".
-            expandCard(id, byHover: false)
+            expandCard(id)
             return
         }
         markCardRead(id)
         retireCard(id, readOnRetire: false)
     }
 
-    /// Hover expansion for a single card. Only the hovered card expands; the
-    /// rest of the stack stays as it was.
-    func hoverCard(_ id: UUID, hovering: Bool) {
-        guard let index = presentations.firstIndex(where: { $0.item.id == id }) else { return }
-        if hovering {
-            if presentations[index].expanded { return }
-            expandCard(id, byHover: true)
-            pointer.onCardID = id
-        } else {
-            pointer.onCardID = nil
-            // A hover expansion is transient: leaving collapses it again. A
-            // clicked expansion is deliberate and survives the pointer.
-            if presentations[index].expanded, presentations[index].expandedByHover {
-                collapseCard(id)
-            }
-        }
-        reconcileDwell()
+    /// The close button: an explicit dismissal. The user saw the card and put
+    /// it away, so it is read — unlike a dwell timeout, which retires unseen.
+    func closeCard(_ id: UUID) {
+        retireCard(id, readOnRetire: true)
     }
 
     /// The stack is fully visible or fully hidden; there is no compact layer.
@@ -104,29 +95,18 @@ extension NotificationManager {
         openMessageCenter()
     }
 
-    /// A click that landed outside the toast while a card is expanded. The
-    /// hover-expanded cards collapse, the clicked ones stay: an outside click
-    /// is the pointer leaving, not a dismissal.
+    /// A click that landed outside the toast. A fanned-out deck piles itself
+    /// again — the toast floats over other apps' content, so "click away to
+    /// put it back" is how a floating pile behaves. Expanded cards stay: they
+    /// were opened deliberately, and an outside click is not a dismissal.
     func clickedOutsideStack() {
-        var changed = false
-        for (index, card) in presentations.enumerated() where card.expandedByHover {
-            presentations[index].expanded = false
-            presentations[index].expandedByHover = false
-            changed = true
-        }
-        if changed {
-            pointer.onCardID = nil
-            notifyCompactStatusChanged()
-            reconcileDwell()
-        }
+        setStackExpanded(false)
     }
 
-    /// Collapses every card that was expanded by a deliberate click. Hover
-    /// expansions collapse on their own when the pointer leaves, so they are
-    /// not this path's business.
+    /// Collapses every expanded card back to its summary. Esc lands here.
     func dismissExpandedCard() {
         for card in presentations {
-            if card.expanded, !card.expandedByHover { collapseCard(card.item.id) }
+            if card.expanded { collapseCard(card.item.id) }
         }
         pointer.onCardID = nil
         reduce(.cardDismissed)
@@ -138,9 +118,6 @@ extension NotificationManager {
         displaySuppressed = suppressed
         reduce(.displaySuppressed)
         delayed.cancelAll()
-        for card in presentations where card.expandedByHover {
-            collapseCard(card.item.id)
-        }
         pointer.onCardID = nil
         if !suppressed, let critical = presentations.first(where: { $0.item.urgency == .critical }) {
             // A critical that arrived while suppressed returns to blocking.
@@ -158,14 +135,16 @@ extension NotificationManager {
         markRead(id)
     }
 
-    func expandCard(_ id: UUID, byHover: Bool) {
+    /// Expands a card to its full body and actions. Expansion is click-only,
+    /// so reaching it always marks the message read — the click is the
+    /// deliberate open.
+    func expandCard(_ id: UUID) {
         guard let index = presentations.firstIndex(where: { $0.item.id == id }) else { return }
         presentations[index].expanded = true
-        presentations[index].expandedByHover = byHover
-        // The expanded card is the one the user is engaged with, whichever way
-        // it was expanded: Esc scopes to it through `pointer.onCardID`.
+        // The expanded card is the one the user is engaged with: Esc scopes
+        // to it through `pointer.onCardID`.
         pointer.onCardID = id
-        if !byHover { markCardRead(id) }
+        markCardRead(id)
         notifyCompactStatusChanged()
         reconcileDwell()
     }
@@ -173,7 +152,6 @@ extension NotificationManager {
     func collapseCard(_ id: UUID) {
         guard let index = presentations.firstIndex(where: { $0.item.id == id }) else { return }
         presentations[index].expanded = false
-        presentations[index].expandedByHover = false
         notifyCompactStatusChanged()
     }
 

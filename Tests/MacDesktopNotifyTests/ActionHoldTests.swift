@@ -27,7 +27,7 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
         let m = NotificationManager()
         m.push(make("approve", timeout: 0.3, actions: [approveAction]))
         let id = m.presentations.last!.item.id
-        m.expandCard(id, byHover: false)          // the sender is awaiting a decision
+        m.expandCard(id)          // the sender is awaiting a decision
 
         try await Task.sleep(for: .seconds(1))          // far past the 0.3 s budget
         XCTAssertEqual(m.current?.title, "approve",

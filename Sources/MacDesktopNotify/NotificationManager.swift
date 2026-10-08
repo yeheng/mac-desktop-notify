@@ -111,12 +111,9 @@ struct Presentation: Sendable {
     var policy: DwellPolicy
     /// Whether this card shows its full body and actions instead of the
     /// collapsed summary. Per-card, not per-window: one expanded card must
-    /// not expand its neighbours.
+    /// not expand its neighbours. Expansion is click-only: hovering a card
+    /// holds its countdown but never opens it.
     var expanded: Bool
-    /// Whether `expanded` was reached by hovering (as opposed to a click).
-    /// Hover expansion collapses again when the pointer leaves; a clicked
-    /// expansion is deliberate and stays.
-    var expandedByHover: Bool
 }
 
 /// What happened to a pushed message. Every outcome implies the message is in
@@ -163,6 +160,12 @@ final class NotificationManager {
     ///
     /// Observed storage: `current` reads it, so the UI invalidates when it changes.
     var presentations: [Presentation] = []
+
+    /// Whether the stack is fanned out into the full vertical list. `false`
+    /// is the macOS Notification Center pile: only the newest card is whole,
+    /// the rest peek out as edges above it. A tap on the edges fans the stack
+    /// out; a new push or an outside click piles it again.
+    var stackExpanded = false
 
     /// Pure history/read-state data, extracted so the invariants live in
     /// one place; the facades below keep the observed surface stable.
@@ -284,9 +287,26 @@ final class NotificationManager {
         messages.readIDs.contains(notification.id)
     }
 
-    /// True while the pointer is over any card. Used to scope Esc so it cannot
-    /// fire from other apps.
-    var pointerNearStack: Bool { pointer.onCardID != nil }
+    // MARK: - Deck (pile ↔ fan-out)
+
+    /// Fans the stack out (`true`) or piles it back (`false`). Piling with
+    /// fewer than two cards is meaningless, so the flag collapses itself.
+    func setStackExpanded(_ expanded: Bool) {
+        let next = expanded && presentations.count > 1
+        guard next != stackExpanded else { return }
+        stackExpanded = next
+        notifyCompactStatusChanged()
+    }
+
+    /// The pile is a one-card display: dropping to a single card makes the
+    /// fan-out meaningless, so the deck always settles back to piled. Internal
+    /// (not private): `retireCard` and `clear()` live in sibling extensions.
+    func reconcileDeck() {
+        if presentations.count <= 1, stackExpanded {
+            stackExpanded = false
+            notifyCompactStatusChanged()
+        }
+    }
 
     /// How many critical messages still wait for attention (unread, the live
     /// card included) - drives the "处理全部" affordance when criticals pile up.
@@ -444,6 +464,7 @@ final class NotificationManager {
             stopAgingTimers(for: card.item.id)
         }
         presentations = []
+        stackExpanded = false
         reduce(.cleared)
         notifyCompactStatusChanged()
         historyStore?.delete()

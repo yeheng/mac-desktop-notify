@@ -352,8 +352,6 @@ private struct GeneralSettingsContent: View {
 
     var body: some View {
         Section {
-            Toggle("悬停时展开卡片", isOn: $settings.hoverToExpand)
-            Toggle("鼠标离开时自动收起", isOn: $settings.autoCollapseOnLeave)
             Toggle("全屏应用中隐藏", isOn: $settings.hideInFullscreen)
             CaptionedToggle(
                 "屏幕录制时隐藏",
@@ -362,23 +360,11 @@ private struct GeneralSettingsContent: View {
             )
             CaptionedToggle(
                 "触觉反馈",
-                caption: "鼠标移入卡片并展开时，触控板给出轻戳确认。",
+                caption: "点击展开、关闭或展开堆叠时，触控板给出轻戳确认。",
                 isOn: $settings.enableHaptics
             )
         } footer: {
-            SectionFooter("悬停只展开指针所在的那张卡片，其余卡片继续倒计时。点击卡片才是显式动作——标记已读并收起。")
-        }
-
-        Section {
-            SliderRow(
-                title: "悬停延迟",
-                value: $settings.hoverDelayMilliseconds,
-                range: 50...500,
-                step: 10,
-                minimum: "50ms",
-                maximum: "500ms",
-                valueText: "\(Int(settings.hoverDelayMilliseconds)) ms"
-            )
+            SectionFooter("点击卡片展开完整正文与操作按钮；点击右上角 × 关闭。悬停只暂停指针所在卡片的倒计时，不会展开。")
         }
 
         Section {

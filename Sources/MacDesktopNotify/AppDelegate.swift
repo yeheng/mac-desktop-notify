@@ -7,8 +7,8 @@ extension Notification.Name {
     static let openSettings = Notification.Name("MacDesktopNotify.openSettings")
     /// Ask the app delegate to run its modal clear-all confirmation. The
     /// panel's own inline confirmationDialog dies with the panel window when
-    /// a hover-out or outside-click collapse races the confirmation; the
-    /// delegate's NSAlert lives in its own window and cannot.
+    /// the last card retires under it; the delegate's NSAlert lives in its
+    /// own window and cannot.
     static let requestClearAll = Notification.Name("MacDesktopNotify.requestClearAll")
     /// Same modal-confirmation escape hatch as `requestClearAll`, scoped to
     /// the history section only: the current message survives it.

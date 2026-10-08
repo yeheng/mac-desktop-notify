@@ -19,10 +19,6 @@ final class DelayedEvents {
         case criticalAging(UUID)
         /// The actions-hold release. One per card running a hold.
         case actionHoldAging(UUID)
-        /// The debounced hover expansion, keyed by the card that will expand.
-        case hoverExpand(UUID)
-        /// The debounced collapse after the pointer leaves a hover-expanded card.
-        case manualCollapse(UUID)
         case persist
         /// The undo toast's countdown: fires to drop the deletion journal.
         case deletionUndoExpiry
