@@ -36,6 +36,25 @@ final class APIRouterTests: SettingsIsolatedTestCase {
         XCTAssertEqual(manager.current?.clickURL?.host, "ci.example.com")
     }
 
+    /// `tags` 走同一道闸：数组到达模型，归一化后与发送方一致。
+    func testPushCarriesTags() async {
+        _ = await router.handle(APIRequest(
+            method: "POST", path: "/v1/push", query: [:],
+            body: json(["title": "构建完成", "tags": ["ci", "build", "prod"]])
+        ))
+        XCTAssertEqual(manager.current?.tags, ["ci", "build", "prod"])
+    }
+
+    /// 坏 tag 数组只丢坏条目，不丢消息（truncate, never reject）。
+    func testPushWithMalformedTagsStillDelivers() async {
+        let response = await router.handle(APIRequest(
+            method: "POST", path: "/v1/push", query: [:],
+            body: json(["title": "构建完成", "tags": ["ok", 7]])
+        ))
+        XCTAssertEqual(response.status, 200, "a malformed tag must not reject the push")
+        XCTAssertEqual(manager.current?.tags, ["ok"], "the good entry survives")
+    }
+
     func testPushWithoutTitleIs400WithField() async {
         let response = await router.handle(APIRequest(
             method: "POST", path: "/v1/push", query: [:], body: json(["body": "x"])

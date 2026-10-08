@@ -60,7 +60,8 @@ private struct HistoryView: View {
     private var items: [CardPayload] {
         manager.history.reversed().filter { item in
             (searchText.isEmpty || item.title.localizedStandardContains(searchText)
-                || item.bodyMarkdown.localizedStandardContains(searchText))
+                || item.bodyMarkdown.localizedStandardContains(searchText)
+                || item.tags.contains { $0.localizedStandardContains(searchText) })
                 && (filter != .unread || !manager.isRead(item))
                 && (filter != .critical || item.urgency == .critical)
         }

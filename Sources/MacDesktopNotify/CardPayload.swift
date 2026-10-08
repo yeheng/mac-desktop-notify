@@ -110,6 +110,12 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
     /// 卡片维持原行为。与 action 的 url 同一条规则：必须带 scheme，非法即
     /// 丢弃（truncate-never-reject）。
     var clickURL: URL?
+    /// Sender-defined labels (`tags` on the push). Normalized at ingress:
+    /// trimmed, de-duplicated, capped at `PushValidator.maxTags` entries of at
+    /// most `PushValidator.maxTagLength` characters. Never collapses or
+    /// filters anything - grouping is `group`'s job, tags only label.
+    /// Optional so history written before this field existed still decodes.
+    var tags: [String]
 
     init(
         id: UUID = UUID(),
@@ -124,7 +130,8 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
         displayPeek: Bool? = nil,
         island: StatusLine? = nil,
         occurrences: Int = 1,
-        clickURL: URL? = nil
+        clickURL: URL? = nil,
+        tags: [String] = []
     ) {
         self.id = id
         self.title = title
@@ -139,6 +146,7 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
         self.island = island
         self.occurrences = occurrences
         self.clickURL = clickURL
+        self.tags = tags
     }
 
     /// Lenient decoding, on the `NotificationAction` precedent: the snapshot is
@@ -162,6 +170,7 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
         island = try container.decodeIfPresent(StatusLine.self, forKey: .island)
         occurrences = try container.decodeIfPresent(Int.self, forKey: .occurrences) ?? 1
         clickURL = try container.decodeIfPresent(URL.self, forKey: .clickURL)
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
     }
 
     /// A non-empty trimmed group, or `nil`. Blank groups never collapse anything.
@@ -170,4 +179,9 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
               !trimmed.isEmpty else { return nil }
         return trimmed
     }
+
+    /// Lower-cased, sorted tags — the search key. A nil-and-empty and an
+    /// unknown-case list match the same way, so history search is one
+    /// `localizedCaseInsensitiveContains` rather than a per-tag compare.
+    var searchableTags: String { tags.joined(separator: " ").lowercased() }
 }

@@ -20,7 +20,8 @@ enum URLNotificationParser {
             group: value("group"),
             actions: parseActions(value("actions")),
             script: value("script"),
-            clickUrl: value("click")
+            clickUrl: value("click"),
+            tags: parseTags(value("tags"))
         ) {
         case .success(var notification):
             // The `display` hint is a URL-scheme concern; `PushValidator` is the
@@ -49,6 +50,15 @@ enum URLNotificationParser {
         case "expand": false
         default: nil
         }
+    }
+
+    /// Parses the `tags` parameter: comma-separated labels. A URL query has
+    /// no native array, so the comma is the separator — the same shape the
+    /// `actions` payload uses for its own list. Whitespace around each entry
+    /// is trimmed by `normalizedTags`.
+    static func parseTags(_ raw: String?) -> [String] {
+        guard let raw, !raw.isEmpty else { return [] }
+        return raw.components(separatedBy: ",")
     }
 
     /// Parses the `group` parameter: a sender-defined key that collapses repeat

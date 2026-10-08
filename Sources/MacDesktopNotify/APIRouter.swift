@@ -73,6 +73,7 @@ final class APIRouter: Sendable {
         let island: PushValidator.IslandDTO?
         let script: String?
         let clickUrl: String?
+        let tags: [PushValidator.TagDTO]?
     }
 
     private enum PushResult {
@@ -85,12 +86,13 @@ final class APIRouter: Sendable {
     /// this door cannot forget it.
     private func performPush(_ payload: PushPayload) async -> PushResult {
         let actions = PushValidator.actions(from: payload.actions ?? [])
+        let tags = PushValidator.tags(from: payload.tags ?? [])
         let bodyText = PushValidator.body(fromBlocks: payload.blocks) ?? payload.body
         switch PushValidator.makeNotification(
             title: payload.title ?? "", body: bodyText, urgencyRaw: payload.urgency,
             timeout: payload.timeout, group: payload.group, actions: actions,
             script: payload.script, island: PushValidator.normalizedIsland(payload.island),
-            clickUrl: payload.clickUrl
+            clickUrl: payload.clickUrl, tags: tags
         ) {
         case .success(let notification):
             // Only jump to MainActor when calling manager.
@@ -131,6 +133,7 @@ final class APIRouter: Sendable {
         let island: PushValidator.IslandDTO?
         let script: String?
         let clickUrl: String?
+        let tags: [PushValidator.TagDTO]?
     }
 
     private struct PushResponse: Codable {
@@ -151,7 +154,7 @@ final class APIRouter: Sendable {
         let payload = PushPayload(
             title: dto.title, body: dto.body, urgency: dto.urgency, timeout: dto.timeout,
             group: dto.group, actions: dto.actions, blocks: dto.blocks, island: dto.island,
-            script: dto.script, clickUrl: dto.clickUrl)
+            script: dto.script, clickUrl: dto.clickUrl, tags: dto.tags)
         switch await performPush(payload) {
         case .delivered(let outcome, let id):
             return .ok(PushResponse(outcome: outcome.label, id: id.uuidString))
@@ -272,6 +275,7 @@ final class APIRouter: Sendable {
         let island: PushValidator.IslandDTO?
         let script: String?
         let clickUrl: String?
+        let tags: [PushValidator.TagDTO]?
         let input: ScriptValue?
         let timeoutMs: Int?
     }
@@ -313,7 +317,7 @@ final class APIRouter: Sendable {
             let payload = PushPayload(
                 title: dto.title, body: dto.body, urgency: dto.urgency, timeout: dto.timeout,
                 group: dto.group, actions: dto.actions, blocks: dto.blocks, island: dto.island,
-                script: dto.script, clickUrl: dto.clickUrl)
+                script: dto.script, clickUrl: dto.clickUrl, tags: dto.tags)
             switch await performPush(payload) {
             case .delivered(let outcome, let id):
                 return encodeFrame(WSResultFrame(
@@ -416,6 +420,7 @@ struct HistoryItemDTO: Codable {
     let timestamp: Double
     let actions: [NotificationAction]
     let group: String?
+    let tags: [String]
     let read: Bool
 
     init(item: CardPayload, read: Bool) {
@@ -423,6 +428,7 @@ struct HistoryItemDTO: Codable {
         self.title = item.title
         self.body = item.bodyMarkdown
         self.urgency = item.urgency.rawValue
+        self.tags = item.tags
         self.timeout = item.timeout
         self.timestamp = item.timestamp.timeIntervalSince1970
         self.actions = item.actions

@@ -156,3 +156,37 @@ final class URLNotificationParserTests: XCTestCase {
         XCTAssertNil(plain?.clickURL)
     }
 }
+
+/// `tags` is a URL query, so it has no native array: the comma is the
+/// separator, and the shared normalizer does the trimming and capping.
+extension URLNotificationParserTests {
+    func testParsesCommaSeparatedTags() {
+        let url = URL(string: "notch-notify://push?title=a&tags=ci,build,prod")!
+        XCTAssertEqual(URLNotificationParser.parsePush(url)?.tags, ["ci", "build", "prod"])
+    }
+
+    func testTagDedupeIsCaseInsensitive() {
+        let url = URL(string: "notch-notify://push?title=a&tags=CI,ci,Ci,build")!
+        XCTAssertEqual(URLNotificationParser.parsePush(url)?.tags, ["CI", "build"])
+    }
+
+    func testBlankTagsAreDroppedNotRejected() {
+        let url = URL(string: "notch-notify://push?title=a&tags=,a,,b,")!
+        XCTAssertEqual(URLNotificationParser.parsePush(url)?.tags, ["a", "b"])
+    }
+
+    func testOverlongTagIsTruncatedNotRejected() {
+        let long = String(repeating: "x", count: 40)
+        let url = URL(string: "notch-notify://push?title=a&tags=\(long),short")!
+        let tags = URLNotificationParser.parsePush(url)?.tags ?? []
+        XCTAssertEqual(tags.count, 2)
+        XCTAssertEqual(tags[0].count, PushValidator.maxTagLength)
+        XCTAssertEqual(tags[1], "short")
+    }
+
+    func testTagCapKeepsTheFirstEight() {
+        let list = (1...12).map { "t\($0)" }.joined(separator: ",")
+        let url = URL(string: "notch-notify://push?title=a&tags=\(list)")!
+        XCTAssertEqual(URLNotificationParser.parsePush(url)?.tags.count, PushValidator.maxTags)
+    }
+}

@@ -307,4 +307,45 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
 
         XCTAssertEqual(loaded.items.first?.clickURL, item.clickURL)
     }
+
+    /// Tags survive the round trip: they are a first-class field, and an old
+    /// snapshot without them decodes to an empty list rather than failing.
+    func testTagsSurvivePersistenceRoundTrip() throws {
+        let store = makeStore()
+        let item = CardPayload(title: "tagged", bodyMarkdown: "x", urgency: .normal, timeout: 60,
+                               tags: ["ci", "prod"])
+        try store.save(HistorySnapshot(items: [item], readIDs: []))
+
+        let loaded = HistorySnapshot.decodeIfPresent(store)
+        guard let snapshot = loaded else { return XCTFail("must load") }
+        XCTAssertEqual(snapshot.items.first?.tags, ["ci", "prod"])
+    }
+
+    /// A snapshot written before `tags` existed still loads - `decodeIfPresent`
+    /// gives it an empty list instead of quarantining the whole file.
+    func testLegacySnapshotWithoutTagsStillLoads() throws {
+        let store = makeStore()
+        let legacy = """
+        {"schemaVersion":1,"items":[{"title":"old","bodyMarkdown":"x","urgency":"normal",
+         "timeout":60,"timestamp":813130116.0,"id":"0E3E1B4A-0000-4000-8000-000000000001",
+         "occurrences":1,"actions":[]}],"readIDs":[]}
+        """.data(using: .utf8)!
+        try FileManager.default.createDirectory(
+            at: store.fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try legacy.write(to: store.fileURL)
+
+        guard case .loaded(let snapshot) = store.load() else { return XCTFail("must load") }
+        XCTAssertEqual(snapshot.items.first?.tags, [], "a missing field is an empty list")
+    }
+}
+
+extension HistorySnapshot {
+    /// Decodes the raw file into a snapshot, or nil - the shape a strict
+    /// reader would see if it had to name a failure.
+    static func decodeIfPresent(_ store: NotificationHistoryStore) -> HistorySnapshot? {
+        guard let data = try? Data(contentsOf: store.fileURL) else { return nil }
+        return try? JSONDecoder().decode(HistorySnapshot.self, from: data)
+    }
 }

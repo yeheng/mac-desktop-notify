@@ -38,6 +38,10 @@ enum PushValidator {
     /// Island status text cap: the mini bar's 240pt @11pt ceiling fits roughly
     /// this, and the pill measures whatever it gets (`maxGroupLength` precedent).
     static let maxIslandTextLength = 64
+    /// Tag caps. A tag labels a message; eight of them label it well, and a
+    /// longer one is clipboard debris (`maxActions` precedent).
+    static let maxTags = 8
+    static let maxTagLength = 24
 
     /// Every sender-controlled field of a message, after normalization.
     ///
@@ -51,6 +55,7 @@ enum PushValidator {
         var group: String?
         var actions: [NotificationAction]
         var clickURL: URL?
+        var tags: [String]
     }
 
     /// The one normalization of sender-controlled fields.
@@ -68,7 +73,8 @@ enum PushValidator {
         timeout: Double?,
         group: String?,
         actions: [NotificationAction],
-        clickUrl: String? = nil
+        clickUrl: String? = nil,
+        tags: [String] = []
     ) -> Fields {
         var trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedTitle.count > maxTitleLength {
@@ -81,8 +87,26 @@ enum PushValidator {
             timeout: clampedTimeout(timeout),
             group: normalizedGroup(group),
             actions: normalizedActions(actions),
-            clickURL: normalizedClickURL(clickUrl)
+            clickURL: normalizedClickURL(clickUrl),
+            tags: normalizedTags(tags)
         )
+    }
+
+    /// The sender's tags, trimmed, de-duplicated (case-insensitively: "CI"
+    /// and "ci" are one label) and capped. Truncate, never reject: a 40-char
+    /// tag loses its tail, it does not lose the message.
+    static func normalizedTags(_ raw: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for entry in raw {
+            let trimmed = entry.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let cut = trimmed.count > maxTagLength ? String(trimmed.prefix(maxTagLength)) : trimmed
+            guard seen.insert(cut.lowercased()).inserted else { continue }
+            result.append(cut)
+            if result.count == maxTags { break }
+        }
+        return result
     }
 
     /// The card's click-through link. Same rule as an action's url — must carry
@@ -111,6 +135,19 @@ enum PushValidator {
     static func clampedTimeout(_ timeout: Double?) -> TimeInterval? {
         timeout.flatMap {
             $0.isFinite ? min(max($0, timeoutRange.lowerBound), timeoutRange.upperBound) : nil
+        }
+    }
+
+    /// `tags` as the JSON ingresses decode it. Tolerant on purpose, on the
+    /// `ActionDTO` precedent: a wrongly-typed entry decodes as nil and is
+    /// dropped by `normalizedTags`, so one bad tag costs only itself. A strict
+    /// `[String]` field would fail the WHOLE body decode, and one odd number
+    /// in a tags array would silently reject the entire push.
+    struct TagDTO: Decodable {
+        let value: String?
+
+        init(from decoder: Decoder) throws {
+            value = try? String(from: decoder)
         }
     }
 
@@ -147,6 +184,12 @@ enum PushValidator {
             }
             args = try container.decodeIfPresent(ScriptValue.self, forKey: .args)
         }
+    }
+
+    /// TagDTO → [String]. The tolerant entries the decoder kept become the
+    /// strings the model stores; nil entries (wrongly-typed) are dropped here.
+    static func tags(from dtos: [TagDTO]) -> [String] {
+        dtos.compactMap(\.value)
     }
 
     /// DTO → model，所有 JSON 入口共用（URL query 载荷、HTTP body、WS 帧）。
@@ -292,7 +335,8 @@ enum PushValidator {
         actions: [NotificationAction],
         script: String? = nil,
         island: StatusLine? = nil,
-        clickUrl: String? = nil
+        clickUrl: String? = nil,
+        tags: [String] = []
     ) -> Result<CardPayload, PushRejection> {
         var rawTitle = title
         if let script {
@@ -306,7 +350,8 @@ enum PushValidator {
 
         let fields = normalize(
             title: rawTitle, body: body, urgencyRaw: urgencyRaw,
-            timeout: timeout, group: group, actions: actions, clickUrl: clickUrl
+            timeout: timeout, group: group, actions: actions, clickUrl: clickUrl,
+            tags: tags
         )
         guard !fields.title.isEmpty else { return .failure(.missingTitle) }
 
@@ -319,7 +364,8 @@ enum PushValidator {
             group: fields.group,
             script: script,
             island: island,
-            clickURL: fields.clickURL
+            clickURL: fields.clickURL,
+            tags: fields.tags
         ))
     }
 

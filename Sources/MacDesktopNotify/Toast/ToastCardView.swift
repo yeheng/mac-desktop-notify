@@ -117,6 +117,12 @@ struct ToastCardView: View {
                 if spec.showOccurrences, card.item.occurrences > 1 {
                     OccurrenceTag(count: card.item.occurrences)
                 }
+                if spec.showTags, !card.item.tags.isEmpty {
+                    Text(card.item.tags.joined(separator: " · "))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(tokens.textSubtle)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 0)
                 if spec.showProgress, card.item.island?.progress != nil {
                     Text("\(Int((card.item.island?.progress ?? 0) * 100))%")
