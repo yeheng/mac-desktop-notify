@@ -127,7 +127,7 @@ final class ToastPresenter: SurfacePresenting {
                 contentSize: panel.contentView?.fittingSize ?? .zero,
                 visibleFrame: screen.visibleFrame,
                 position: AppSettings.shared.toastPosition,
-                minWidth: 320,
+                minWidth: 396,          // 380 stack + 8 padding each side
                 minHeight: 0
             ),
             display: true

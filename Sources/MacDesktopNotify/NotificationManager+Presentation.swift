@@ -36,6 +36,9 @@ extension NotificationManager {
         presentations.append(new)
         notifyCompactStatusChanged()
         armLiveRules(for: item.id)
+        // Presenting is what puts the window on screen; the push itself has
+        // already decided the card belongs there.
+        presentCurrent()
     }
 
     /// Retires one card from the stack. The message stays in history — what

@@ -38,11 +38,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 「静默 1 小时」/「取消静默」——标题随 `isSilenced` 翻转。
     private var silenceMenuItem: NSMenuItem?
 
-    func applicationWillFinishLaunching(_ notification: CardPayload) {
+    func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
     }
 
-    func applicationDidFinishLaunching(_ notification: CardPayload) {
+    func applicationDidFinishLaunching(_ notification: Notification) {
         let presenter = ToastPresenter()
         self.presenter = presenter            // retain (manager holds it weakly)
         NotificationManager.shared.attach(presenter)
@@ -127,7 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The debounced history write is only a latency optimization; quitting
     /// inside its window would drop the newest message (or the last read-state
     /// change), which is the one thing persistence exists to prevent.
-    func applicationWillTerminate(_ notification: CardPayload) {
+    func applicationWillTerminate(_ notification: Notification) {
         // Stop the listeners so the unix socket file does not outlive the
         // process. A crash still leaves one behind; the next launch probes and
         // unlinks it rather than reporting a bogus conflict.

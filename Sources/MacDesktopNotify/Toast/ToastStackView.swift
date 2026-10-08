@@ -14,6 +14,11 @@ struct ToastStackView: View {
     private var manager: NotificationManager { .shared }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// The stack's width. A card fits its content up to this bound, which is
+    /// what keeps a long title from stretching the window across the display;
+    /// the window itself is clamped to the screen by `ToastLayout`.
+    private var width: CGFloat { 380 }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(manager.presentations.enumerated()), id: \.element.item.id) { index, card in
@@ -37,6 +42,7 @@ struct ToastStackView: View {
             }
         }
         .padding(8)
+        .frame(width: width, alignment: .leading)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: manager.presentations.map(\.item.id))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("通知堆叠，共 \(manager.presentations.count) 条")

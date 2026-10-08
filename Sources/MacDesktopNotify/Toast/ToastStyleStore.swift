@@ -88,7 +88,6 @@ final class ToastStyleStore {
     private(set) var revision = 0
 
     @ObservationIgnored private var loadedSpec: ToastStyleSpec = .default
-    @ObservationIgnored private var lastDiagnostics: [String] = []
     @ObservationIgnored private var attemptedID: String?
     @ObservationIgnored private var schemeCache: [ColorScheme: ResolvedToastStyle] = [:]
     @ObservationIgnored private var watcher: DirectoryWatcher?
@@ -153,9 +152,10 @@ final class ToastStyleStore {
             apply(spec: .default, diagnostics: ["样式文件不存在：\(requested).json，已使用默认样式"])
             return
         case .failure(let message):
+            // The last good spec survives untouched; only the report changes.
             loadedSpec = previous
             schemeCache = previousCache
-            lastDiagnostics = [message]
+            diagnostics = [message]
             revision += 1
         }
     }
@@ -191,7 +191,6 @@ final class ToastStyleStore {
 
     private func apply(spec: ToastStyleSpec, diagnostics: [String]) {
         loadedSpec = spec
-        lastDiagnostics = diagnostics
         schemeCache.removeAll()
         self.diagnostics = diagnostics
         revision += 1

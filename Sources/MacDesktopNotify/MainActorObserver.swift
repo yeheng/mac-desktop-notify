@@ -9,7 +9,7 @@ import Foundation
 /// thread, where the assertion traps (loudly, which is the point). The pairing
 /// used to be copied at every call site; now it is written once, here.
 ///
-/// Handlers that need the `CardPayload` payload itself keep the explicit
+/// Handlers that need the `Notification` payload itself keep the explicit
 /// `addObserver` form; this helper is for the (far more common) "something
 /// changed, re-derive" sites.
 @discardableResult
