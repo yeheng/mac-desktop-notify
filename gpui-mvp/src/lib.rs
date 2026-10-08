@@ -12,6 +12,8 @@ pub mod theme;
 pub mod desktop;
 pub mod inbox;
 mod platform;
+pub mod settings;
+pub mod toast_style;
 #[path = "../../src-tauri/src/transport/mod.rs"]
 pub mod transport;
 pub mod tray;

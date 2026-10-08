@@ -10,12 +10,17 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrayEvent {
     OpenHistory,
+    OpenSettings,
     Quit,
 }
 
 /// Menu item tags map 1:1 onto [`TrayEvent`]; the target sends the tag.
 #[cfg(target_os = "macos")]
-const TAGS: [TrayEvent; 2] = [TrayEvent::OpenHistory, TrayEvent::Quit];
+const TAGS: [TrayEvent; 3] = [
+    TrayEvent::OpenHistory,
+    TrayEvent::OpenSettings,
+    TrayEvent::Quit,
+];
 
 #[cfg(target_os = "macos")]
 mod platform {
@@ -74,7 +79,7 @@ mod platform {
 
         let menu = NSMenu::new(mtm);
         menu.setAutoenablesItems(false);
-        for (ix, (label, separated)) in [("打开消息历史", false), ("退出", true)]
+        for (ix, (label, separated)) in [("打开消息历史…", false), ("设置…", false), ("退出", true)]
             .into_iter()
             .enumerate()
         {
@@ -164,6 +169,7 @@ mod platform {
     const CALLBACK_MSG: u32 = WM_APP + 1;
     const TRAY_ID: u32 = 1;
     const MENU_OPEN: usize = 1000;
+    const MENU_SETTINGS: usize = 1002;
     const MENU_QUIT: usize = 1001;
 
     /// Explorer 重启后广播 "TaskbarCreated"；消息窗口需据此重挂图标。
@@ -196,7 +202,8 @@ mod platform {
             return;
         };
         let picked = unsafe {
-            let _ = AppendMenuW(menu, MF_STRING, MENU_OPEN, w!("打开消息历史"));
+            let _ = AppendMenuW(menu, MF_STRING, MENU_OPEN, w!("打开消息历史…"));
+            let _ = AppendMenuW(menu, MF_STRING, MENU_SETTINGS, w!("设置…"));
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             let _ = AppendMenuW(menu, MF_STRING, MENU_QUIT, w!("退出"));
             let mut cursor = POINT::default();
@@ -221,6 +228,7 @@ mod platform {
         };
         match picked {
             MENU_OPEN => send(TrayEvent::OpenHistory),
+            MENU_SETTINGS => send(TrayEvent::OpenSettings),
             MENU_QUIT => send(TrayEvent::Quit),
             _ => {}
         }

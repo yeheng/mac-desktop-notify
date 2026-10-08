@@ -1,5 +1,9 @@
 //! Render and exercise desktop notifications with the real macOS text/Metal
 //! backend. No history window or demo database is involved.
+//!
+//! `--animation slide|fade|zoom|bounce|none` picks the enter/exit motion the
+//! rendered cards play (default: zoom, so the demo differs from the app
+//! default).
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     HeadlessAppContext,
@@ -10,6 +14,7 @@ use gpui_kit::{
 use notify_gpui_mvp::{
     desktop::{Desktop, bind_keys},
     service::Service,
+    toast_style::{Preferences, ToastEffect},
 };
 use serde_json::json;
 use std::{
@@ -38,6 +43,21 @@ fn settle(cx: &mut HeadlessAppContext, millis: u64) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
+    let mut effect = ToastEffect::Zoom;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--animation" => {
+                let id = args.next().ok_or_else(|| {
+                    anyhow::anyhow!("--animation requires slide|fade|zoom|bounce|none")
+                })?;
+                effect = ToastEffect::parse(&id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown animation '{id}'"))?;
+            }
+            _ => anyhow::bail!("Usage: notification [--animation slide|fade|zoom|bounce|none]"),
+        }
+    }
+    eprintln!("Rendering toasts with the '{}' effect", effect.label());
     let runtime = tokio::runtime::Runtime::new()?;
     let service =
         Service::start(Path::new(":memory:"), None).map_err(|e| anyhow::anyhow!(e.message))?;
@@ -58,7 +78,13 @@ fn main() -> anyhow::Result<()> {
     cx.update(|cx| {
         gpui_kit::init(cx);
         bind_keys(cx);
-        Desktop::install(service.clone(), false, cx);
+        Desktop::install(
+            service.clone(),
+            Preferences::load(std::env::temp_dir().join("mdn-render-preferences.json"))
+                .with_animation(effect),
+            false,
+            cx,
+        );
     });
     settle(&mut cx, 1000)?;
     let handle = cx.update(|cx| cx.windows()[0]);

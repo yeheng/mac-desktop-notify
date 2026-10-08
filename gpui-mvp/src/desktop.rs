@@ -1,10 +1,15 @@
+use crate::settings::SettingsView;
+use crate::theme::Tokens;
+use crate::toast_style::{Preferences, ToastEffect, ToastSkin, toast_shadow};
 use crate::tray::{self, Tray, TrayEvent};
 use crate::{inbox::NotificationCenter, service::Service};
-use gpui_kit::base::{ToastStack, ToastStackState};
+use gpui_kit::base::{
+    Toast as BaseToast, ToastManager, ToastMotion, ToastOptions, ToastStack, ToastStackState,
+    ToastTransitionStatus,
+};
 use gpui_kit::component::{
-    ActiveTheme, Disableable, ElementExt, Sizable,
+    ActiveTheme, Disableable, ElementExt, Icon, IconName, Sizable,
     button::{Button, ButtonVariants},
-    notification::{Notification, NotificationList, NotificationType},
     progress::Progress,
     scroll::ScrollableElement,
 };
@@ -14,24 +19,42 @@ use serde_json::{Value, json};
 use std::{cell::Cell, collections::HashMap, rc::Rc, time::Duration};
 use tokio::sync::mpsc;
 
-actions!(desktop, [OpenCenter, Dismiss]);
+actions!(desktop, [OpenCenter, OpenSettings, Dismiss, CycleAnimation]);
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("escape", Dismiss, Some("DesktopToast")),
         KeyBinding::new("secondary-shift-h", OpenCenter, None),
+        // The platform convention for the settings window.
+        KeyBinding::new("secondary-comma", OpenSettings, None),
+        KeyBinding::new("secondary-shift-a", CycleAnimation, Some("DesktopToast")),
     ]);
 }
+
+/// How often the lifecycle clock samples transitions and pause input.
+const TOAST_ADVANCE_INTERVAL: Duration = Duration::from_millis(50);
+/// Toasts kept in the stack render before older ones drop out.
+const TOAST_MAX_ITEMS: usize = 10;
 
 /// Own the receiver for the application lifetime, independently of any window.
 pub struct Desktop {
     service: Service,
     center: Option<(AnyWindowHandle, Entity<NotificationCenter>)>,
+    settings: Option<(AnyWindowHandle, Entity<SettingsView>)>,
     toast: Option<(AnyWindowHandle, Entity<ToastSurface>)>,
     tray: Option<Tray>,
+    effect: ToastEffect,
+    /// Presenter-only preferences (the toast animation) persisted beside the
+    /// database; `effect` is the live value and both move together.
+    preferences: Preferences,
+    /// The appearance mode ("system"/"light"/"dark") currently applied, so a
+    /// settings change arriving through any snapshot applies exactly once.
+    appearance: String,
     _receiver: Task<()>,
+    _appearance: Task<()>,
     _tray_events: Task<()>,
     _tray_badge: Task<()>,
+    _windows: Subscription,
 }
 
 struct DesktopGlobal(Entity<Desktop>);
@@ -47,15 +70,28 @@ struct ToastNotice {
     level: String,
     progress: Option<f64>,
     actions: Vec<crate::model::Action>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    created_at: i64,
 }
 
 impl ToastNotice {
-    fn notification_type(&self) -> NotificationType {
+    fn level_label(&self) -> &'static str {
         match self.level.as_str() {
-            "success" => NotificationType::Success,
-            "warning" => NotificationType::Warning,
-            "error" => NotificationType::Error,
-            _ => NotificationType::Info,
+            "success" => "成功",
+            "warning" => "警告",
+            "error" => "错误",
+            _ => "消息",
+        }
+    }
+
+    fn level_icon(&self) -> IconName {
+        match self.level.as_str() {
+            "success" => IconName::CircleCheck,
+            "warning" => IconName::TriangleAlert,
+            "error" => IconName::CircleX,
+            _ => IconName::Info,
         }
     }
 }
@@ -63,6 +99,50 @@ impl ToastNotice {
 #[derive(Deserialize)]
 struct Snapshot {
     items: Vec<ToastNotice>,
+    #[serde(default)]
+    settings: SnapshotSettings,
+}
+
+/// The snapshot's settings section. `toast.snapshot` answers with the
+/// decorated settings, so the active theme pack (`style.theme`) and the
+/// reduced-motion flag ride along with every reconcile.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct SnapshotSettings {
+    reduced_motion: bool,
+    /// Appearance mode ("system"/"light"/"dark") shared with the production
+    /// settings; empty when the store predates the field.
+    theme: String,
+    style: SnapshotStyle,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct SnapshotStyle {
+    theme: Tokens,
+}
+
+/// The presentation choices the surface and its cards share: the production
+/// theme tokens in force and the selected motion. Settings own the tokens;
+/// the effect is local presentation state this MVP selects via CLI and the
+/// `CycleAnimation` keybinding.
+#[derive(Clone, Debug)]
+struct ToastPresence {
+    tokens: Tokens,
+    effect: ToastEffect,
+    reduced_motion: bool,
+}
+
+impl ToastPresence {
+    /// The motion actually played: reduced motion — from settings or the
+    /// operating system — always wins by presenting without transition.
+    fn effective(&self, cx: &App) -> ToastEffect {
+        if self.reduced_motion || cx.reduce_motion() {
+            ToastEffect::None
+        } else {
+            self.effect
+        }
+    }
 }
 
 impl Desktop {
@@ -70,20 +150,16 @@ impl Desktop {
         if !cx.has_global::<DesktopGlobal>() {
             return;
         }
-        let window = cx
-            .global::<DesktopGlobal>()
-            .0
-            .read(cx)
-            .toast
-            .as_ref()
-            .map(|(window, _)| *window);
+        let desktop = cx.global::<DesktopGlobal>().0.clone();
+        let window = desktop.read(cx).foreground_window();
         cx.activate(true);
         if let Some(window) = window {
             let _ = window.update(cx, |_, window, _| window.activate_window());
         }
     }
 
-    pub fn install(service: Service, show_center: bool, cx: &mut App) {
+    pub fn install(service: Service, preferences: Preferences, show_center: bool, cx: &mut App) {
+        let effect = preferences.animation();
         let desktop = cx.new(|cx: &mut Context<Self>| {
             let receiver_service = service.clone();
             let mut changes = service.subscribe();
@@ -118,6 +194,25 @@ impl Desktop {
                     }
                 }
             });
+            // Apply the persisted appearance once the store answers; later
+            // changes ride through every reconcile.
+            let appearance_service = service.clone();
+            let appearance = cx.spawn(async move |view, cx| {
+                match appearance_service
+                    .call(None, "settings.get", json!({}))
+                    .await
+                {
+                    Ok(value) => {
+                        if let Some(mode) = value["theme"].as_str().map(str::to_owned) {
+                            let _ = view.update(cx, |this, cx| {
+                                this.appearance = mode.clone();
+                                crate::settings::apply_appearance(&mode, cx);
+                            });
+                        }
+                    }
+                    Err(error) => eprintln!("settings: {}", error.message),
+                }
+            });
             // Native menu clicks arrive on the AppKit main thread with no GPUI
             // context; the channel hands them to a foreground task instead.
             // Events run at App level: open_history updates this same entity,
@@ -127,6 +222,7 @@ impl Desktop {
                 while let Some(event) = tray_rx.recv().await {
                     cx.update(|cx| match event {
                         TrayEvent::OpenHistory => Self::open_center(cx),
+                        TrayEvent::OpenSettings => Self::open_settings(cx),
                         TrayEvent::Quit => cx.quit(),
                     });
                 }
@@ -161,20 +257,54 @@ impl Desktop {
                     badge_changes.borrow_and_update();
                 }
             });
+            // Window closures arrive after the window is gone, so this is the
+            // only accurate signal for clearing the managed handles — and the
+            // hook the Dock visibility follows.
+            let _windows = cx.on_window_closed(|cx, window_id| {
+                if !cx.has_global::<DesktopGlobal>() {
+                    return;
+                }
+                let desktop = cx.global::<DesktopGlobal>().0.clone();
+                desktop.update(cx, |this, cx| {
+                    if this
+                        .center
+                        .as_ref()
+                        .is_some_and(|(handle, _)| handle.window_id() == window_id)
+                    {
+                        this.center = None;
+                    }
+                    if this
+                        .settings
+                        .as_ref()
+                        .is_some_and(|(handle, _)| handle.window_id() == window_id)
+                    {
+                        this.settings = None;
+                    }
+                    this.sync_activation_policy(cx);
+                });
+            });
             Self {
                 tray: tray::install(tray_tx),
                 service,
                 center: None,
+                settings: None,
                 toast: None,
+                effect,
+                preferences,
+                appearance: String::new(),
                 _receiver: receiver,
+                _appearance: appearance,
                 _tray_events: tray_events,
                 _tray_badge: tray_badge,
+                _windows,
             }
         });
         cx.set_global(DesktopGlobal(desktop));
         cx.on_action(|_: &OpenCenter, cx| Self::open_center(cx));
+        cx.on_action(|_: &OpenSettings, cx| Self::open_settings(cx));
         cx.set_menus([Menu::new("通知").items([
             MenuItem::action("消息历史…", OpenCenter),
+            MenuItem::action("设置…", OpenSettings),
             MenuItem::separator(),
             MenuItem::action("退出", crate::inbox::Quit),
         ])]);
@@ -189,6 +319,110 @@ impl Desktop {
 
     pub fn open_notice(id: String, cx: &mut App) {
         Self::open_history(Some(id), cx);
+    }
+
+    /// The window to bring forward when the app is reactivated (a Dock click
+    /// or the reopen event): the managed windows first, the toast panel last.
+    fn foreground_window(&self) -> Option<AnyWindowHandle> {
+        if let Some((handle, _)) = &self.center {
+            return Some(*handle);
+        }
+        if let Some((handle, _)) = &self.settings {
+            return Some(*handle);
+        }
+        self.toast.as_ref().map(|(handle, _)| *handle)
+    }
+
+    /// Whether the Dock icon is expected to show — the state the activation
+    /// policy mirrors. Exposed for tests; the test platform ignores the
+    /// policy itself.
+    pub fn dock_visible(&self) -> bool {
+        self.center.is_some() || self.settings.is_some()
+    }
+
+    /// The tray utility stays out of the Dock until a managed window needs a
+    /// home: the history center or the settings window. Back to `Accessory`
+    /// once both are gone. Switching to `Regular` requires activating the app
+    /// ourselves or the menu bar may not appear.
+    fn sync_activation_policy(&self, cx: &mut App) {
+        let dock = self.dock_visible();
+        cx.set_activation_policy(if dock {
+            ActivationPolicy::Regular
+        } else {
+            ActivationPolicy::Accessory
+        });
+        if dock {
+            cx.activate(true);
+        }
+    }
+
+    /// Select the toast animation from anywhere (the settings window's
+    /// picker): persists the preference and updates any mounted surface.
+    pub fn set_effect(effect: ToastEffect, cx: &mut App) {
+        if !cx.has_global::<DesktopGlobal>() {
+            return;
+        }
+        let desktop = cx.global::<DesktopGlobal>().0.clone();
+        desktop.update(cx, |this, cx| this.apply_effect(effect, cx));
+    }
+
+    /// The animation currently presented (the settings window's picker reads
+    /// it so there is a single source of truth).
+    pub fn current_effect(cx: &App) -> Option<ToastEffect> {
+        if !cx.has_global::<DesktopGlobal>() {
+            return None;
+        }
+        Some(cx.global::<DesktopGlobal>().0.read(cx).effect)
+    }
+
+    fn apply_effect(&mut self, effect: ToastEffect, cx: &mut Context<Self>) {
+        self.effect = effect;
+        self.preferences.set_animation(effect);
+        if let Some((handle, view)) = &self.toast {
+            let _ = handle.update(cx, |_, _, cx| {
+                view.update(cx, |view, cx| view.set_effect(effect, cx))
+            });
+        }
+        cx.notify();
+    }
+
+    /// Open (or bring forward) the settings window.
+    pub fn open_settings(cx: &mut App) {
+        if !cx.has_global::<DesktopGlobal>() {
+            return;
+        }
+        let desktop = cx.global::<DesktopGlobal>().0.clone();
+        desktop.update(cx, |this, cx| {
+            if let Some((window, _)) = &this.settings
+                && window
+                    .update(cx, |_, window, _| window.activate_window())
+                    .is_ok()
+            {
+                cx.activate(true);
+                return;
+            }
+            let service = this.service.clone();
+            let bounds = Bounds::centered(None, size(px(760.), px(540.)), cx);
+            match gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(size(px(600.), px(420.))),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("设置".into()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| SettingsView::new(service, window, cx)),
+            ) {
+                Ok((window, view)) => {
+                    this.settings = Some((window, view));
+                    this.sync_activation_policy(cx);
+                }
+                Err(error) => eprintln!("open settings: {error}"),
+            }
+        });
     }
 
     fn open_history(id: Option<String>, cx: &mut App) {
@@ -235,7 +469,7 @@ impl Desktop {
             ) {
                 Ok((window, history)) => {
                     this.center = Some((window, history));
-                    cx.activate(true);
+                    this.sync_activation_policy(cx);
                 }
                 Err(error) => eprintln!("open notification center: {error}"),
             }
@@ -243,11 +477,33 @@ impl Desktop {
     }
 
     fn reconcile(&mut self, snapshot: Snapshot, cx: &mut Context<Self>) {
+        // Appearance changes can arrive through any settings writer (the
+        // settings window, HTTP, a future UI); apply the delta exactly once.
+        if snapshot.settings.theme != self.appearance {
+            self.appearance = snapshot.settings.theme.clone();
+            crate::settings::apply_appearance(&self.appearance, cx);
+        }
+        // The live surface owns the selected effect (its keybinding cycles
+        // it); adopting it here persists the preference through the one
+        // mutation path and seeds the first toast window.
+        let effect = self
+            .toast
+            .as_ref()
+            .map(|(_, view)| view.read(cx).presence.effect)
+            .unwrap_or(self.effect);
+        if effect != self.effect {
+            self.apply_effect(effect, cx);
+        }
+        let presence = ToastPresence {
+            tokens: snapshot.settings.style.theme,
+            effect,
+            reduced_motion: snapshot.settings.reduced_motion,
+        };
         if let Some((handle, view)) = &self.toast {
             if handle
                 .update(cx, |_, window, cx| {
                     view.update(cx, |view, cx| {
-                        view.set_items(snapshot.items.clone(), window, cx)
+                        view.set_items(snapshot.items.clone(), presence.clone(), window, cx)
                     });
                 })
                 .is_ok()
@@ -292,7 +548,14 @@ impl Desktop {
                     eprintln!("notification window: {error}");
                 }
                 cx.new(|cx| {
-                    ToastSurface::new(service, snapshot.items, visible.size.height, window, cx)
+                    ToastSurface::new(
+                        service,
+                        snapshot.items,
+                        presence,
+                        visible.size.height,
+                        window,
+                        cx,
+                    )
                 })
             },
         ) {
@@ -310,11 +573,8 @@ impl Desktop {
     }
 }
 
-struct DesktopNotification;
-
 struct PresentedNotice {
-    content: Entity<NoticeContent>,
-    notification: Entity<Notification>,
+    notification: Entity<ToastCard>,
     retiring: bool,
     closed: bool,
     acknowledged_revision: Option<i64>,
@@ -337,21 +597,23 @@ enum PresenterCommand {
 }
 
 struct ToastSurface {
-    // Reuse the library list for lifecycle and its ToastStack for presentation.
-    // Notifications are this window's primary content, so the stack participates
-    // in normal scroll layout instead of the fixed-size Root overlay.
-    list: Entity<NotificationList>,
+    // Toasts are this window's primary content, so the stack participates in
+    // normal scroll layout instead of the fixed-size Root overlay. The
+    // lifecycle runs on the library's manager; the card itself is owned here
+    // so theme tokens and animation stay application presentation.
+    manager: ToastManager<String, Entity<ToastCard>>,
+    is_advancing: bool,
     stack: ToastStackState,
     stack_focus: FocusHandle,
     measured_height: Rc<Cell<Pixels>>,
     entries: HashMap<String, PresentedNotice>,
-    order: Vec<String>,
     available_height: Pixels,
     content_height: Pixels,
     scroll: ScrollHandle,
     hovered: bool,
     focused: bool,
     focus: FocusHandle,
+    presence: ToastPresence,
     commands: mpsc::UnboundedSender<PresenterCommand>,
     _commands: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -361,11 +623,11 @@ impl ToastSurface {
     fn new(
         service: Service,
         items: Vec<ToastNotice>,
+        presence: ToastPresence,
         available_height: Pixels,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let list = cx.new(|cx| NotificationList::new(window, cx));
         let focus = cx.focus_handle();
         let subscriptions = vec![
             cx.on_focus_in(&focus, window, |this, window, cx| {
@@ -398,8 +660,8 @@ impl ToastSurface {
                             let _ = view.update_in(cx, |this, _, cx| {
                                 if let Some(entry) = this.entries.get_mut(&id) {
                                     entry.acknowledged_revision = None;
-                                    entry.content.update(cx, |content, cx| {
-                                        content.error = Some("通知暂时无法确认显示。".into());
+                                    entry.notification.update(cx, |card, cx| {
+                                        card.error = Some("通知暂时无法确认显示。".into());
                                         cx.notify();
                                     });
                                 }
@@ -422,113 +684,182 @@ impl ToastSurface {
             }
         });
         let mut this = Self {
-            list,
+            manager: ToastManager::new(ToastMotion::sonner()),
+            is_advancing: false,
             stack: ToastStackState::default(),
             stack_focus: cx.focus_handle().tab_stop(true),
             measured_height: Rc::new(Cell::new(px(0.))),
             entries: HashMap::new(),
-            order: vec![],
             available_height,
             content_height: window.bounds().size.height,
             scroll: ScrollHandle::new(),
             hovered: false,
             focused: false,
             focus,
+            presence: presence.clone(),
             commands,
             _commands: task,
             _subscriptions: subscriptions,
         };
-        this.set_items(items, window, cx);
+        this.set_items(items, presence, window, cx);
         this
     }
 
-    fn mount(
+    fn set_items(
         &mut self,
-        content: Entity<NoticeContent>,
+        items: Vec<ToastNotice>,
+        presence: ToastPresence,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Entity<Notification> {
-        let item = content.read(cx).item.clone();
-        let owner = cx.entity().downgrade();
-        let id = item.id.clone();
-        let note = Notification::new()
-            .id1::<DesktopNotification>(SharedString::from(id.clone()))
-            .title(item.title.clone())
-            .with_type(item.notification_type())
-            .autohide(false)
-            .placement(Anchor::TopRight)
-            .content(move |_, _, _| content.clone().into_any_element())
-            .on_close(move |window, cx| {
-                let owner = owner.clone();
-                let id = id.clone();
-                // NotificationList is still borrowed while delivering on_close.
-                window.defer(cx, move |window, cx| {
-                    let _ = owner.update(cx, |this, cx| this.did_close(&id, window, cx));
-                });
+    ) {
+        self.presence = presence.clone();
+        // Settings are the source of truth for the theme pack; restyle every
+        // mounted card before reconciling membership.
+        for entry in self.entries.values() {
+            let presence = presence.clone();
+            entry.notification.update(cx, |card, cx| {
+                card.presence = presence;
+                cx.notify();
             });
-        self.list.update(cx, |list, cx| {
-            list.push(note, window, cx);
-            // push appends a new domain id; retain its entity for in-place edits.
-            list.notifications()
-                .last()
-                .expect("pushed notification")
-                .clone()
-        })
-    }
-
-    fn set_items(&mut self, items: Vec<ToastNotice>, window: &mut Window, cx: &mut Context<Self>) {
+        }
         let ids: Vec<_> = items.iter().map(|item| item.id.clone()).collect();
-        for (id, entry) in &mut self.entries {
-            if !ids.contains(id) && !entry.retiring {
+        let retiring: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|(id, entry)| !ids.contains(id) && !entry.retiring)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in retiring {
+            if let Some(entry) = self.entries.get_mut(&id) {
                 entry.retiring = true;
-                entry
-                    .notification
-                    .update(cx, |note, cx| note.dismiss(window, cx));
             }
+            self.dismiss(&id, window, cx);
         }
         for item in items {
             if let Some(entry) = self.entries.get_mut(&item.id) {
-                if entry.content.read(cx).item.revision != item.revision {
-                    // Builder setters consume Self; moving the existing value
-                    // preserves the entity, callbacks AND private motion phase.
-                    entry.notification.update(cx, |note, cx| {
-                        let previous = std::mem::replace(note, Notification::new());
-                        *note = previous
-                            .title(item.title.clone())
-                            .with_type(item.notification_type());
-                        cx.notify();
-                    });
-                    entry.content.update(cx, |content, cx| {
-                        content.item = item;
+                if entry.notification.read(cx).item.revision != item.revision {
+                    entry.notification.update(cx, |card, cx| {
+                        card.item = item;
                         cx.notify();
                     });
                 }
             } else {
                 let id = item.id.clone();
                 let owner = cx.entity().downgrade();
-                let content = cx.new(|_| NoticeContent {
-                    item,
-                    owner,
-                    pending: false,
-                    error: None,
-                    painted_revision: Rc::new(Cell::new(None)),
-                });
-                let notification = self.mount(content.clone(), window, cx);
+                let card = cx.new(|_| ToastCard::new(item, owner, presence.clone()));
+                self.manager.push(
+                    id.clone(),
+                    card.clone(),
+                    ToastOptions::default(),
+                    cx.background_executor().now(),
+                );
                 self.entries.insert(
                     id.clone(),
                     PresentedNotice {
-                        content,
-                        notification,
+                        notification: card,
                         retiring: false,
                         closed: false,
                         acknowledged_revision: None,
                     },
                 );
-                self.order.push(id);
+                self.start_advancing(window, cx);
             }
         }
         self.cleanup(window, cx);
         cx.notify();
+    }
+
+    fn set_effect(&mut self, effect: ToastEffect, cx: &mut Context<Self>) {
+        self.presence.effect = effect;
+        for entry in self.entries.values() {
+            entry.notification.update(cx, |card, cx| {
+                card.presence.effect = effect;
+                cx.notify();
+            });
+        }
+        cx.notify();
+    }
+
+    fn dismiss(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .manager
+            .dismiss(&id.to_owned(), cx.background_executor().now())
+        {
+            if let Some(card) = self.manager.get(&id.to_owned()) {
+                card.update(cx, |card, cx| card.begin_close(cx));
+            }
+            self.start_advancing(window, cx);
+        }
+    }
+
+    /// The newest card still presenting — the target of the dismiss action.
+    fn newest_id(&self) -> Option<String> {
+        self.manager
+            .iter()
+            .rev()
+            .find(|(_, _, status)| *status != ToastTransitionStatus::Ending)
+            .map(|(id, _, _)| id.clone())
+    }
+
+    /// Tick the toast lifecycle while a transition is still in flight.
+    ///
+    /// It advances the transition phases and samples the pause input (stack
+    /// expansion) that reaches the surface through no event. With nothing
+    /// mounted, or only cards at rest, there is nothing to do, so the window
+    /// arms no timer until a push or close.
+    fn start_advancing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_advancing {
+            return;
+        }
+        self.is_advancing = true;
+        // Detached rather than kept as a `Task`: the loop ends itself, and a
+        // handle on the surface would have to be dropped from inside its own
+        // future.
+        cx.spawn_in(window, async move |view, cx| {
+            loop {
+                cx.background_executor().timer(TOAST_ADVANCE_INTERVAL).await;
+                let running = view.update_in(cx, |view, window, cx| {
+                    view.advance(window, cx);
+                    view.is_advancing = view.needs_clock();
+                    view.is_advancing
+                });
+                if !matches!(running, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Whether a mounted card is still entering or leaving. This MVP's toasts
+    /// never auto-hide — the service owns their timeouts — so a card at rest
+    /// needs no clock.
+    fn needs_clock(&self) -> bool {
+        self.manager
+            .iter()
+            .any(|(_, _, status)| status != ToastTransitionStatus::Present)
+    }
+
+    fn advance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let changes = self
+            .manager
+            .advance(cx.background_executor().now(), self.hovered || self.focused);
+        for id in changes.presented {
+            if let Some(card) = self.manager.get(&id) {
+                card.update(cx, |card, cx| card.complete_enter(cx));
+            }
+        }
+        for id in changes.ending {
+            if let Some(card) = self.manager.get(&id) {
+                card.update(cx, |card, cx| card.begin_close(cx));
+            }
+        }
+        for (id, _) in changes.removed {
+            self.did_close(&id, window, cx);
+        }
+        if changes.changed {
+            cx.notify();
+        }
     }
 
     fn painted(&mut self, id: &str, revision: i64) {
@@ -576,13 +907,13 @@ impl ToastSurface {
         let Some(entry) = self.entries.get(id) else {
             return;
         };
-        if entry.retiring || entry.content.read(cx).pending {
+        if entry.retiring || entry.notification.read(cx).pending {
             return;
         }
-        let item = entry.content.read(cx).item.clone();
-        entry.content.update(cx, |content, cx| {
-            content.pending = true;
-            content.error = None;
+        let item = entry.notification.read(cx).item.clone();
+        entry.notification.update(cx, |card, cx| {
+            card.pending = true;
+            card.error = None;
             cx.notify();
         });
         let _ = self
@@ -600,10 +931,10 @@ impl ToastSurface {
         let Some(entry) = self.entries.get_mut(id) else {
             return;
         };
-        entry.content.update(cx, |content, cx| {
-            content.pending = false;
+        entry.notification.update(cx, |card, cx| {
+            card.pending = false;
             if let Err(error) = &result {
-                content.error = Some(if error.code == "conflict" {
+                card.error = Some(if error.code == "conflict" {
                     "通知已更新，请重试。".into()
                 } else {
                     "操作未完成，请重试。".into()
@@ -611,19 +942,26 @@ impl ToastSurface {
             }
             cx.notify();
         });
+        let retry = result.is_err() && entry.closed && !entry.retiring;
         if result.is_ok() {
             entry.retiring = true;
-            if !entry.closed {
-                entry
-                    .notification
-                    .update(cx, |note, cx| note.dismiss(window, cx));
-            }
-        } else if entry.closed && !entry.retiring {
-            let content = entry.content.clone();
-            let note = self.mount(content, window, cx);
-            let entry = self.entries.get_mut(id).unwrap();
-            entry.notification = note;
-            entry.closed = false;
+        }
+        if result.is_ok() && !entry.closed {
+            self.dismiss(id, window, cx);
+        } else if retry {
+            // The exit already unmounted the card; re-present the same entity
+            // with a fresh lifecycle so the enter transition replays and the
+            // user can retry.
+            let card = entry.notification.clone();
+            card.update(cx, |card, cx| card.begin_enter(cx));
+            self.manager.push(
+                id.to_owned(),
+                card,
+                ToastOptions::default(),
+                cx.background_executor().now(),
+            );
+            self.start_advancing(window, cx);
+            self.entries.get_mut(id).unwrap().closed = false;
         }
         self.cleanup(window, cx);
     }
@@ -635,7 +973,7 @@ impl ToastSurface {
         entry.closed = true;
         // Snapshot removals and successful actions already have a persisted
         // terminal reason. Only a component-originated close is a dismissal.
-        if !entry.retiring && !entry.content.read(cx).pending {
+        if !entry.retiring && !entry.notification.read(cx).pending {
             self.interact(id, None, cx);
         }
         self.cleanup(window, cx);
@@ -643,9 +981,8 @@ impl ToastSurface {
 
     fn cleanup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.entries.retain(|_, entry| {
-            !(entry.retiring && entry.closed && !entry.content.read(cx).pending)
+            !(entry.retiring && entry.closed && !entry.notification.read(cx).pending)
         });
-        self.order.retain(|id| self.entries.contains_key(id));
         if self.entries.is_empty() {
             // Exit animations and any pending interaction have finished.
             window.remove_window();
@@ -735,17 +1072,17 @@ impl Render for ToastSurface {
             .test_support()
             .key_context("DesktopToast")
             .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &CycleAnimation, window, cx| {
+                this.set_effect(this.presence.effect.next(), cx);
+                // Switching effects replays the enter animation, which
+                // remounts the card subtrees and can carry away whatever
+                // inside them held focus. The stack is the stable keyboard
+                // scope, so park focus there before the re-render.
+                window.focus(&this.stack_focus, cx);
+            }))
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
-                if let Some(entry) = this
-                    .order
-                    .iter()
-                    .rev()
-                    .filter_map(|id| this.entries.get(id))
-                    .find(|entry| !entry.retiring && !entry.closed)
-                {
-                    entry
-                        .notification
-                        .update(cx, |note, cx| note.dismiss(window, cx));
+                if let Some(id) = this.newest_id() {
+                    this.dismiss(&id, window, cx);
                 }
             }))
             .size_full()
@@ -772,23 +1109,17 @@ impl Render for ToastSurface {
                         }
                     })
                     .child(
-                        self.order
-                            .iter()
-                            .filter_map(|id| {
-                                self.entries
-                                    .get(id)
-                                    .filter(|entry| !entry.closed)
-                                    .map(|entry| (id, entry))
-                            })
+                        self.manager
+                            .visible(TOAST_MAX_ITEMS)
                             .fold(
                                 ToastStack::new("notification-stack", self.stack.clone()),
-                                |stack, (id, entry)| {
-                                    stack.item(
-                                        SharedString::from(id.clone()),
-                                        entry.notification.clone(),
-                                    )
+                                |stack, (id, card, _)| {
+                                    stack.item(SharedString::from(id.clone()), card.clone())
                                 },
                             )
+                            // The reflow springs share the selected effect's
+                            // tempo; the manager's unmount clock stays sonner.
+                            .motion(self.presence.effective(cx).motion())
                             .placement(Anchor::TopRight)
                             .focus_handle(self.stack_focus.clone())
                             .w_full(),
@@ -797,120 +1128,401 @@ impl Render for ToastSurface {
     }
 }
 
-struct NoticeContent {
+/// One presented notification: the app-owned card that replaces the styled
+/// library `Notification`, so the theme pack and the enter/exit motion are
+/// application presentation instead of crate constants.
+struct ToastCard {
     item: ToastNotice,
     owner: WeakEntity<ToastSurface>,
     pending: bool,
     error: Option<String>,
     painted_revision: Rc<Cell<Option<i64>>>,
+    status: ToastTransitionStatus,
+    presence: ToastPresence,
 }
 
-impl Render for NoticeContent {
+impl ToastCard {
+    fn new(item: ToastNotice, owner: WeakEntity<ToastSurface>, presence: ToastPresence) -> Self {
+        Self {
+            item,
+            owner,
+            pending: false,
+            error: None,
+            painted_revision: Rc::new(Cell::new(None)),
+            status: ToastTransitionStatus::Starting,
+            presence,
+        }
+    }
+
+    fn begin_enter(&mut self, cx: &mut Context<Self>) {
+        if self.status != ToastTransitionStatus::Starting {
+            self.status = ToastTransitionStatus::Starting;
+            cx.notify();
+        }
+    }
+
+    fn begin_close(&mut self, cx: &mut Context<Self>) {
+        if self.status != ToastTransitionStatus::Ending {
+            self.status = ToastTransitionStatus::Ending;
+            cx.notify();
+        }
+    }
+
+    fn complete_enter(&mut self, cx: &mut Context<Self>) {
+        if self.status == ToastTransitionStatus::Starting {
+            self.status = ToastTransitionStatus::Present;
+            cx.notify();
+        }
+    }
+}
+
+fn notice_time(created_at: i64) -> Option<String> {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_millis_opt(created_at)
+        .single()
+        .map(|at| at.format("%H:%M").to_string())
+}
+
+impl Render for ToastCard {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let item = &self.item;
-        let id = item.id.clone();
-        let revision = item.revision;
-        let owner = self.owner.clone();
-        let painted_revision = self.painted_revision.clone();
-        div()
-            .id(SharedString::from(format!("toast-{}", item.id)))
-            .role(Role::Status)
-            .aria_label(item.title.clone())
-            .test_support()
+        let skin = ToastSkin::resolve(&self.presence.tokens, cx);
+        let effect = self.presence.effective(cx);
+        let tokens = &self.presence.tokens;
+        let closing = self.status == ToastTransitionStatus::Ending;
+        let padding = px(tokens.padding as f32);
+        let gap = px(tokens.gap as f32);
+        let center = tokens.text_align == "center";
+        let header_compact = tokens.header == "compact";
+        let header_hidden = tokens.header == "hidden";
+        let level_color = skin.level_color(&item.level);
+        let dismiss_owner = self.owner.clone();
+        let dismiss_id = item.id.clone();
+        let aux_owner = dismiss_owner.clone();
+        let aux_id = dismiss_id.clone();
+        // A let-bound closure cannot abstract over `&mut Window`'s lifetime,
+        // so both dismiss paths route through this helper instead.
+        fn dismiss_from_card(
+            owner: &WeakEntity<ToastSurface>,
+            id: &str,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            let _ = owner.update(cx, |this, cx| this.dismiss(id, window, cx));
+        }
+
+        let mut card = BaseToast::new("notification")
+            .transition_status(self.status)
+            .occlude()
+            .group("")
             .relative()
+            .w_full()
+            .overflow_hidden()
             .flex()
             .flex_col()
-            .gap_2()
-            .min_w_0()
-            .on_prepaint(move |_, window, _| {
-                if painted_revision.replace(Some(revision)) != Some(revision) {
-                    let owner = owner.clone();
-                    let id = id.clone();
-                    // Acknowledge only after this revision has painted.
-                    window.on_next_frame(move |_, cx| {
-                        let _ = owner.update(cx, |this, _| this.painted(&id, revision));
-                    });
-                }
-            })
-            // Sonner-style anatomy: a clamped description and one footer row
-            // that keeps the source left and every action right-aligned. The
-            // card itself owns the status icon, title and close button.
-            .when(!item.body.is_empty(), |el| {
+            .gap(gap)
+            .p(padding)
+            .text_size(skin.body_size)
+            .text_color(skin.text)
+            .bg(skin.card)
+            .rounded(skin.radius)
+            .when(
+                tokens.border_style != "none" && tokens.border_width > 0,
+                |el| {
+                    let el = if skin.border_dashed {
+                        el.border_dashed()
+                    } else {
+                        el
+                    };
+                    el.border(px(tokens.border_width as f32))
+                        .border_color(skin.border)
+                },
+            )
+            .when(skin.shadow, |el| el.shadow(toast_shadow(1.)))
+            // The production level accent is a colored top border; a GPUI
+            // border is one color on every side, so the accent rides as an
+            // overlay bar clipped to the card's rounded corners.
+            .when(tokens.level_accent, |el| {
                 el.child(
                     div()
-                        .id("body")
-                        .text_sm()
-                        .line_clamp(3)
-                        .child(item.body.clone()),
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(2.))
+                        .bg(level_color),
                 )
             })
-            .when_some(item.progress, |el, value| {
-                el.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            Progress::new("progress")
-                                .flex_1()
-                                .value(value as f32 * 100.),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(format!("{:.0}%", value * 100.)),
-                        ),
-                )
-            })
+            // Close rides above the content and only appears on hover, like
+            // the library card and the production `.toast-close`.
             .child(
                 div()
+                    .absolute()
+                    .top(padding)
+                    .right(padding)
+                    .invisible()
+                    .group_hover("", |this| this.visible())
+                    .child(
+                        Button::new("close")
+                            .icon(IconName::Close)
+                            .ghost()
+                            .xsmall()
+                            .on_click(move |_, window, cx| {
+                                dismiss_from_card(&dismiss_owner, &dismiss_id, window, cx)
+                            }),
+                    ),
+            )
+            .on_aux_click({
+                let dismiss_owner = aux_owner;
+                let dismiss_id = aux_id;
+                move |event: &ClickEvent, window, cx| {
+                    if event.is_middle_click() {
+                        dismiss_from_card(&dismiss_owner, &dismiss_id, window, cx);
+                    }
+                }
+            });
+
+        if !header_hidden {
+            card = card.child(
+                div()
                     .flex()
-                    .items_center()
                     .flex_wrap()
+                    .items_center()
                     .gap_2()
+                    .min_h(if header_compact { px(16.) } else { px(20.) })
+                    .pr_7()
+                    .when(header_compact, |el| el.mb_1())
+                    .when(!header_compact, |el| el.mb_2())
+                    .when(tokens.header_separator, |el| {
+                        el.pb_2p5()
+                            .border_b_1()
+                            .border_color(skin.text.opacity(0.14))
+                    })
+                    .when(tokens.show_icon, |el| {
+                        let size = if header_compact { px(16.) } else { px(20.) };
+                        let radius = if header_compact { px(4.) } else { px(7.) };
+                        let icon_size = if header_compact { px(10.) } else { px(12.) };
+                        el.child(
+                            div()
+                                .flex()
+                                .flex_none()
+                                .size(size)
+                                .rounded(radius)
+                                .items_center()
+                                .justify_center()
+                                .text_size(icon_size)
+                                .bg(level_color.opacity(0.12))
+                                .child(Icon::new(item.level_icon()).text_color(level_color)),
+                        )
+                    })
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
                             .truncate()
-                            .child(item.source.clone()),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("history-{}", item.id)))
-                            .label("详情…")
-                            .xsmall()
-                            .ghost()
-                            .on_click({
-                                let id = item.id.clone();
-                                move |_, _, cx| {
-                                    cx.stop_propagation();
-                                    Desktop::open_notice(id.clone(), cx);
+                            .text_xs()
+                            .font_weight(FontWeight(600.))
+                            .text_color(skin.text.opacity(0.78))
+                            .child({
+                                let label = tokens.header_label.trim();
+                                if label.is_empty() {
+                                    item.source.clone()
+                                } else {
+                                    label.to_string()
                                 }
                             }),
                     )
-                    .children(item.actions.iter().map(|action| {
-                        let id = item.id.clone();
-                        let action_id = action.id.clone();
-                        let owner = self.owner.clone();
-                        Button::new(SharedString::from(format!("action-{id}-{action_id}")))
-                            .label(action.label.clone())
-                            .small()
-                            .outline()
-                            .disabled(self.pending)
-                            .on_click(move |_, _, cx| {
-                                cx.stop_propagation();
-                                let _ = owner.update(cx, |this, cx| {
-                                    this.interact(&id, Some(action_id.clone()), cx)
-                                });
+                    .when(tokens.show_level, |el| {
+                        el.child(
+                            div()
+                                .text_xs()
+                                .px_1p5()
+                                .rounded(px(4.))
+                                .text_color(skin.text.opacity(0.7))
+                                .bg(skin.text.opacity(0.08))
+                                .child(item.level_label()),
+                        )
+                    })
+                    .when_some(
+                        tokens
+                            .show_time
+                            .then(|| notice_time(item.created_at))
+                            .flatten(),
+                        |el, time| {
+                            el.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(skin.text.opacity(0.65))
+                                    .child(time),
+                            )
+                        },
+                    ),
+            );
+        }
+
+        card = card.child(
+            div()
+                .text_size(skin.title_size)
+                .font_weight(skin.title_weight)
+                .line_height(relative(1.4))
+                .when(center, |el| el.text_center())
+                .when(header_hidden, |el| el.pr_6())
+                .child(item.title.clone()),
+        );
+
+        // Sonner-style anatomy below the title: a clamped description, then
+        // progress and one footer row of actions. This wrapper keeps the
+        // accessibility identity the tests and history drill-down target.
+        let id = item.id.clone();
+        let revision = item.revision;
+        let owner = self.owner.clone();
+        let painted_revision = self.painted_revision.clone();
+        let pending = self.pending;
+        card = card.child(
+            div()
+                .id(SharedString::from(format!("toast-{}", item.id)))
+                .role(Role::Status)
+                .aria_label(item.title.clone())
+                .test_support()
+                .relative()
+                .flex()
+                .flex_col()
+                .gap(gap)
+                .min_w_0()
+                .on_prepaint(move |_, window, _| {
+                    if painted_revision.replace(Some(revision)) != Some(revision) {
+                        let owner = owner.clone();
+                        let id = id.clone();
+                        // Acknowledge only after this revision has painted.
+                        window.on_next_frame(move |_, cx| {
+                            let _ = owner.update(cx, |this, _| this.painted(&id, revision));
+                        });
+                    }
+                })
+                .when(tokens.show_body && !item.body.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .id("body")
+                            .line_height(relative(skin.line_height))
+                            .when(center, |this| this.text_center())
+                            .when(tokens.body_lines > 0, |this| {
+                                this.line_clamp(tokens.body_lines as usize)
                             })
-                    })),
+                            .child(item.body.clone()),
+                    )
+                })
+                .when(tokens.show_tags && !item.tags.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_1p5()
+                            .children(item.tags.iter().map(|tag| {
+                                div()
+                                    .text_xs()
+                                    .px_1p5()
+                                    .py_1()
+                                    .rounded(px(4.))
+                                    .bg(skin.text.opacity(0.08))
+                                    .child(tag.clone())
+                            })),
+                    )
+                })
+                .when_some(
+                    tokens.show_progress.then_some(item.progress).flatten(),
+                    |el, value| {
+                        el.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    Progress::new("progress")
+                                        .flex_1()
+                                        .value(value as f32 * 100.)
+                                        .color(skin.accent),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(skin.text.opacity(0.65))
+                                        .child(format!("{:.0}%", value * 100.)),
+                                ),
+                        )
+                    },
+                )
+                .when(!item.actions.is_empty() || tokens.show_history, |el| {
+                    el.child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_2()
+                            .when(tokens.actions_layout == "stacked", |this| {
+                                this.flex_col().items_start()
+                            })
+                            .children(item.actions.iter().map(|action| {
+                                let id = item.id.clone();
+                                let action_id = action.id.clone();
+                                let owner = self.owner.clone();
+                                Button::new(SharedString::from(format!("action-{id}-{action_id}")))
+                                    .label(action.label.clone())
+                                    .small()
+                                    .outline()
+                                    .disabled(pending)
+                                    .on_click(move |_, _, cx| {
+                                        cx.stop_propagation();
+                                        let _ = owner.update(cx, |this, cx| {
+                                            this.interact(&id, Some(action_id.clone()), cx)
+                                        });
+                                    })
+                            }))
+                            .when(tokens.show_history, |el| {
+                                el.child(
+                                    Button::new(SharedString::from(format!("history-{}", item.id)))
+                                        .label("详情…")
+                                        .xsmall()
+                                        .ghost()
+                                        .on_click({
+                                            let id = item.id.clone();
+                                            move |_, _, cx| {
+                                                cx.stop_propagation();
+                                                Desktop::open_notice(id.clone(), cx);
+                                            }
+                                        }),
+                                )
+                            }),
+                    )
+                })
+                .when_some(self.error.clone(), |el, error| {
+                    el.child(div().text_sm().text_color(cx.theme().danger).child(error))
+                }),
+        );
+
+        // The library card keeps its animation wrapper mounted at rest so the
+        // subtree's element state survives; only the phase flag in the id
+        // replays a transition. Switching effects changes the id too, which
+        // replays the enter transition on cards already at rest — the
+        // feedback the cycler wants.
+        if effect != ToastEffect::None {
+            card.with_animation(
+                ElementId::NamedInteger(
+                    SharedString::from(format!("toast-{}", effect.id())),
+                    closing as u64,
+                ),
+                Animation::new(if closing {
+                    effect.exit()
+                } else {
+                    effect.enter()
+                })
+                .with_easing(effect.easing()),
+                move |el, delta| effect.apply(el, closing, delta, skin.shadow),
             )
-            .when_some(self.error.clone(), |el, error| {
-                el.child(div().text_sm().text_color(cx.theme().danger).child(error))
-            })
+            .into_any_element()
+        } else {
+            card.into_any_element()
+        }
     }
 }
 
