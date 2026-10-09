@@ -65,12 +65,12 @@ struct ToastStackView: View {
         // positions pin to the top, bottom anchors pin to the bottom — the
         // edge whose cards must not move while the window grows or shrinks.
         .frame(maxHeight: .infinity, alignment: anchorAlignment)
-        .animation(membershipAnimation, value: manager.presentations.map(\.item.id))
+        // Membership timing comes from the mutation site (the manager's
+        // `animateMembership`): a value-keyed `.animation` here would force
+        // enter and exit to share one clock, and the Settings exit duration
+        // would never take effect.
         .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9), value: piled)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(piled
-            ? "通知堆叠，共 \(manager.presentations.count) 条，点击上方边缘展开"
-            : "通知堆叠，共 \(manager.presentations.count) 条")
     }
 
     /// The cards that render whole: all of them in the fan-out, only the
@@ -85,9 +85,10 @@ struct ToastStackView: View {
 
     // MARK: - Motion (Settings driven)
 
-    /// How a card arrives, from the Settings enter motion. `slide` comes from
-    /// fully off the screen edge (the way a banner does) rather than from the
-    /// window's edge.
+    /// The membership clock is the manager's `animateMembership` — this file
+    /// only picks the transition *shape* from the Settings motion. `slide` and
+    /// `bounce` travel off-screen along the anchor's edge; `fade` and `zoom`
+    /// stay in place.
     private var insertion: AnyTransition {
         switch settings.toastMotionEnter {
         case .slide, .bounce:
@@ -130,26 +131,6 @@ struct ToastStackView: View {
             return CGSize(width: 0, height: -140)
         case .bottomCenter:
             return CGSize(width: 0, height: 140)
-        }
-    }
-
-    /// The membership clock for cards joining or leaving the stack. `slide`
-    /// and `bounce` run as springs (the banner's feel); `fade` and `zoom` are
-    /// plain ease-outs. The Settings enter duration is the spring's response.
-    private var membershipAnimation: Animation? {
-        let enter = settings.toastMotionEnter
-        guard !reduceMotion, enter != .none else { return nil }
-        let seconds = max(0.05, settings.toastMotionEnterMs / 1000)
-        let damping = settings.toastMotionDamping
-        switch enter {
-        case .slide:
-            return .spring(response: seconds, dampingFraction: damping ?? 0.86)
-        case .bounce:
-            return .spring(response: seconds, dampingFraction: damping ?? 0.68)
-        case .fade, .zoom:
-            return .easeOut(duration: seconds)
-        case .none:
-            return nil
         }
     }
 

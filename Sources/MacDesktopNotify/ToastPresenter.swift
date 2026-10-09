@@ -226,16 +226,17 @@ final class ToastPresenter: SurfacePresenting {
 
     /// Outside clicks pile a fanned-out deck again — the toast floats over
     /// other apps' content, so "click away to put it back" is how a floating
-    /// pile behaves, not a nicety.
+    /// pile behaves, not a nicety. Right-clicks count too: opening another
+    /// app's context menu is still leaving the toast.
     private func installClickMonitors() {
         // Global taps fire only for clicks that landed in OTHER apps' windows,
         // so any event here is definitionally outside the toast.
-        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             Task { @MainActor [weak self] in self?.reportOutsideClick(excluding: nil) }
         }
         // Local taps land in the app's own windows (panel, settings, history);
         // only the ones outside the toast panel count as "outside".
-        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             let window = event.window
             Task { @MainActor [weak self] in self?.reportOutsideClick(excluding: window) }
             return event
@@ -245,7 +246,10 @@ final class ToastPresenter: SurfacePresenting {
     private func reportOutsideClick(excluding window: NSWindow?) {
         guard let panel = stackPanel, panel.isVisible else { return }
         if let window, window === panel { return }
-        guard !panel.frame.contains(NSEvent.mouseLocation) else { return }
+        // The frame mid-resize-animation lags the content; the layout target
+        // is what the user actually sees moving.
+        let frame = lastRequestedFrame ?? panel.frame
+        guard !frame.contains(NSEvent.mouseLocation) else { return }
         NotificationManager.shared.clickedOutsideStack()
     }
 

@@ -11,10 +11,10 @@ extension NotificationManager {
     static let visibleCardLimit = 4
 
     /// A push joins the stack. Nothing is ever displaced: the previous card
-    /// simply stays below the new one, and the cap is enforced by dropping the
-    /// *newest* overflow back into history rather than silently shrinking the
-    /// screen. A critical always takes a slot, evicting the oldest visible
-    /// non-critical card if the stack is full.
+    /// simply stays below the new one, and the cap retires the *oldest*
+    /// non-critical card back into history (unread) rather than silently
+    /// shrinking the screen. A critical always takes a slot — a stack of four
+    /// blocking criticals is the only way past the limit.
     func present(_ item: CardPayload) {
         guard !displaySuppressed else {
             // Suppressed: the message is already recorded in history by
@@ -29,15 +29,20 @@ extension NotificationManager {
             expanded: item.urgency == .critical
         )
         new.remaining = new.policy.budget
-        while presentations.count >= Self.visibleCardLimit, presentations.first?.item.urgency != .critical {
-            retireCard(presentations[0].item.id, readOnRetire: false)
+        animateMembership(removal: false) {
+            while presentations.count >= Self.visibleCardLimit,
+                  let victim = presentations.firstIndex(where: { $0.item.urgency != .critical }) {
+                retireCard(presentations[victim].item.id, readOnRetire: false)
+            }
+            presentations.append(new)
         }
-        presentations.append(new)
         // A fresh push re-piles the deck: the new card is the front of the
         // pile, and a fanned-out list left over from earlier messages would
-        // bury it at the far end.
-        stackExpanded = false
-        notifyCompactStatusChanged()
+        // bury it at the far end. Except while the pointer is on a card —
+        // re-piling mid-aim would move the click target out from under it.
+        if pointer.onCardID == nil {
+            stackExpanded = false
+        }
         armLiveRules(for: item.id)
         // Presenting is what puts the window on screen; the push itself has
         // already decided the card belongs there.
@@ -53,10 +58,20 @@ extension NotificationManager {
         guard let index = presentations.firstIndex(where: { $0.item.id == id }) else { return }
         stopDwell(for: id)
         stopAgingTimers(for: id)
-        presentations.remove(at: index)
+        // A retired card can no longer be the pointer's card — its hover hold
+        // and Esc scope died with it.
+        if pointer.onCardID == id { reduce(.cardDismissed) }
+        animateMembership(removal: true) {
+            presentations.remove(at: index)
+        }
         if readOnRetire { markRead(id) }
         reconcileDeck()
-        notifyCompactStatusChanged()
+        // An emptied stack hides its window: nothing else retriggers a layout
+        // once the last card is gone, and an empty window is a click-eating
+        // sliver at the anchor.
+        if presentations.isEmpty {
+            Task { await presenter?.reapply(on: self) }
+        }
     }
 
     /// A tap on a card. The explicit-open rule: clicking is the deliberate act
@@ -85,9 +100,10 @@ extension NotificationManager {
     }
 
     /// The stack is fully visible or fully hidden; there is no compact layer.
-    /// `openMessageCenter` opens the standalone history window instead.
+    /// `openMessageCenter` opens the standalone history window instead — an
+    /// explicit user action (⌃⌥N), so the fullscreen suppression gate for
+    /// automatic presentation does not apply to it.
     func openMessageCenter() {
-        guard !displaySuppressed else { return }
         NotificationCenter.default.post(name: .openHistoryWindow, object: nil)
     }
 
@@ -103,13 +119,14 @@ extension NotificationManager {
         setStackExpanded(false)
     }
 
-    /// Collapses every expanded card back to its summary. Esc lands here.
+    /// Esc collapses the expanded card under the pointer — and no other card:
+    /// an Esc meant for another app must not reach into the toast. The pointer
+    /// is physically still on the card afterwards, so its hover state (and the
+    /// dwell hold it implies) stays.
     func dismissExpandedCard() {
-        for card in presentations {
-            if card.expanded { collapseCard(card.item.id) }
-        }
-        pointer.onCardID = nil
-        reduce(.cardDismissed)
+        guard let id = pointer.onCardID,
+              presentations.first(where: { $0.item.id == id })?.expanded == true else { return }
+        collapseCard(id)
         reconcileDwell()
     }
 
@@ -145,14 +162,18 @@ extension NotificationManager {
         // to it through `pointer.onCardID`.
         pointer.onCardID = id
         markCardRead(id)
-        notifyCompactStatusChanged()
+        // An expanded info card owes the screen an exit: arm its auto-close
+        // countdown now (present-time arming only covers arriving criticals,
+        // which never have one).
+        applyDismissRules()
         reconcileDwell()
     }
 
     func collapseCard(_ id: UUID) {
         guard let index = presentations.firstIndex(where: { $0.item.id == id }) else { return }
         presentations[index].expanded = false
-        notifyCompactStatusChanged()
+        // Collapsing releases the expansion hold: the dwell countdown resumes.
+        reconcileDwell()
     }
 
     /// Where a push takes the screen - the only presentation entry point.

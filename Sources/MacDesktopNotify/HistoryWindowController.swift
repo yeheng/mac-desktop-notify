@@ -54,6 +54,10 @@ private struct HistoryView: View {
     @State private var expandedID: UUID?
     @State private var searchText = ""
     @State private var filter = HistoryFilter.all
+    /// Rows read during this filter session. The unread filter must not yank a
+    /// row out from under the user the moment they open it — the row stays
+    /// until the filter itself changes.
+    @State private var sessionRead: Set<UUID> = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Newest first, matching the panel's ordering.
@@ -62,7 +66,7 @@ private struct HistoryView: View {
             (searchText.isEmpty || item.title.localizedStandardContains(searchText)
                 || item.bodyMarkdown.localizedStandardContains(searchText)
                 || item.tags.contains { $0.localizedStandardContains(searchText) })
-                && (filter != .unread || !manager.isRead(item))
+                && (filter != .unread || !manager.isRead(item) || sessionRead.contains(item.id))
                 && (filter != .critical || item.urgency == .critical)
         }
     }
@@ -79,6 +83,9 @@ private struct HistoryView: View {
                 }
                 .labelsHidden()
                 .frame(width: 95)
+                // A new filter restarts the session: rows kept visible after
+                // being read under the unread filter re-join the filter's rule.
+                .onChange(of: filter) { _, _ in sessionRead = [] }
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 10)
@@ -93,7 +100,8 @@ private struct HistoryView: View {
                                 notification: notification,
                                 status: status(of: notification),
                                 isUnread: !manager.isRead(notification),
-                                isExpanded: expandedID == notification.id
+                                isExpanded: expandedID == notification.id,
+                                onMarkedRead: { sessionRead.insert(notification.id) }
                             ) {
                                 withAnimation(.easeInOut(duration: 0.15)) {
                                     expandedID = expandedID == notification.id ? nil : notification.id
@@ -101,6 +109,10 @@ private struct HistoryView: View {
                                 // §4: expanding a body is an explicit act of reading.
                                 if expandedID == notification.id, !manager.isRead(notification) {
                                     manager.setRead(notification.id, read: true)
+                                    // Keep the row: under the unread filter a
+                                    // freshly read row would otherwise vanish
+                                    // with its body half-read.
+                                    sessionRead.insert(notification.id)
                                 }
                             }
                         }
@@ -185,12 +197,17 @@ private struct HistoryView: View {
 
 /// One row in the history window: urgency glyph, title, relative time, state
 /// badges, and the always-visible 已读/删除 pair. Tapping expands the
-/// rendered Markdown body inline.
+/// rendered Markdown body and the action buttons inline — the actions stay
+/// reachable after the card left the screen, which is where an approval link
+/// or an ack receipt lives on.
 private struct HistoryWindowRow: View {
     let notification: CardPayload
     let status: HistoryRowStatus
     let isUnread: Bool
     let isExpanded: Bool
+    /// The row marked itself read: the list keeps it visible under the unread
+    /// filter until the filter changes.
+    let onMarkedRead: () -> Void
     let toggle: () -> Void
     private var manager: NotificationManager { .shared }
     @State private var hovering = false
@@ -227,6 +244,7 @@ private struct HistoryWindowRow: View {
                 HStack(spacing: 2) {
                     Button {
                         manager.setRead(notification.id, read: isUnread)
+                        if isUnread { onMarkedRead() }
                     } label: {
                         Image(systemName: isUnread ? "envelope.open" : "envelope.badge")
                             .font(.system(size: 11, weight: .medium))
@@ -266,21 +284,23 @@ private struct HistoryWindowRow: View {
             .accessibilityAction { toggle() }
             .accessibilityAction(named: isUnread ? "标为已读" : "标为未读") {
                 manager.setRead(notification.id, read: isUnread)
+                if isUnread { onMarkedRead() }
             }
             .accessibilityAction(named: "删除这条消息") {
                 manager.removeHistory(id: notification.id)
             }
 
             if isExpanded {
-                Text(notification.title)
-                    .font(.headline)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                Text(notification.urgency.accessibilityLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                // The header already carries the one-line title and the
+                // urgency glyph; the expanded area is body + actions.
                 HistoryWindowBody(bodyMarkdown: notification.bodyMarkdown)
                     .padding(.leading, 25)
+                if !notification.actions.isEmpty {
+                    ActionRow(actions: notification.actions) { action, comment in
+                        manager.performAction(action, for: notification, comment: comment)
+                    }
+                    .padding(.leading, 25)
+                }
             }
         }
         .padding(.horizontal, 10)
@@ -320,18 +340,20 @@ private struct HistoryWindowRow: View {
 }
 
 /// The expanded body, rendered through the same cache the panel uses so a
-/// message opened in both places is parsed once. System colors here - this is
-/// a regular window, not the black panel.
+/// message opened in both places is parsed once. Follows the 外观 pane's
+/// content size, like the card does. System colors here - this is a regular
+/// window, not the floating panel.
 private struct HistoryWindowBody: View {
     let bodyMarkdown: String
+    private var settings: AppSettings { .shared }
 
     var body: some View {
         MarkdownBlocksView(
             bodyMarkdown: bodyMarkdown,
             style: MarkdownBlocksStyle(
-                proseFont: .system(size: 12),
-                codeFont: .system(size: 11, design: .monospaced),
-                headingFont: .system(size: 14, weight: .semibold),
+                proseFont: .system(size: CGFloat(settings.contentFontSize)),
+                codeFont: .system(size: CGFloat(settings.contentFontSize) - 1, design: .monospaced),
+                headingFont: .system(size: CGFloat(settings.contentFontSize) + 2, weight: .semibold),
                 proseColor: .primary,
                 codeColor: .primary,
                 codeBackground: Color.primary.opacity(0.06)

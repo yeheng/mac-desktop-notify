@@ -29,9 +29,8 @@ extension NotificationManager {
         // The hold only exists once the card has a countdown, so it is armed
         // after the transition, not before it: at arm time the card was still
         // blocking, and `dwellHeldForActions` was false by definition.
-        armActionHoldAging()
+        armActionHoldAging(for: demoted.item.id)
         reconcileDwell()
-        notifyCompactStatusChanged()
     }
 
     /// Ages out an untouched critical so the top of the screen is not held
@@ -70,9 +69,8 @@ extension NotificationManager {
             // Same transition as an explicit snooze, so the same hold rule
             // applies: an aged-out critical with actions now has a countdown
             // for those actions to hold, and a timer to release it.
-            self.armActionHoldAging()
+            self.armActionHoldAging(for: demoted.item.id)
             self.reconcileDwell()
-            self.notifyCompactStatusChanged()
         }
     }
 
@@ -80,10 +78,14 @@ extension NotificationManager {
     /// dwell budget so it retires on its own. Same shape as the critical
     /// demotion above: the message stays in history and unread, the actions
     /// are simply no longer owed an immediate answer.
-    func armActionHoldAging() {
-        for card in presentations where card.policy.holdReleaseAfter != nil && card.remaining != nil && !card.actionsHoldReleased {
-            scheduleActionHoldAging(after: card.policy.holdReleaseAfter!, id: card.item.id)
-        }
+    ///
+    /// Per-card, deliberately: a new push must not reset the release clock of
+    /// every other held card — a burst of pushes is not user attention.
+    func armActionHoldAging(for id: UUID) {
+        guard let card = presentations.first(where: { $0.item.id == id }),
+              let after = card.policy.holdReleaseAfter,
+              card.remaining != nil, !card.actionsHoldReleased else { return }
+        scheduleActionHoldAging(after: after, id: id)
     }
 
     /// One firing of the hold release for one card. A card nobody is looking at
@@ -212,7 +214,7 @@ extension NotificationManager {
         if live.remaining == nil { live.remaining = live.policy.budget }
         presentations[index] = live
         armCriticalIdleDemotion(for: id)
-        armActionHoldAging()
+        armActionHoldAging(for: id)
         applyDismissRules()
         reconcileDwell()
     }

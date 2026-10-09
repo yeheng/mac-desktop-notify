@@ -167,4 +167,70 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
         XCTAssertFalse(m.presentations.contains { $0.item.id == id })
         XCTAssertTrue(m.messages.readIDs.contains(id), "acting on the card reads it")
     }
+
+    /// 点击展开的信息卡布防 10s 自动收回：展开是「看一眼」，不是永久占屏。
+    func testExpandedInfoCardArmsAutoClose() async throws {
+        let m = NotificationManager()
+        m.dwellTiming.autoClose = .milliseconds(150)
+        m.push(make("info"))
+        let id = m.presentations.last!.item.id
+        m.expandCard(id)
+        XCTAssertTrue(m.delayed.isActive(.notificationAutoClose(id)), "expanding arms the auto-close countdown")
+
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(m.presentations.first { $0.item.id == id }?.expanded, false,
+                       "an expanded info card nobody engages with collapses itself")
+    }
+
+    /// Esc 只收起指针所在的那张展开卡，别处的展开不受影响。
+    func testEscapeCollapsesOnlyTheCardUnderThePointer() {
+        let m = NotificationManager()
+        m.push(make("a"))
+        m.push(make("b"))
+        let a = m.presentations[0].item.id
+        let b = m.presentations[1].item.id
+        m.expandCard(a)
+        m.expandCard(b)   // the last expand owns the pointer scope
+
+        m.dismissExpandedCard()
+        XCTAssertEqual(m.presentations[0].expanded, true, "Esc must not reach into other cards")
+        XCTAssertEqual(m.presentations[1].expanded, false)
+    }
+
+    /// 退役把指针状态一起清掉：滑走的卡不能继续占着 hover/Esc 作用域。
+    func testRetiringTheHoveredCardReleasesThePointerScope() {
+        let m = NotificationManager()
+        m.push(make("a"))
+        let id = m.presentations.last!.item.id
+        m.setHovering(true, for: id)
+        m.retireCard(id, readOnRetire: false)
+        XCTAssertNil(m.pointer.onCardID)
+    }
+
+    /// 最后一张卡退役后窗口隐藏：presenter 的空栈分支由 retireCard 触发。
+    func testRetiringTheLastCardHidesTheWindow() async throws {
+        let spy = PresenterSpy()
+        let m = NotificationManager(presenter: spy)
+        m.push(make("a"))
+        try await Task.sleep(for: .milliseconds(100))
+        let shows = spy.showCount
+
+        m.closeCard(m.presentations.last!.item.id)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertGreaterThan(spy.hideCount, 0, "an emptied stack hides its window")
+        XCTAssertEqual(spy.showCount, shows, "nothing re-shows an empty stack")
+    }
+}
+
+/// Records the surface calls a correct manager makes; reapply's derivation
+/// (empty stack → hide) comes from the protocol extension under test.
+@MainActor
+private final class PresenterSpy: SurfacePresenting {
+    var showCount = 0
+    var hideCount = 0
+
+    func standUp() async {}
+    func standDown() async {}
+    func showStack() async { showCount += 1 }
+    func hide() async { hideCount += 1 }
 }

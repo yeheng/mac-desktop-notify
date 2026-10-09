@@ -125,4 +125,20 @@ final class ActionHoldTests: SettingsIsolatedTestCase {
         XCTAssertTrue(m.delayed.isActive(.actionHoldAging(id)), "被看到的卡片应重新排队而不是放弃")
         XCTAssertEqual(m.presentations.last?.actionsHoldReleased, false)
     }
+
+    /// 新推送不得重置既有 hold 卡的释放时钟：一批推送不是用户注意力，
+    /// 否则 CI 连发会让 300s 释放窗口无限续命。
+    func testNewPushDoesNotResetTheHoldReleaseClock() async throws {
+        let m = NotificationManager()
+        m.dwellTiming.actionHoldIdle = .milliseconds(400)
+        m.push(make("a", timeout: 60, actions: [approveAction]))
+        let idA = m.presentations.last!.item.id
+
+        try await Task.sleep(for: .milliseconds(250))
+        m.push(make("b", timeout: 60, actions: [approveAction]))   // must not re-arm A
+
+        try await Task.sleep(for: .milliseconds(250))              // A's 400ms clock has run out
+        XCTAssertEqual(m.presentations.first { $0.item.id == idA }?.actionsHoldReleased, true,
+                       "A 的释放时钟从它自己上屏起算，不被后来的推送续命")
+    }
 }

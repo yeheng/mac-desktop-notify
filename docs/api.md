@@ -29,7 +29,7 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 
 在「设置 → 接口」中开关。Unix Socket 默认开启，HTTP 默认关闭，WebSocket 没有独立开关——它挂在 HTTP 监听器上，HTTP 开则 WS 开。
 
-> **WebSocket 也能走 Unix Socket。** 升级钩子装在两个监听器上（`APIListenerService.swift:86,173`），`/v1/events` 在 socket 上同样可升级。绝大多数客户端库不支持 socket 上的 WS，所以实践中 WS 基本等同于「必须开 HTTP」。
+> **WebSocket 也能走 Unix Socket。** 升级钩子装在两个监听器上（`APIListenerService.swift:140,225`），`/v1/events` 在 socket 上同样可升级。绝大多数客户端库不支持 socket 上的 WS，所以实践中 WS 基本等同于「必须开 HTTP」。
 
 ---
 
@@ -37,23 +37,22 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 
 ### 2.1 校验哲学：截断，从不拒绝
 
-所有发送方控制的字段遵循同一条规则（与 `actions`、`blocks`、`island` 一致）：
+所有发送方控制的字段遵循同一条规则（与 `actions`、`blocks` 一致）：
 
 - **超长 → 截断**，不是报错。32 KB 的标题是发送方的 bug，不是丢消息的理由。
 - **单个条目非法 → 丢弃该条目**，不影响整条推送。未知的 block 类型、字段类型错误的 action、无效的 SF Symbol 名，都只损失自己。
 - **只有两件事会让整条 `push` 失败**：`title` 缺失/为空（且没有 `script`），`script` 名非法。
 
-### 2.2 `outcome` 三态
+### 2.2 `outcome` 两态
 
 `push` 的响应带 `outcome`，表示消息的去向：
 
 | 值 | 含义 |
 |----|------|
-| `displayed` | 成为当前展示，顶掉上一条 |
-| `queued` | 有 critical 占屏，消息存为**未读历史**，用户打开面板即出现 |
+| `displayed` | 成为可见卡片，加入栈（同 `group` 则顶替旧卡） |
 | `withheld` | 用户离开（锁屏/屏保/睡眠）且处于静默档，仅入历史 |
 
-`displayed` 不等于「此刻一定有像素」：全屏抑制下 critical 仍会变成 live 并播放声音，但要等抑制解除才上屏。
+`displayed` 不等于「此刻一定有像素」：全屏抑制下卡片仍会被记录，但要等抑制解除才上屏。
 
 ### 2.3 安全模型：Host / Origin 校验，而非鉴权
 
@@ -64,7 +63,7 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 放行的取值：
 
 - `Host`：`127.0.0.1`、`localhost`、`[::1]`（可带端口；**缺失视为放行**，非浏览器客户端不发送）
-- `Origin`（仅 WS 升级）：`http(s)://127.0.0.1`、`http(s)://localhost`、`ws://127.0.0.1`、`ws://localhost`、`file://`（本地 HTML 面板）。非浏览器客户端不发 `Origin`，直接放行。
+- `Origin`（仅 WS 升级）：`http(s)://127.0.0.1`、`http(s)://localhost`、`ws://127.0.0.1`、`ws://localhost`、`file://`（本地 HTML 文件）。非浏览器客户端不发 `Origin`，直接放行。
 
 ### 2.4 协议限制
 
@@ -88,7 +87,7 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 | `title` | string | ✅ | — | trim；超 200 字符截断；trim 后为空 → **400**（有 `script` 时除外） |
 | `body` | string | ❌ | `""` | Markdown；超 5000 字符截断 |
 | `blocks` | array | ❌ | — | 结构化正文，**非空时优先于 `body`**，见 [3.1](#31-blocks结构化正文) |
-| `island` | object | ❌ | — | 状态行，见 [3.2](#32-island状态行) |
+| `island` | object | ❌ | — | 状态行，只有 `progress` 会渲染（收起态百分比）；`text`/`icon` 被接受并存档但不显示，见 [3.2](#32-island状态行) |
 | `urgency` | string | ❌ | `"normal"` | `low` / `normal` / `critical`；**无法识别的值回落 `normal`**（不报错） |
 | `timeout` | number | ❌ | 设置值 | 自动收起秒数，钳制到 `1...60`；`NaN`/`Inf` 视为**未提供** |
 | `group` | string | ❌ | — | 分组键；trim；超 64 字符截断；空白串视为无分组 |
@@ -116,13 +115,13 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 
 ### 3.2 `island`：状态行
 
-让收起态的卡片显示一行发送方驱动的摘要文本与进度，而不只是消息标题。
+让收起态的卡片显示一行发送方驱动的进度，而不只是消息标题。
 
 | 字段 | 类型 | 约束 |
 |------|------|------|
-| `text` | string | trim；超 64 字符截断；空白 → 丢弃 |
-| `progress` | number | 钳制到 `0...1`；`NaN`/`Inf` → 丢弃。迷你条在胶囊底边画一条 2pt 进度细条 |
-| `icon` | string | SF Symbol 名，替换卡片头部的紧急度 glyph（仍染紧急度色）；无效名渲染为空 |
+| `text` | string | trim；超 64 字符截断；空白 → 丢弃。**当前版本不渲染**：字段仍被接受并随历史落盘，但屏幕上没有任何消费方 |
+| `progress` | number | 钳制到 `0...1`；`NaN`/`Inf` → 丢弃。收起态卡片的 meta 行显示百分比文本（如 `42%`） |
+| `icon` | string | SF Symbol 名。**当前版本不渲染**：卡片头部图标固定为铃铛，紧急度以角标圆点表示；无效名同样不渲染 |
 
 规则：
 
@@ -159,7 +158,7 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 
 带 `script` 时 `title` 可以省略——消息先以「⏳ 脚本生成中：<名字>」占位落地，脚本完成后原地替换。脚本返回对象的字段（title/body/urgency/timeout/group/actions）覆盖消息。
 
-失败时正文写入 `⚠️ 脚本失败：<原因>` 与日志尾 3 行。详见 README「脚本」章节。
+失败时正文写入 `⚠️ 脚本失败：<原因>` 与日志尾 3 行。契约、全局 API 与超时见 README「[脚本](../README.md#脚本)」章节。
 
 ---
 
@@ -203,11 +202,13 @@ curl http://127.0.0.1:4770/v1/push -d '{
     {"type": "list", "items": ["单测 353/353", "集成 12/12"], "ordered": true},
     {"type": "code", "text": "exit 0"}
   ],
-  "island": {"text": "构建中 42%", "progress": 0.42, "icon": "hammer.fill"},
+  "island": {"progress": 0.42},
   "group": "ci",
   "timeout": 10
 }'
 ```
+
+`text` 与 `icon` 仍被接受并存档，但当前版本不渲染；只有 `progress` 会在收起态卡片上显示百分比（见 [3.2](#32-island状态行)）。
 
 **审批流（ack 回执）：**
 
@@ -262,6 +263,8 @@ curl http://127.0.0.1:4770/v1/exec \
 
 注意与 `push` 的区别：`exec` 的失败**仍然是 HTTP 200**，失败信息在 body 的 `ok:false` + `error` 里。`push` 的校验失败才是 HTTP 400。
 
+`logs` 是脚本 `console.log` 的收集结果，上界 **200 行 × 2000 字符**，超出部分追加一条截断标记（`ScriptRunner.swift:9-10,271-274`）。并发脚本超过 4 条（或僵尸线程达到 8 条）时新任务返回 `busy`，不会排队等待。
+
 ### 4.5 `GET /v1/history`
 
 ```bash
@@ -307,7 +310,9 @@ curl --unix-socket /tmp/mdn-api.sock http://localhost/v1/push -d '{"title":"构�
 
 socket 文件在 app 启动时创建，**退出时删除**（`applicationWillTerminate`）。崩溃留下的旧文件不会阻断下次启动：启动时先探测该路径，没人监听才清理并重新绑定，不会误删另一个实例正在监听的 socket。
 
-`Application Support` 路径过深时（字节数超过 `sun_path` 的 103 字节上限），路径会自动改向 `/tmp/mdn-<uid>-<hash>.sock`（同名输入总是映射到同一个文件），并在「设置 → 接口」显示改向提示——不会变成无法解释的监听失败。
+权限 0600 是在监听就绪之后 `chmod` 上去的（`APIListenerService.swift:230-238`），存在毫秒级 umask 窗口；`sun_path` 上限 103 字节。
+
+`Application Support` 路径过深时（字节数超过该上限），路径会自动改向 `/tmp/mdn-<uid>-<hash>.sock`（同名输入总是映射到同一个文件），并在「设置 → 接口」显示改向提示——不会变成无法解释的监听失败。设置页显示的是**实际绑定路径**，与默认路径可能不同。
 
 ---
 
@@ -322,7 +327,7 @@ socket 文件在 app 启动时创建，**退出时删除**（`applicationWillTer
 | 条件 | 不满足时 |
 |------|---------|
 | `Sec-WebSocket-Key` 存在且是 16 字节的 base64 | **400** `{"error":"Sec-WebSocket-Key 缺失或不是合法 base64"}` |
-| `Sec-WebSocket-Version` 缺失，或恰为 `13` | **400** `{"error":"Sec-WebSocket-Version 不受支持"}` |
+| `Sec-WebSocket-Version` 存在且不为 `13` | **400** `{"error":"Sec-WebSocket-Version 不受支持"}`（**缺失时放行**） |
 | `Origin` 缺失或为本机取值 | **403** `{"error":"非本机 Origin，拒绝升级"}` |
 | `Host` 为本机取值 | **403** |
 | 路径为 `/v1/events` | 走普通 HTTP 路由（不是升级失败，是压根不升级） |
@@ -381,6 +386,7 @@ socket 文件在 app 启动时创建，**退出时删除**（`applicationWillTer
 - `ref` **原样回显**。发送时不带 `ref`，结果帧里就没有 `ref`——一对一问答时无所谓，流水线发送时务必带上，否则无法关联。
 - **`handleWSCommand` 从不抛异常**：非法 JSON、未知 `op`、字段校验失败，一律变成 `ok:false` 的结果帧，连接保持可用。这跟 HTTP 不同（HTTP 用状态码，WS 用 `ok`）。
 - **值为 nil 的字段，整个键不出现**，不会序列化成 `null`。帧连 JSON 都没解析出来时无 `ref` 可回显，那个失败帧就只有 `type`/`ok`/`error` 三个键。客户端需容忍无 `ref` 的失败帧。
+- 命令**严格按到达顺序一次一条执行**（`WSSession.swift:25-29,160-177`），前一条没处理完不会开始下一条——不要在等待 exec 结果的同时假设能并发推送。
 
 ### 5.4 保活与关闭
 
@@ -433,7 +439,7 @@ ws.onopen = async () => {
 | `curl --unix-socket` | Unix Socket | ✅ | ✅ | ❌ |
 | `curl http://127.0.0.1:4770` | HTTP | ✅ | ✅ | ✅ |
 
-**决策**：要拿返回值、或正文含 `#`/`&`、或用 `blocks`/`island` → 用 `curl`。否则 `open` 最省事。
+**决策**：要拿返回值、或正文含 `#`/`&`、或用 `blocks`/`island`/`tags` → 用 `curl`。否则 `open` 最省事。
 
 ### 6.2 URL Scheme 的编码陷阱
 
@@ -442,9 +448,11 @@ ws.onopen = async () => {
 | 终端 `open '…'` | **直接写原文，不要 percent-encode**。`open` 会把 `%` 二次编码成 `%25`，已编码的内容会显示为字面 `%XX`。但 `#`（fragment 起点，会截断其后所有参数）和 `&`（参数分隔符）**无法**通过此方式传递 |
 | `osascript -e 'open location "…"'` | 与标准 URL 规则一致：**必须 percent-encode**（`%20`/`%0A`/`%23`/`%26`…）；但 AppleScript 源码里的非 ASCII 原文会乱码，不要混用 |
 
+`tags` 用逗号分隔（`tags=ci,prod`），逗号在 URL 查询串里是合法字符，两种调用方式都不必转义；`actions` 的 JSON 载荷同理，但其中的 `&` 必须编码。
+
 ```bash
 # ✅ 原文直接写
-open 'notch-notify://push?title=构建完成&body=编译成功'
+open 'notch-notify://push?title=构建完成&body=编译成功&tags=ci,prod'
 
 # ✅ 含 # / & 时改用 curl（推荐）或 osascript + percent-encode
 curl --unix-socket /tmp/mdn-api.sock http://localhost/v1/push \
@@ -479,7 +487,7 @@ notch_notify "CI 失败" "userService ❌" critical 30
 
 ### 6.4 REST Client / `notify.http`
 
-仓库根目录的 `notify.http` 是 VS Code REST Client 格式的示例集，以 URL Scheme 为主。可直接在编辑器里逐条执行，也可作为速查。它不构成独立接口。
+仓库根目录的 `notify.http` 是可直接执行的示例集，两部分：前半是 `exec:` 开头的终端命令（URL Scheme，复制到终端跑，REST Client 不认这种行），后半是标准的 REST Client 请求块——光标放进块里点 `Send Request`（`Cmd+Alt+R`）即发出，响应在右侧分屏。端口用文件级变量 `@host` / `@port` 声明，与设置页改端口时只改一处。它不构成独立接口。
 
 ---
 
@@ -492,7 +500,7 @@ notch_notify "CI 失败" "userService ❌" critical 30
 {"error": "未知路径"}
 ```
 
-`field` **键只在字段校验失败时才出现**——值为 nil 时整个键被省略，不会序列化成 `"field": null`。且 `push` 路径下它**恒为 `"title"`**，包括 `script` 名非法的情况（`APIRouter.swift:102` 硬编码）。不要依赖它精确定位字段，`error` 文本才是准确信息。
+`field` **键只在字段校验失败时才出现**——值为 nil 时整个键被省略，不会序列化成 `"field": null`。它的值随拒绝原因而变：`title` 缺失/为空 → `"title"`，`script` 名非法 → `"script"`（`PushValidator.swift:20-25`、`APIRouter.swift:162`）。不要依赖它精确定位字段，`error` 文本才是准确信息。
 
 ### 7.2 HTTP 状态码
 
@@ -514,8 +522,7 @@ notch_notify "CI 失败" "userService ❌" critical 30
 | `curl: (7)` 但设置里已开 | 端口被占，`httpError` 有原因 | 设置页会显示「端口 N 无法监听」，改端口或腾出 |
 | `403` | `Host` 头不是本机值 | 用 `127.0.0.1` / `localhost` 访问，别用机器名或自定义域名 |
 | `413` | JSON body 过大 | 正文上限 5000 字符；注意请求体上限是 32768 **字节**，中文 UTF-8 下 1 字 ≈ 3 字节 |
-| 推送成功但面板没动 | `outcome` 是 `queued` / `withheld` | 检查响应里的 `outcome`；`withheld` 说明处于静默档 |
-| `outcome: "queued"` | 有 critical 占屏 | 正常行为，消息在未读历史里，打开面板可见 |
+| 推送成功但屏幕没动 | `outcome` 是 `withheld`，或卡片在全屏抑制下等待 | 检查响应里的 `outcome`；`withheld` 说明处于静默档，卡片会在抑制解除后上屏 |
 | WS 连不上，握手 403 | `Origin` 不是本机值 | 浏览器以外的客户端不要发 `Origin`；浏览器页面从 `file://` 或 localhost 打开 |
 | WS 连接被 close 1002 | 协议违规（未掩码帧、超长消息） | 用成熟的 WS 客户端库，别手写帧 |
 | 正文显示成 `%E6%9E%84…` | 用 `open` 传了 percent-encoded 内容 | `open` 不编码；改用 `curl` 或 `osascript` |

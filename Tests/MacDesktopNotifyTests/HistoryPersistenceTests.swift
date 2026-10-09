@@ -251,6 +251,13 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
         XCTAssertEqual(action.url?.host, "x.test")
     }
 
+    /// 退役字段（`displayPeek`）留在旧快照里也不能绊倒解码。
+    func testSnapshotWithRetiredKeysStillDecodes() throws {
+        let json = Data(#"{"schemaVersion":1,"items":[{"id":"00000000-0000-0000-0000-000000000002","title":"旧","bodyMarkdown":"x","urgency":"normal","timestamp":750000000,"actions":[],"displayPeek":true}],"readIDs":[]}"#.utf8)
+        let snapshot = try JSONDecoder().decode(HistorySnapshot.self, from: json)
+        XCTAssertEqual(snapshot.items.count, 1)
+    }
+
     /// island 是可选键：老版本写出的快照没有它，解码必须照常成功、
     /// 字段为 nil（零迁移）。
     func testSnapshotWithoutIslandKeyStillDecodes() throws {

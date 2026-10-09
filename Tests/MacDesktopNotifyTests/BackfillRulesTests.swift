@@ -49,7 +49,7 @@ final class BackfillRulesTests: SettingsIsolatedTestCase {
         XCTAssertNotNil(m.current)
 
         m.update(id: n.id) { $0.urgency = .normal; $0.timeout = 0.1 }
-        m.dismissExpandedCard()
+        m.collapseCard(n.id)   // Esc 是指针作用域的；程序化收起走直接 API
         XCTAssertNotNil(m.current, "收起后消息仍活着")
 
         try await Task.sleep(for: .milliseconds(600))

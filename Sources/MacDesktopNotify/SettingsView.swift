@@ -46,10 +46,10 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .general: "控制通知何时出现、出现在屏幕的哪个位置。"
-        case .appearance: "调整卡片材质、动画与内容字号。"
-        case .notifications: "选一个提醒档位，其余交给我们。"
-        case .api: "让本机脚本与 Web 应用通过 HTTP、WebSocket 或 Unix socket 对接。仅监听本机。"
+        case .general: "出现位置、全屏与录屏时隐藏、触觉反馈、登录启动。"
+        case .appearance: "卡片材质、动画（进场/退场/弹性）与内容字号。"
+        case .notifications: "提醒档位、声音、历史保留、快捷键（⌃⌥N / Esc）、锁屏或睡眠时的行为。"
+        case .api: "让本机脚本与 Web 应用通过 HTTP、WebSocket 或 Unix socket 对接。端口与监听状态，仅监听本机。"
         case .about: "版本、接入示例与首次引导。"
         }
     }
@@ -347,6 +347,9 @@ private struct GeneralSettingsContent: View {
         let on = AppSettings.loginItemIsOn(SMAppService.mainApp.status)
         if settings.launchAtLogin != on {
             settings.launchAtLogin = on
+            // The toggle now agrees with the system again; a stale failure
+            // message from the rejected change must not outlive it.
+            loginError = nil
         }
     }
 
@@ -419,12 +422,16 @@ private struct GeneralSettingsContent: View {
 private struct AppearanceSettingsContent: View {
     @Bindable var settings: AppSettings
 
-    /// The damping slider doubles as the on/off for the override: nil means
-    /// the per-kind default (0.86 slide / 0.68 bounce) applies.
+    /// The damping slider doubles as the on/off for the override: dragging
+    /// back onto the per-kind default (within half a step) writes nil, so the
+    /// "follow the motion kind" behavior stays reachable after touching it.
     private var damping: Binding<Double> {
-        Binding(
-            get: { settings.toastMotionDamping ?? (settings.toastMotionEnter == .bounce ? 0.68 : 0.86) },
-            set: { settings.toastMotionDamping = $0 }
+        let fallback = settings.toastMotionEnter == .bounce ? 0.68 : 0.86
+        return Binding(
+            get: { settings.toastMotionDamping ?? fallback },
+            set: { value in
+                settings.toastMotionDamping = abs(value - fallback) < 0.03 ? nil : value
+            }
         )
     }
 
@@ -498,7 +505,7 @@ private struct AppearanceSettingsContent: View {
         Section {
             HStack {
                 Spacer()
-                Button("恢复默认") {
+                Button("恢复外观默认") {
                     settings.resetDisplayDefaults()
                 }
                 Spacer()
@@ -650,6 +657,10 @@ private struct ApiSettingsContent: View {
                     .frame(width: 100)
                     .multilineTextAlignment(.trailing)
                     .onSubmit(commitPort)
+                    // A rejected draft stops being invalid the moment the user
+                    // edits it; keeping the red text up while they type a fix
+                    // would be noise.
+                    .onChange(of: portDraft) { _, _ in portInvalid = false }
                 Button("应用", action: commitPort)
                     .disabled(portDraft == String(settings.apiHttpPort))
             }

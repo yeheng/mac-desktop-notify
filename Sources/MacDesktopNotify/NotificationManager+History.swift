@@ -26,9 +26,6 @@ extension NotificationManager {
             armLiveRules(for: id)
         }
         schedulePersist()
-        // A backfill can rewrite the island text a collapsed card shows, with
-        // no unread-count change alongside.
-        notifyCompactStatusChanged()
     }
 
     // MARK: - Persistence
@@ -153,9 +150,6 @@ extension NotificationManager {
         unreadCount = messages.unreadCount
         if unreadCount != previous {
             NotificationCenter.default.post(name: Self.unreadCountDidChange, object: nil)
-            // The bare count is part of the status line ("N 条未读" appearing
-            // or vanishing with no live card alongside).
-            notifyCompactStatusChanged()
         }
     }
 
@@ -187,13 +181,23 @@ extension NotificationManager {
 
     /// Brings back everything deleted since the undo window opened. Messages
     /// re-enter history ordered by timestamp with their read markers restored.
+    ///
+    /// A journaled entry whose group has since been re-pushed is NOT revived:
+    /// the live entry is the group's current report (its occurrence count
+    /// restarted), and resurrecting the stale one would fork the group.
     func undoDeletion() {
         guard !deletionJournal.isEmpty else { return }
         let journal = deletionJournal
         deletionJournal = []
         deletionNotice = nil
         delayed.cancel(.deletionUndoExpiry)
-        messages.reinsert(journal.map(\.item), read: Set(journal.filter(\.wasRead).map(\.item.id)))
+        let liveGroups = Set(messages.history.compactMap(\.groupingKey))
+        let revived = journal.map(\.item).filter { item in
+            guard let key = item.groupingKey else { return true }
+            return !liveGroups.contains(key)
+        }
+        let revivedIDs = Set(revived.map(\.id))
+        messages.reinsert(revived, read: Set(journal.filter { revivedIDs.contains($0.item.id) && $0.wasRead }.map(\.item.id)))
         recomputeUnread()
         schedulePersist()
     }
@@ -225,6 +229,12 @@ extension NotificationManager {
         let visible = Set(presentations.map(\.item.id))
         let ids = Set(messages.history.map(\.id)).subtracting(visible)
         guard !ids.isEmpty else { return }
+        // The confirmation says "不可撤销": a pending undo journal must die
+        // with the wipe, or undoing would resurrect freshly cleared ghosts
+        // (same rule as `clear()`).
+        deletionJournal = []
+        deletionNotice = nil
+        delayed.cancel(.deletionUndoExpiry)
         messages.removeAll(ids)
         recomputeUnread()
         settleAfterRemoval(cardRemoved: false)
@@ -238,12 +248,9 @@ extension NotificationManager {
     func settleAfterRemoval(cardRemoved: Bool) {
         if cardRemoved {
             let alive = Set(messages.history.map(\.id))
-            var changed = false
             for card in presentations where !alive.contains(card.item.id) {
                 retireCard(card.item.id, readOnRetire: false)
-                changed = true
             }
-            if changed { notifyCompactStatusChanged() }
         } else if presentations.isEmpty {
             Task { await presenter?.reapply(on: self) }
         }

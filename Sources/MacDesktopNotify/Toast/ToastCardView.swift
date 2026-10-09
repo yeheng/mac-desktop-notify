@@ -77,6 +77,14 @@ struct ToastCardView: View {
         }
         .gesture(dismissDrag)
         .modifier(ToastContextMenu(cardID: card.item.id))
+        // The × is hover-revealed, so a keyboard/VoiceOver user never sees it;
+        // named actions give them the same two exits without the pointer.
+        .accessibilityAction(named: "关闭通知") {
+            manager.closeCard(card.item.id)
+        }
+        .accessibilityAction(named: "收起") {
+            if card.expanded { manager.collapseCard(card.item.id) }
+        }
         // `expanded` is not part of the stack's animation key (which tracks
         // card ids), so expansion gets its own animation here — matched to
         // the presenter's window-resize clock.

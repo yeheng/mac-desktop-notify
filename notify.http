@@ -2,10 +2,14 @@
 ### MacDesktopNotify 调用示例
 ###
 ### 本项目通过 macOS URL Scheme 接收通知。
-### 在终端中运行 `open` 命令即可触发推送，
-### 也可嵌入 CI/CD 脚本、Alfred/Raycast 工作流等。
 ###
-### 注意：不要对参数做 percent-encode——`open` 会把 `%` 再次编码，
+### 文件分两部分：
+###   · `exec: ...` 行是**终端命令**，复制到终端运行即可，
+###     也可嵌入 CI/CD 脚本、Alfred/Raycast 工作流等。
+###   · 文件末尾的 `POST/GET ...` 是 REST Client 请求，
+###     在 VS Code 里光标放入请求块，点 Send Request 发送。
+###
+### 注意：不要对 URL 参数做 percent-encode——`open` 会把 `%` 再次编码，
 ### 导致正文显示为未解码的 %XX。中文、空格、emoji、换行直接写原文即可；
 ### 但 `#`（fragment 分隔符）和 `&`（参数分隔符）无法经 URL 传递，
 ### 含这两个字符的正文请改用 HTTP API（见文件末尾）。
@@ -77,10 +81,114 @@ notch_notify "CI 失败" "测试用例 userService ❌" "critical" 30
 ```
 
 ### ============================================================
-### HTTP API（正文含 `#` / `&`，或需要 JSON 时使用）
+### HTTP API（正文含 `#` / `&`，需要 JSON 字段，或要拿返回值时使用）
 ### ============================================================
+###
+### 本节的每一条都是 REST Client 请求：把光标放进某个请求块，
+### 点上方出现的 Send Request 链接（或 Cmd+Alt+R）即可发送，
+### 响应在右侧分屏显示。Windows/Linux 用 Ctrl+Alt+R。
+###
+### 前置条件（未开则全部请求都是 curl: (7) 拒绝连接）：
+###   设置 → API → 启用 HTTP 监听，默认端口 4770，可改。
+### 端口改了只改下面两行变量即可，不必逐条替换 URL。
+###
+### 不想开 HTTP 就走 Unix Socket（默认开启，无需设置），用 curl：
+###   curl -s --unix-socket \
+###     "$HOME/Library/Application Support/MacDesktopNotify/api.sock" \
+###     http://localhost/v1/push \
+###     -d '{"title":"构建完成","body":"全部通过","urgency":"normal","timeout":10}'
+### 路径带空格、个别 curl 版本处理不好时先做无空格软链：
+###   ln -sf "$HOME/Library/Application Support/MacDesktopNotify/api.sock" /tmp/mdn-api.sock
+### 完整规则见 docs/api.md。
+###
+### 约束（与 curl 相同，来自服务端行为）：
+###   - Host 必须是 127.0.0.1 / localhost，其余一律 403
+###   - 响应带 Connection: close，每次请求都是新连接（正常现象）
+###   - 请求体上限 32768 字节；title ≤200、body ≤5000，超出是截断不是报错
+###   - exec 的脚本失败仍然是 HTTP 200，失败信息在 body 的 "ok": false 里
 
-### 先开启：设置 → API → 启用 HTTP 监听（默认端口 4770）
-exec: curl -X POST http://127.0.0.1:4770/v1/push \
-  -H 'Content-Type: application/json' \
-  -d '{"title": "构建报告", "body": "## 构建摘要\n\n- 状态: ✅", "urgency": "normal"}'
+@host = 127.0.0.1
+@port = 4770
+
+### 基础推送：同步返回 outcome 与 id
+POST http://{{host}}:{{port}}/v1/push
+Content-Type: application/json
+
+{
+  "title": "构建完成",
+  "body": "全部通过",
+  "urgency": "normal",
+  "timeout": 10
+}
+
+### 结构化正文（blocks 优先于 body）+ 状态行进度 + 分组 + 标签
+### 换行、#、&、引号在 JSON 里都是普通字符，不需要任何转义
+POST http://{{host}}:{{port}}/v1/push
+Content-Type: application/json
+
+{
+  "title": "部署报告 #42 & 汇总",
+  "blocks": [
+    {"type": "heading", "text": "摘要", "level": 2},
+    {"type": "text", "text": "全部通过，无回归"},
+    {"type": "list", "items": ["单测 384/384", "集成 12/12"], "ordered": true},
+    {"type": "code", "text": "exit 0"}
+  ],
+  "island": {"progress": 0.42},
+  "group": "ci",
+  "tags": ["ci", "prod"],
+  "timeout": 10
+}
+
+### 操作按钮与点击行为：clickUrl 打开链接，actions 做审批回执
+### 第二个按钮点击后写回执文件，不打开浏览器；input=1 会先要求一行批注
+POST http://{{host}}:{{port}}/v1/push
+Content-Type: application/json
+
+{
+  "title": "部署审批",
+  "urgency": "critical",
+  "clickUrl": "https://example.com/deploy/42",
+  "actions": [
+    {"label": "允许", "url": "notch-notify://ack?token=http-42&label=approve"},
+    {"label": "驳回", "url": "notch-notify://ack?token=http-42&label=deny&input=1"}
+  ]
+}
+
+### 手动执行脚本（同步等结果；失败也是 200，看 body 的 ok）
+POST http://{{host}}:{{port}}/v1/exec
+Content-Type: application/json
+
+{"script": "ci-status", "input": {"run": 42}, "timeoutMs": 1000}
+
+### 最近历史（默认 20 条、上限 50，含已读标记与未读数）
+GET http://{{host}}:{{port}}/v1/history?limit=5
+
+### 监听器真实状态：未读数、历史条数、静默状态、HTTP/socket 是否在听
+GET http://{{host}}:{{port}}/v1/status
+
+### 只清某个分组（group 语义与 push 一致）
+POST http://{{host}}:{{port}}/v1/clear
+Content-Type: application/json
+
+{"group": "ci"}
+
+### 清空全部：body 留空即是「清空全部」，不要发 {}
+POST http://{{host}}:{{port}}/v1/clear
+
+### 错误样例：body 不是合法 JSON → 400 {"error":"请求体不是合法 JSON"}
+POST http://{{host}}:{{port}}/v1/push
+Content-Type: application/json
+
+not json
+
+### 错误样例：方法不匹配 → 405 {"error":"方法不允许"}
+GET http://{{host}}:{{port}}/v1/push
+
+### 错误样例：Host 不是本机取值 → 403。用 VS Code 设置覆盖默认头即可复现：
+###   "rest-client.defaultHeaders": { "Host": "evil.example.com" }
+POST http://{{host}}:{{port}}/v1/push
+Host: evil.example.com
+Content-Type: application/json
+
+{"title": "应被 403 拒绝"}

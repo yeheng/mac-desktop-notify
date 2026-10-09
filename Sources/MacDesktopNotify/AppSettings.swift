@@ -85,20 +85,6 @@ final class AppSettings {
         }
     }
 
-    var panelWidth: Double {
-        didSet {
-            save(panelWidth, key: Keys.panelWidth)
-            NotificationCenter.default.post(name: Self.displayBehaviorDidChange, object: nil)
-        }
-    }
-    var panelHeight: Double {
-        didSet {
-            save(panelHeight, key: Keys.panelHeight)
-            NotificationCenter.default.post(name: Self.displayBehaviorDidChange, object: nil)
-        }
-    }
-    var showUrgency: Bool { didSet { save(showUrgency, key: Keys.showUrgency) } }
-    var showHistoryCount: Bool { didSet { save(showHistoryCount, key: Keys.showHistoryCount) } }
     var soundEnabled: Bool { didSet { save(soundEnabled, key: Keys.soundEnabled) } }
     var launchAtLogin: Bool { didSet { save(launchAtLogin, key: Keys.launchAtLogin) } }
     var persistHistory: Bool { didSet { save(persistHistory, key: Keys.persistHistory) } }
@@ -160,10 +146,6 @@ final class AppSettings {
         toastMotionEnterMs = defaults.object(forKey: Keys.toastMotionEnterMs.rawValue) as? Double ?? 420
         toastMotionExitMs = defaults.object(forKey: Keys.toastMotionExitMs.rawValue) as? Double ?? 260
         toastMotionDamping = defaults.object(forKey: Keys.toastMotionDamping.rawValue) as? Double
-        panelWidth = defaults.object(forKey: Keys.panelWidth.rawValue) as? Double ?? 720
-        panelHeight = defaults.object(forKey: Keys.panelHeight.rawValue) as? Double ?? 360
-        showUrgency = defaults.object(forKey: Keys.showUrgency.rawValue) as? Bool ?? true
-        showHistoryCount = defaults.object(forKey: Keys.showHistoryCount.rawValue) as? Bool ?? true
         soundEnabled = defaults.object(forKey: Keys.soundEnabled.rawValue) as? Bool ?? true
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin.rawValue) as? Bool ?? false
         persistHistory = defaults.object(forKey: Keys.persistHistory.rawValue) as? Bool ?? true
@@ -211,10 +193,6 @@ final class AppSettings {
         toastMotionEnterMs = 420
         toastMotionExitMs = 260
         toastMotionDamping = nil
-        panelWidth = 720
-        panelHeight = 360
-        showUrgency = true
-        showHistoryCount = true
         soundEnabled = true
         launchAtLogin = false
         persistHistory = true
@@ -228,11 +206,11 @@ final class AppSettings {
         panelHotkeyUnavailable = false
     }
 
+    /// The 外观 pane's reset: appearance knobs only. `toastPosition` lives in
+    /// 通用 and is deliberately out of scope — a button on one page must not
+    /// silently move a setting the user set on another.
     func resetDisplayDefaults() {
         contentFontSize = 13
-        panelWidth = 720
-        panelHeight = 360
-        toastPosition = .topRight
         toastMaterial = .popover
         toastMotionEnter = .slide
         toastMotionExit = .slide
@@ -308,13 +286,9 @@ final class AppSettings {
         // Retired with the notch island's JSON appearance DSL.
         case islandThemeID = "island.themeID"
         case islandLayoutID = "island.layoutID"
-        case panelWidth = "island.panelWidth"
-        case panelHeight = "island.panelHeight"
         // Retired with the notch island's geometry escape hatches.
         case notchWidthOffset = "island.notchWidthOffset"
         case notchHeightOffset = "island.notchHeightOffset"
-        case showUrgency = "island.showUrgency"
-        case showHistoryCount = "island.showHistoryCount"
         case soundEnabled = "island.soundEnabled"
         case launchAtLogin = "island.launchAtLogin"
         // Retired with the ⌘-family global shortcuts (they conflicted with
@@ -421,7 +395,11 @@ enum AttentionPreset: String, CaseIterable, Identifiable {
     @MainActor
     static func matching(_ settings: AppSettings) -> AttentionPreset? {
         if settings.ageOutCriticals {
-            return settings.messageDwellSeconds == 5 ? .balanced : nil
+            switch settings.messageDwellSeconds {
+            case 3: return .quiet
+            case 5: return .balanced
+            default: return nil
+            }
         }
         return settings.messageDwellSeconds == 10 ? .instant : nil
     }

@@ -1,5 +1,7 @@
 import Foundation
 import Observation
+import AppKit
+import SwiftUI
 
 /// The interaction-model core: every piece of state the model owns, the
 /// push ingress, and the quiet/silence rules.
@@ -142,13 +144,6 @@ final class NotificationManager {
     /// views (the status item icon redraws from this).
     static let unreadCountDidChange = Notification.Name("MacDesktopNotify.unreadCountDidChange")
 
-    /// Posted by the manager whenever the compact status line's inputs change
-    /// (the live card — island text included — or the unread count). The mini
-    /// bar and the toast relayout their windows from it. State writers post
-    /// this; views only render — the mini bar used to announce its own status
-    /// change from `.onChange`, poking window frames from inside a view update.
-    static let compactStatusDidChange = Notification.Name("MacDesktopNotify.compactStatusDidChange")
-
     /// Writes are debounced so a burst of pushes costs one save, not one per message.
     static let persistDebounce: Duration = .milliseconds(500)
 
@@ -254,16 +249,6 @@ final class NotificationManager {
     var historyCount: Int { messages.history.count }
     var hasContent: Bool { !presentations.isEmpty }
 
-    /// The newest message that has not been read. The collapsed card uses this
-    /// for its title marquee, so a collapsed stack still says what is waiting.
-    var latestUnread: CardPayload? {
-        messages.history.last { !isRead($0) }
-    }
-
-    /// The urgency the toast should be tinted with: the newest visible card's
-    /// message if there is one, otherwise the most recent history entry.
-    var displayUrgency: UrgencyLevel? { current?.urgency ?? latestNotification?.urgency }
-
     /// The newest entry in history — the live card included, since the log
     /// holds it too.
     var latestNotification: CardPayload? { messages.history.last }
@@ -272,14 +257,6 @@ final class NotificationManager {
     var pastHistory: [CardPayload] {
         let visible = Set(presentations.map(\.item.id))
         return messages.history.filter { !visible.contains($0.id) }
-    }
-
-    /// The one headline a collapsed card says: the newest visible card's
-    /// title, then the newest unread's, then the bare status.
-    var compactHeadline: String {
-        if let text = current?.island?.text { return text }
-        if let title = (current ?? latestUnread)?.title { return title }
-        return unreadCount > 0 ? "\(unreadCount) 条未读" : ""
     }
 
     func isRead(_ notification: CardPayload) -> Bool {
@@ -294,7 +271,6 @@ final class NotificationManager {
         let next = expanded && presentations.count > 1
         guard next != stackExpanded else { return }
         stackExpanded = next
-        notifyCompactStatusChanged()
     }
 
     /// The pile is a one-card display: dropping to a single card makes the
@@ -303,7 +279,6 @@ final class NotificationManager {
     func reconcileDeck() {
         if presentations.count <= 1, stackExpanded {
             stackExpanded = false
-            notifyCompactStatusChanged()
         }
     }
 
@@ -465,7 +440,6 @@ final class NotificationManager {
         presentations = []
         stackExpanded = false
         reduce(.cleared)
-        notifyCompactStatusChanged()
         historyStore?.delete()
         Task { await presenter?.reapply(on: self) }
     }
@@ -529,13 +503,33 @@ final class NotificationManager {
         return false
     }
 
-    // MARK: - Status change fan-out
+    // MARK: - Stack membership animation
 
-    /// Announces that the compact status line may have moved. Called by the
-    /// state writers whose writes `compactStatus` reads — the mutation posts,
-    /// views never do. Over-posting is harmless: observers only re-run window
-    /// layout, and an unchanged status yields the same frame.
-    func notifyCompactStatusChanged() {
-        NotificationCenter.default.post(name: Self.compactStatusDidChange, object: nil)
+    /// Cards joining or leaving the stack animate on the Settings motion
+    /// clock: insertions ride the enter curve, removals the exit duration.
+    /// Timing lives at the mutation site (not in a view-side `.animation`
+    /// modifier, whose single clock would force enter and exit to share it);
+    /// the stack view only picks the transition shape.
+    func animateMembership(removal: Bool, _ body: () -> Void) {
+        let settings = AppSettings.shared
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            body()
+            return
+        }
+        let animation: Animation?
+        if removal {
+            let exit = settings.toastMotionExit
+            animation = exit == .none ? nil : .easeOut(duration: max(0.05, settings.toastMotionExitMs / 1000))
+        } else {
+            let seconds = max(0.05, settings.toastMotionEnterMs / 1000)
+            let damping = settings.toastMotionDamping
+            switch settings.toastMotionEnter {
+            case .none: animation = nil
+            case .slide: animation = .spring(response: seconds, dampingFraction: damping ?? 0.86)
+            case .bounce: animation = .spring(response: seconds, dampingFraction: damping ?? 0.68)
+            case .fade, .zoom: animation = .easeOut(duration: seconds)
+            }
+        }
+        withAnimation(animation) { body() }
     }
 }
