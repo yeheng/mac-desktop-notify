@@ -23,11 +23,7 @@ enum URLNotificationParser {
             clickUrl: value("click"),
             tags: parseTags(value("tags"))
         ) {
-        case .success(var notification):
-            // The `display` hint is a URL-scheme concern; `PushValidator` is the
-            // shared ingress contract and knows nothing of it, so it is applied
-            // once the shared validation has produced a notification.
-            notification.displayPeek = parseDisplay(value("display"))
+        case .success(let notification):
             return .success(notification)
         case .failure(let rejection):
             return .failure(rejection)
@@ -38,18 +34,6 @@ enum URLNotificationParser {
     static func parsePush(_ url: URL) -> CardPayload? {
         guard case .success(let notification) = parsePushDetailed(url) else { return nil }
         return notification
-    }
-
-    /// Parses the `display` parameter: `peek` keeps the message in the compact
-    /// pill (no panel), `expand` forces the panel open even when the sender's
-    /// message would otherwise defer to a peek-by-default setting. Anything
-    /// else leaves the choice to the app.
-    static func parseDisplay(_ raw: String?) -> Bool? {
-        switch raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "peek": true
-        case "expand": false
-        default: nil
-        }
     }
 
     /// Parses the `tags` parameter: comma-separated labels. A URL query has

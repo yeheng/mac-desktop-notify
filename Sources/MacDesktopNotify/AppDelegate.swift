@@ -73,8 +73,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncPanelHotkey()
         // Local API listeners (HTTP/WS on 127.0.0.1, unix socket in App Support).
         APIListenerService.shared.restart()
-        // Custom toast appearance: styles/*.json, watched for edits.
-        ToastStyleStore.shared.start()
         // addObserverOnMain runs handlers inline on the main actor (see its
         // contract) — same delivery the explicit queue+assertion pairs used
         // to spell out at every site.
@@ -168,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// A malformed push must not vanish. `open` swallows stderr from the caller's
     /// perspective only sometimes, so both channels are used: stderr for scripts
-    /// (it lands wherever the sender redirected it), and a visible pill for
+    /// (it lands wherever the sender redirected it), and a visible card for
     /// humans poking at the URL by hand.
     ///
     /// Normal urgency, deliberately: a typo in a shell script is feedback to the

@@ -59,11 +59,30 @@ final class AppSettings {
         }
     }
 
-    /// Selected `styles/<id>.json`; `"default"` means the built-in style.
-    /// The store self-heals from the persisted id, so a picker change needs
-    /// no notification and a file edit needs no reload.
-    var toastStyleID: String {
-        didSet { save(toastStyleID, key: Keys.toastStyleID) }
+    /// The frosted-glass material behind the cards.
+    var toastMaterial: ToastMaterial {
+        didSet { save(toastMaterial.rawValue, key: Keys.toastMaterial) }
+    }
+
+    /// Enter/exit motion of the cards, and its timing. `toastMotionDamping`
+    /// stays nil until the user touches the slider, so the per-kind default
+    /// (0.86 slide / 0.68 bounce) applies.
+    var toastMotionEnter: ToastMotion {
+        didSet { save(toastMotionEnter.rawValue, key: Keys.toastMotionEnter) }
+    }
+    var toastMotionExit: ToastMotion {
+        didSet { save(toastMotionExit.rawValue, key: Keys.toastMotionExit) }
+    }
+    var toastMotionEnterMs: Double { didSet { save(toastMotionEnterMs, key: Keys.toastMotionEnterMs) } }
+    var toastMotionExitMs: Double { didSet { save(toastMotionExitMs, key: Keys.toastMotionExitMs) } }
+    var toastMotionDamping: Double? {
+        didSet {
+            if let toastMotionDamping {
+                save(toastMotionDamping, key: Keys.toastMotionDamping)
+            } else {
+                defaults.removeObject(forKey: Keys.toastMotionDamping.rawValue)
+            }
+        }
     }
 
     var panelWidth: Double {
@@ -85,8 +104,8 @@ final class AppSettings {
     var persistHistory: Bool { didSet { save(persistHistory, key: Keys.persistHistory) } }
     var quietMode: QuietMode { didSet { save(quietMode.rawValue, key: Keys.quietMode) } }
     /// Critical messages block until dismissed; with this on, an untouched one
-    /// demotes itself to the pill after five minutes so the screen is not held
-    /// hostage. The message stays in history either way.
+    /// demotes itself to an ordinary auto-retiring card after five minutes so
+    /// the screen is not held hostage. The message stays in history either way.
     var ageOutCriticals: Bool { didSet { save(ageOutCriticals, key: Keys.ageOutCriticals) } }
     /// Whether the first-run guide has been completed (or skipped).
     var onboardingCompleted: Bool { didSet { save(onboardingCompleted, key: Keys.onboardingCompleted) } }
@@ -133,9 +152,14 @@ final class AppSettings {
         hideInFullscreen = defaults.object(forKey: Keys.hideInFullscreen.rawValue) as? Bool ?? false
         enableHaptics = defaults.object(forKey: Keys.enableHaptics.rawValue) as? Bool ?? true
         excludeFromScreenRecording = defaults.object(forKey: Keys.excludeFromScreenRecording.rawValue) as? Bool ?? true
-        contentFontSize = defaults.object(forKey: Keys.contentFontSize.rawValue) as? Double ?? 12
+        contentFontSize = defaults.object(forKey: Keys.contentFontSize.rawValue) as? Double ?? 13
         toastPosition = ToastPosition(rawValue: defaults.string(forKey: Keys.toastPosition.rawValue) ?? "") ?? .topRight
-        toastStyleID = defaults.string(forKey: Keys.toastStyleID.rawValue) ?? "default"
+        toastMaterial = ToastMaterial(rawValue: defaults.string(forKey: Keys.toastMaterial.rawValue) ?? "") ?? .popover
+        toastMotionEnter = ToastMotion(rawValue: defaults.string(forKey: Keys.toastMotionEnter.rawValue) ?? "") ?? .slide
+        toastMotionExit = ToastMotion(rawValue: defaults.string(forKey: Keys.toastMotionExit.rawValue) ?? "") ?? .slide
+        toastMotionEnterMs = defaults.object(forKey: Keys.toastMotionEnterMs.rawValue) as? Double ?? 420
+        toastMotionExitMs = defaults.object(forKey: Keys.toastMotionExitMs.rawValue) as? Double ?? 260
+        toastMotionDamping = defaults.object(forKey: Keys.toastMotionDamping.rawValue) as? Double
         panelWidth = defaults.object(forKey: Keys.panelWidth.rawValue) as? Double ?? 720
         panelHeight = defaults.object(forKey: Keys.panelHeight.rawValue) as? Double ?? 360
         showUrgency = defaults.object(forKey: Keys.showUrgency.rawValue) as? Bool ?? true
@@ -179,9 +203,14 @@ final class AppSettings {
         hideInFullscreen = false
         enableHaptics = true
         excludeFromScreenRecording = true
-        contentFontSize = 12
+        contentFontSize = 13
         toastPosition = .topRight
-        toastStyleID = "default"
+        toastMaterial = .popover
+        toastMotionEnter = .slide
+        toastMotionExit = .slide
+        toastMotionEnterMs = 420
+        toastMotionExitMs = 260
+        toastMotionDamping = nil
         panelWidth = 720
         panelHeight = 360
         showUrgency = true
@@ -200,10 +229,16 @@ final class AppSettings {
     }
 
     func resetDisplayDefaults() {
-        contentFontSize = 12
+        contentFontSize = 13
         panelWidth = 720
         panelHeight = 360
         toastPosition = .topRight
+        toastMaterial = .popover
+        toastMotionEnter = .slide
+        toastMotionExit = .slide
+        toastMotionEnterMs = 420
+        toastMotionExitMs = 260
+        toastMotionDamping = nil
     }
 
     /// Runtime-only, deliberately not persisted and not in `Keys`: whether
@@ -263,8 +298,13 @@ final class AppSettings {
         case miniSummaryOnNotchlessScreens = "island.miniSummaryOnNotchlessScreens"
         case mirrorSummaryOnAllDisplays = "island.mirrorSummaryOnAllDisplays"
         case contentFontSize = "island.contentFontSize"
-        case toastStyleID = "toast.styleID"
         case toastPosition = "toast.position"
+        case toastMaterial = "toast.material"
+        case toastMotionEnter = "toast.motionEnter"
+        case toastMotionExit = "toast.motionExit"
+        case toastMotionEnterMs = "toast.motionEnterMs"
+        case toastMotionExitMs = "toast.motionExitMs"
+        case toastMotionDamping = "toast.motionDamping"
         // Retired with the notch island's JSON appearance DSL.
         case islandThemeID = "island.themeID"
         case islandLayoutID = "island.layoutID"

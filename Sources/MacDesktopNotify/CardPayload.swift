@@ -90,15 +90,9 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
     /// ([A-Za-z0-9_-]{1,64}) by PushValidator; optional so history written
     /// before this field existed still decodes.
     var script: String?
-    /// Display-style override from the sender (`display=peek` / `display=expand`).
-    /// `nil` defers to the app setting; `true` keeps the message in the compact
-    /// pill (title only, short dwell) instead of opening the panel. Critical
-    /// messages ignore this - they always take the screen. Optional so history
-    /// written before this field existed still decodes.
-    var displayPeek: Bool?
     /// Sender-driven island status line (push 的 `island` 字段，仅 HTTP/WS
     /// 入口；URL Scheme 不载结构化字段）。Optional so history written
-    /// before this field existed still decodes（`displayPeek` 先例，零迁移）.
+    /// before this field existed still decodes（零迁移）.
     /// 脚本回填不碰它（YAGNI：回填的是报告，进度推送来自推送方）。
     var island: StatusLine?
     /// 同组重复推送的累计次数：`collapseGroup` 每次顶掉同组旧条目时 +1，
@@ -127,7 +121,6 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
         actions: [NotificationAction] = [],
         group: String? = nil,
         script: String? = nil,
-        displayPeek: Bool? = nil,
         island: StatusLine? = nil,
         occurrences: Int = 1,
         clickURL: URL? = nil,
@@ -142,7 +135,6 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
         self.actions = actions
         self.group = group
         self.script = script
-        self.displayPeek = displayPeek
         self.island = island
         self.occurrences = occurrences
         self.clickURL = clickURL
@@ -154,7 +146,8 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
     /// single strict failure does not drop one message — it quarantines the
     /// whole file and the user loses every message on disk. Every field gets
     /// `decodeIfPresent` and a sane default, so a snapshot written by any older
-    /// build (before `occurrences`, `island`, `displayPeek`…) still loads.
+    /// build (before `occurrences`, `island`…) still loads; keys this build no
+    /// longer has (`displayPeek`…) are simply ignored.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
@@ -166,7 +159,6 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
         actions = try container.decodeIfPresent([NotificationAction].self, forKey: .actions) ?? []
         group = try container.decodeIfPresent(String.self, forKey: .group)
         script = try container.decodeIfPresent(String.self, forKey: .script)
-        displayPeek = try container.decodeIfPresent(Bool.self, forKey: .displayPeek)
         island = try container.decodeIfPresent(StatusLine.self, forKey: .island)
         occurrences = try container.decodeIfPresent(Int.self, forKey: .occurrences) ?? 1
         clickURL = try container.decodeIfPresent(URL.self, forKey: .clickURL)

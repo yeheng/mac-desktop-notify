@@ -252,7 +252,7 @@ final class HistoryPersistenceTests: SettingsIsolatedTestCase {
     }
 
     /// island 是可选键：老版本写出的快照没有它，解码必须照常成功、
-    /// 字段为 nil（displayPeek 先例，零迁移）。
+    /// 字段为 nil（零迁移）。
     func testSnapshotWithoutIslandKeyStillDecodes() throws {
         let json = Data(#"{"schemaVersion":1,"items":[{"id":"00000000-0000-0000-0000-000000000001","title":"旧消息","bodyMarkdown":"正文","urgency":"normal","timestamp":750000000,"actions":[]}],"readIDs":[]}"#.utf8)
         let snapshot = try JSONDecoder().decode(HistorySnapshot.self, from: json)

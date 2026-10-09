@@ -9,6 +9,9 @@ enum ToastPosition: String, CaseIterable, Identifiable {
     case topRight
     case bottomRight
     case topCenter
+    case topLeft
+    case bottomLeft
+    case bottomCenter
 
     var id: String { rawValue }
 
@@ -17,6 +20,9 @@ enum ToastPosition: String, CaseIterable, Identifiable {
         case .topRight: "右上角"
         case .bottomRight: "右下角"
         case .topCenter: "顶部居中（菜单栏下方）"
+        case .topLeft: "左上角"
+        case .bottomLeft: "左下角"
+        case .bottomCenter: "底部居中（Dock 上方）"
         }
     }
 
@@ -25,7 +31,27 @@ enum ToastPosition: String, CaseIterable, Identifiable {
         case .topRight: "贴着屏幕右上角。适合全屏工作——通知从角落进来，不挡视线中央。"
         case .bottomRight: "贴着屏幕右下角。适合 Dock 常在右侧，且不希望顶部被占用。"
         case .topCenter: "贴着屏幕顶部中央，紧贴在菜单栏下方。任何显示器都可用；刘海位置与无刘海屏一致。"
+        case .topLeft: "贴着屏幕左上角。适合菜单栏右侧已满是图标、左侧更空的桌面。"
+        case .bottomLeft: "贴着屏幕左下角。适合 Dock 在底部且左侧空闲的桌面。"
+        case .bottomCenter: "贴着屏幕底部中央，Dock 上方。Dock 隐藏或常驻两侧时最稳。"
         }
+    }
+
+    /// Bottom-anchored stacks grow upwards: the anchor edge's cards must not
+    /// move while the window grows.
+    var isBottom: Bool {
+        self == .bottomRight || self == .bottomLeft || self == .bottomCenter
+    }
+
+    /// Left-anchored cards enter from and dismiss towards the leading edge.
+    var isLeading: Bool {
+        self == .topLeft || self == .bottomLeft
+    }
+
+    /// Center-anchored cards enter from and dismiss towards the nearest
+    /// horizontal screen edge (top or bottom).
+    var isCenter: Bool {
+        self == .topCenter || self == .bottomCenter
     }
 }
 
@@ -36,10 +62,11 @@ enum ToastPosition: String, CaseIterable, Identifiable {
 /// degree of freedom (three anchors instead of one) and one new rule (growth
 /// direction), and neither warrants a window to assert.
 enum ToastLayout {
-    /// Distance from the anchor edge, in points. 12pt is far enough that the
-    /// window's rounded corners and shadow are not clipped, and close enough
-    /// that the card still reads as coming from that corner.
-    static let margin: CGFloat = 12
+    /// Distance from the anchor edge, in points. 16pt matches the system
+    /// banner's gap from the screen edge — far enough that the window's
+    /// rounded corners and shadow are not clipped, close enough that the card
+    /// still reads as coming from that corner.
+    static let margin: CGFloat = 16
 
     /// The window frame for `contentSize` at `position` inside `visibleFrame`.
     ///
@@ -72,6 +99,15 @@ enum ToastLayout {
         case .topCenter:
             x = visibleFrame.midX - width / 2
             y = visibleFrame.maxY - margin - height
+        case .topLeft:
+            x = visibleFrame.minX + margin
+            y = visibleFrame.maxY - margin - height
+        case .bottomLeft:
+            x = visibleFrame.minX + margin
+            y = visibleFrame.minY + margin
+        case .bottomCenter:
+            x = visibleFrame.midX - width / 2
+            y = visibleFrame.minY + margin
         }
         return NSRect(x: x, y: y, width: width, height: height)
     }

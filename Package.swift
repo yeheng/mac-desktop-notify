@@ -10,12 +10,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "MacDesktopNotify",
-            path: "Sources/MacDesktopNotify",
-            // The built-in toast style packs ship inside the app as the presets
-            // the picker offers; the tests read them from source as well.
-            resources: [
-                .copy("Builtin/styles")
-            ]
+            path: "Sources/MacDesktopNotify"
         ),
         .testTarget(
             name: "MacDesktopNotifyTests",

@@ -19,9 +19,9 @@ final class ToastLayoutTests: XCTestCase {
         ToastLayout.frame(contentSize: size, visibleFrame: bounds ?? visibleFrame, position: position)
     }
 
-    /// 12pt margin: far enough that the rounded corners and the window shadow
-    /// are not clipped, close enough that the card still reads as coming from
-    /// that corner.
+    /// 16pt margin: matches the system banner's gap — far enough that the
+    /// rounded corners and the window shadow are not clipped, close enough
+    /// that the card still reads as coming from that corner.
     func testTopRightAnchorsToTheVisibleCorner() {
         let f = frame(NSSize(width: 200, height: 36), at: .topRight)
         XCTAssertEqual(f.maxX, visibleFrame.maxX - ToastLayout.margin)
@@ -85,7 +85,25 @@ final class ToastLayoutTests: XCTestCase {
         XCTAssertEqual(f.minY, offset.minY + ToastLayout.margin)
     }
 
-    /// The three anchors cover the three requested placements.
+    func testTopLeftAnchorsToTheVisibleCorner() {
+        let f = frame(NSSize(width: 200, height: 36), at: .topLeft)
+        XCTAssertEqual(f.minX, visibleFrame.minX + ToastLayout.margin)
+        XCTAssertEqual(f.maxY, visibleFrame.maxY - ToastLayout.margin)
+    }
+
+    func testBottomLeftAnchorsToTheVisibleCorner() {
+        let f = frame(NSSize(width: 200, height: 36), at: .bottomLeft)
+        XCTAssertEqual(f.minX, visibleFrame.minX + ToastLayout.margin)
+        XCTAssertEqual(f.minY, visibleFrame.minY + ToastLayout.margin)
+    }
+
+    func testBottomCenterIsHorizontallyCenteredAboveTheEdge() {
+        let f = frame(NSSize(width: 400, height: 80), at: .bottomCenter)
+        XCTAssertEqual(f.midX, visibleFrame.midX)
+        XCTAssertEqual(f.minY, visibleFrame.minY + ToastLayout.margin)
+    }
+
+    /// The anchors cover every requested placement.
     func testEveryPositionLandsInsideTheVisibleFrame() {
         for position in ToastPosition.allCases {
             let f = frame(NSSize(width: 300, height: 100), at: position)

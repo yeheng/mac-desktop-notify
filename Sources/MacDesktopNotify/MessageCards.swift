@@ -30,7 +30,9 @@ struct NotificationBodyView: View {
                 headingFont: .system(size: CGFloat(settings.contentFontSize) + 2, weight: .semibold),
                 proseColor: .primary,
                 codeColor: .primary,
-                codeBackground: .white.opacity(0.07)
+                // Scheme-adaptive: visible on both the dark and the light
+                // material, which a white-only wash is not.
+                codeBackground: .primary.opacity(0.08)
             )
         )
     }

@@ -97,8 +97,6 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 | `tags` | array | ❌ | `[]` | 标签，最多 8 个，每个 trim 后 ≤24 字符；大小写不敏感去重；超出截断，坏条目丢弃。**只用于展示与历史搜索**，不参与分组（分组用 `group`）。URL Scheme 用 `tags=a,b,c` 逗号分隔 |
 | `script` | string | ❌ | — | JSC 脚本名，`[A-Za-z0-9_-]{1,64}`；非法 → **400**。见 [3.4](#34-script脚本回填) |
 
-> `display=peek` **仅 URL Scheme 支持**，HTTP / WS 的载荷里没有这个字段（`URLNotificationParser.swift:25`）。本地 API 想让消息走轻提醒，只能改「设置 → 通知 → 普通消息使用轻提醒」这个全局默认。
-
 ### 3.1 `blocks`：结构化正文
 
 多行 Markdown 塞进 JSON 字符串是转义地狱。`blocks` 让你用 JSON 原生表达结构，入口反糖成规范 Markdown，之后与 `body` 走**完全相同**的渲染管线——历史、搜索、脚本桥看到的仍是同一个字符串。

@@ -35,8 +35,9 @@ enum PushValidator {
     static let maxActions = 3
     static let maxActionLabelLength = 24
     static let maxGroupLength = 64
-    /// Island status text cap: the mini bar's 240pt @11pt ceiling fits roughly
-    /// this, and the pill measures whatever it gets (`maxGroupLength` precedent).
+    /// Status-line text cap: the collapsed card's meta row is a single line
+    /// alongside tags and the progress value, so a status text longer than a
+    /// phrase is clipboard debris (`maxGroupLength` precedent).
     static let maxIslandTextLength = 64
     /// Tag caps. A tag labels a message; eight of them label it well, and a
     /// longer one is clipboard debris (`maxActions` precedent).

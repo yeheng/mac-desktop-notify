@@ -82,7 +82,6 @@ swift build -c release
 | `click` | `string` | ❌ | _(无)_ | 点击通知卡打开的链接，须带 scheme（URL Scheme 入口为 `click`，本地 API 为 `clickUrl`）；非法值丢弃不影响消息。点击后消息标已读并关闭 |
 | `blocks` | `array` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：结构化正文块数组，JSON 原生免转义；非空时优先于 `body`（见 [docs/api.md](docs/api.md#31-blocks结构化正文)） |
 | `island` | `object` | ❌ | _(无)_ | 仅本地 API（HTTP/WS）：状态行 `{"text","progress","icon"}`，驱动收起卡片的摘要文本与进度显示（见 [docs/api.md](docs/api.md#32-island状态行)） |
-| `display` | `string` | ❌ | 设置值 | 展示档位：`"peek"` 轻提醒（只在摘要栏停留，不展开面板）/ `"expand"` 正常展开；未传时由「设置 → 通知 → 普通消息使用轻提醒」决定；critical 恒为展开，忽略此参数 |
 
 #### 编码与转义（重要）
 
@@ -134,16 +133,6 @@ open 'notch-notify://push?title=任务完成&body=后台任务正常运行&urgen
 ```
 
 Low 紧急度不播放提示音，适合高频、无需打扰的后台消息。
-
-#### 轻提醒（display=peek）
-
-低价值但需要瞥一眼的消息，可指定 `display=peek`：不展开面板、不抢焦点，只在摘要栏停留。停留时长与普通消息同源——消息自带 `timeout`，未传则用「设置 → 通知」的停留时长（默认 5 秒）。摘要栏本身只显示紧急度 glyph 与未读数（推送带 `island` 时另显示一行状态文本），标题只出现在通知卡与消息中心：
-
-```bash
-open 'notch-notify://push?title=Lint 通过&display=peek'
-```
-
-在「设置 → 通知」中开启「普通消息使用轻提醒」后，未指定 `display` 的普通消息默认走 peek 档；发送方仍可用 `display=expand` 逐条要求展开。critical 消息恒为展开，忽略此参数。
 
 #### 可操作通知（审批流）
 
@@ -447,7 +436,8 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 |------|------|
 | 鼠标移入卡片 | 只暂停该卡片的倒计时，**不会展开**——展开是点击专属 |
 | 点击卡片 | 第一次点击 = 就地展开完整正文与操作按钮**并**标记已读；再点一次 = 收起并退役（留在历史，已读） |
-| 点击卡片右上角 × | 关闭该卡片：标记已读并退役（留在历史） |
+| 点击卡片右上角 × | 关闭该卡片：标记已读并退役（留在历史）；× 悬停卡片才出现，与系统横幅一致 |
+| 向屏幕边缘方向拖动/滑动卡片 | 滑出移除：退役进历史但**保持未读**（与系统横幅的滑走语义一致）；短拖自动弹回。方向跟随锚点：左侧锚点向左甩，其余向右 |
 | 多条消息到达 | 以 macOS 通知中心式层叠出现：只有最新的卡片完整可见，其余以边缘探出；层叠态不占额外高度 |
 | 点击层叠边缘 | 展开成纵向列表，逐张阅读与操作；这只是「看看」，不标已读 |
 | 新推送到达 / 点击卡片外 | 展开着的层叠自动收回为一摞 |
@@ -498,8 +488,8 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 
 | 分类 | 配置项 |
 |------|--------|
-| **通用** | 全屏隐藏、屏幕录制时隐藏、触觉反馈、出现位置（右上/右下/顶部居中）、登录启动 |
-| **外观** | 卡片样式选择（default / pill / midnight / minimal / accent）、内容字号、解析诊断、打开配置文件夹、恢复默认 |
+| **通用** | 全屏隐藏、屏幕录制时隐藏、触觉反馈、出现位置（右上/右下/顶部居中/左上/左下/底部居中）、登录启动 |
+| **外观** | 卡片材质、动画（进场/退场/时长/弹性）、内容字号、恢复默认 |
 | **接口** | Unix Socket 开关与路径、HTTP / WebSocket 开关与端口（默认 4770，仅绑定 127.0.0.1，回车或「应用」后生效） |
 | **通知** | 提醒档位（安静/平衡/即时）、保留历史、声音、快捷键（`⌃⌥N` 为系统级热键无需授权；`Esc` 需辅助功能授权，含授权引导）、离开时行为（照常显示 / 静默存入历史 / 仅紧急消息穿透） |
 | **关于** | 版本、系统要求、项目链接、接入示例、重新运行引导 |
@@ -512,62 +502,17 @@ curl -X POST localhost:4770/v1/push -d '{"script":"ci-status"}'   # 需开 HTTP
 
 ## 自定义 Toast 外观
 
-Toast 的**样式**（收起态形状、颜色、字号、动画）是一套 JSON 样式包。在「设置 → 外观 → 卡片样式」里选；文件存在即生效，删文件即回退，无需重启。定制的是外观，不是消息正文，也不是行为（点击 / URL / 脚本 / 窗口几何留在 Swift）。
+Toast 卡片默认与系统横幅同源：毛玻璃材质、13pt 字体阶梯、16pt 圆角，跟随系统浅色/深色。「设置 → 外观」直接调整，即改即生效：
 
-📖 **完整指南：[docs/toast-style.md](docs/toast-style.md)** — 全部 token 默认值与范围、5 套内置预设、宽容解码规则、上限与诊断、排错清单。下面只留速查。
+| 配置项 | 说明 |
+|---|---|
+| **材质** | 卡片背景的毛玻璃材质：系统横幅（popover，默认）/ 菜单 / HUD（深色）/ 边栏 / 表头 / 工具提示 / 内容背景 / 窗口底 |
+| **进场 / 退场** | `滑入滑出` / `淡入淡出` / `缩放` / `弹跳` / `无动画`；滑动方向跟随「通用 → 出现位置」的锚点 |
+| **进场/退场时长** | 0–1200ms（默认 420 / 260） |
+| **弹性** | spring 阻尼 0.3–1.0，越小越弹（仅滑入滑出/弹跳） |
+| **内容字号** | 展开态 Markdown 正文字号（10–20pt，默认 13） |
 
-### 文件位置
-
-```
-~/Library/Application Support/MacDesktopNotify/
-  styles/
-    mine.json                 # 自己的样式；同名会覆盖 app 内置的同名预设
-```
-
-app 内置了 5 套预设（`default` / `pill` / `midnight` / `minimal` / `accent`，随包发布），下拉里带 **「（内置）」** 标记。内置先加载，用户目录下的同名文件叠在上面（自定义赢）；用户目录里没有文件时，内置预设依然可选。
-
-「设置 → 外观」可切换样式、查看解析诊断，并有「打开配置文件夹」。改文件后自动热重载（200ms 去抖）。
-
-### 样式包结构
-
-```jsonc
-{
-  "version": 1,
-  "name": "mine",
-  "collapse": { "shape": "card", "lines": 2 },
-  "tokens": {
-    "cardFill":   "#141419F2",
-    "textPrimary": "#ECECF4",  "textSubtle": "#FFFFFFB8",
-    "borderColor": "#FFFFFF2E", "accent": "#7C6CF0",
-    "levelSuccess": "#49A88B", "levelWarning": "#C89743", "levelError": "#DF6E7B"
-  },
-  "flags": {
-    "showIcon": true, "showTime": true, "showLevel": true,
-    "showTags": true, "showProgress": true, "showOccurrences": true
-  },
-  "motion": { "enter": "slide", "exit": "fade", "enterMs": 220, "exitMs": 160 }
-}
-```
-
-| 键 | 值 | 说明 |
-|---|---|---|
-| `collapse.shape` | `card` \| `pill` | 收起态形状。`pill` 是固定高度的胶囊，`card` 是自适应高度的圆角矩形 |
-| `collapse.lines` | `1`…`4` | 收起态显示几行纯文本摘要 |
-| `tokens.*` | `#RRGGBB` / `#RRGGBBAA` | 颜色。`cardFill` / `textPrimary` / `textSubtle` / `borderColor` 还接受 `"auto"`（跟随系统浅色/深色） |
-| `flags.*` | bool | 卡片各区块的开关 |
-| `motion.enter` / `exit` | `slide` \| `fade` \| `zoom` \| `bounce` \| `none` | 进场/退场动画 |
-| `motion.enterMs` / `exitMs` | `0`…`1200` | 动画时长 |
-
-未知键忽略，坏值保留默认并在「设置 → 外观」报出诊断，数值 clamp。**`version` 不是 1 时整个文件作废**，回默认样式。
-
-### 回退与边界
-
-- **坏文件保留上一份**：解析失败、文件超过 64KB、或 `version` 未知 → 保留上一次的样式并报诊断，绝不把 toast 刷成空白。
-- **宽容解码**：未知 token 忽略、字段类型错丢该字段并报诊断、坏动画名丢该字段。
-- **行为不可定制**：Esc、⌃⌥N、右键菜单、点击展开、点击已读都在 Swift 里，样式包改不动它们。
-- **减弱动态效果**：系统开启后所有动画降级为淡入淡出。
-
-**不做**：per-message 样式路由、每节点动画曲线、自定义字体文件上传、任意图标 URL、窗口宽高与坐标。
+「恢复默认」一键回到系统横幅观感。系统「减少动态效果」开启时所有动画关闭；「减少透明度」开启时材质自动退化为实色。
 
 ---
 
@@ -595,18 +540,14 @@ Sources/MacDesktopNotify/
 ├── ScriptRunner.swift                  # ScriptValue/ScriptEngine（JSC 线程+VM+看门狗）与编排 facade（并发闸、回填、钩子）
 ├── PresenceMonitor.swift                # 锁屏/屏保/睡眠感知（AwaySource 集合）
 ├── ToastPresenter.swift                 # Toast 呈现：单窗口卡片栈、定位、全屏抑制探测、事件驱动
-├── Toast/                              # 定位几何、样式 DSL 与卡片视图
-│   ├── ToastPosition.swift              # 三个锚点 + ToastLayout 纯几何（可测，无需窗口服务器）
-│   ├── ToastCardView.swift              # 单卡：收起态摘要 / 展开态 Markdown+操作 / 右上角关闭按钮
-│   ├── ToastStackView.swift             # 整栈：通知中心式层叠（边缘探出）↔ 纵向展开 + 分组头 + transition
-│   ├── ToastStyle.swift                 # 样式包 spec（collapse/tokens/flags/motion）+ 宽容规则
-│   ├── ToastStyleParser.swift           # 宽容 JSON walker + 上限 + 路径诊断
-│   ├── ToastStyleStore.swift            # styles/ 目录、当前样式、热重载、颜色解析
+├── Toast/                              # 定位几何、视觉契约与卡片视图
+│   ├── ToastPosition.swift              # 六个锚点 + ToastLayout 纯几何（可测，无需窗口服务器）
+│   ├── ToastCardView.swift              # 单卡：App 图标槽位 / 收起态摘要 / 展开态 Markdown+操作 / 悬停× / 滑走手势
+│   ├── ToastStackView.swift             # 整栈：通知中心式层叠（缩放剪影）↔ 纵向展开 + 分组头 + 样式化 transition
+│   ├── ToastStyle.swift                 # 材质/动画枚举 + ToastMetrics 原生几何字阶常量 + 颜色按配色方案解析
+│   ├── MaterialBackground.swift         # NSVisualEffectView 毛玻璃卡片背景（behindWindow 混合）
 │   ├── MarkdownPreview.swift            # Markdown 拍平为纯文本摘要（收起态与历史行共用）
-│   ├── ScreenProbe.swift                # 全屏判定（纯谓词，可测）+ NSScreen.displayID
-│   ├── DirectoryWatcher.swift           # 目录监听 + 200ms 去抖
-│   └── BuiltinConfigs.swift             # app bundle 里的内置 styles/ 定位
-├── Builtin/                             # 随包发布的内置样式包（default / pill / midnight / minimal / accent）
+│   └── ScreenProbe.swift                # 全屏判定（纯谓词，可测）+ NSScreen.displayID
 ├── URLNotificationParser.swift          # URL Scheme 参数解析（push/clear/ack，含长度限制）
 ├── PushValidator.swift                 # 推送字段校验（长度/紧急度/分组/标签/动作按钮截断），各入口共用
 ├── APIRouter.swift                     # 四个端点与 WS 命令的路由（纯逻辑，返回 JSON）
@@ -619,7 +560,6 @@ Sources/MacDesktopNotify/
 ├── SystemHotkey.swift                  # 系统热键（Carbon 注册，无需辅助功能授权）：⌃⌥N 常驻
 ├── MessageCards.swift                  # 卡片共用件：OccurrenceTag / NotificationBodyView / ActionRow
 ├── SurfaceChrome.swift                 # 按钮样式与右键菜单（ToastContextMenu）
-├── MarqueeText.swift                   # 摘要跑马灯（TimelineView + 双副本 + 边缘渐隐）
 ├── MarkdownBlocksView.swift             # Markdown 块渲染器
 ├── MarkdownCache.swift                  # Markdown 解析缓存（NSCache）
 ├── MarkdownRenderer.swift              # Markdown 解析器（正文/代码块分离）

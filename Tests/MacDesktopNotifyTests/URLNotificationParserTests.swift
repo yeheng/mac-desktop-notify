@@ -46,28 +46,11 @@ final class URLNotificationParserTests: XCTestCase {
         XCTAssertNil(n.flatMap(\.timeout), "an unparseable timeout defers to the setting")
     }
 
-    // MARK: - Display (peek) parameter
-
-    func testDisplayPeekParsesTrue() {
-        XCTAssertEqual(parse("notch-notify://push?title=Hi&display=peek")?.displayPeek, true)
-    }
-
-    func testDisplayExpandParsesFalse() {
-        XCTAssertEqual(parse("notch-notify://push?title=Hi&display=expand")?.displayPeek, false)
-    }
-
-    func testDisplayOmittedStaysNil() {
-        XCTAssertNil(parse("notch-notify://push?title=Hi")?.displayPeek,
-                     "an omitted display defers to the setting, so no value is stored")
-    }
-
-    func testUnknownDisplayStaysNil() {
-        XCTAssertNil(parse("notch-notify://push?title=Hi&display=bogus")?.displayPeek)
-    }
-
-    func testDisplayIsCaseInsensitive() {
-        XCTAssertEqual(parse("notch-notify://push?title=Hi&display=PEEK")?.displayPeek, true)
-        XCTAssertEqual(parse("notch-notify://push?title=Hi&display=%20peek")?.displayPeek, true)
+    /// The retired `display` parameter (the notch-island era's peek hint) is
+    /// ignored rather than breaking the push.
+    func testRetiredDisplayParameterIsIgnored() {
+        XCTAssertNotNil(parse("notch-notify://push?title=Hi&display=peek"))
+        XCTAssertNotNil(parse("notch-notify://push?title=Hi&display=bogus"))
     }
 
     func testBodyCappedAt5000() {

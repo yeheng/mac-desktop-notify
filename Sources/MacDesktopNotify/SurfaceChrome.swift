@@ -6,17 +6,20 @@ struct ActionCapsuleStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(primary ? Color.black : Color.white)
+            .foregroundStyle(primary ? Color.white : Color.primary)
             .background(fill(pressed: configuration.isPressed), in: Capsule())
             .onHover { hovering = $0 }
             .animation(.easeInOut(duration: 0.12), value: hovering)
     }
 
+    // Scheme-adaptive fills: the primary capsule is the system accent (the
+    // alert's default button), the rest a label-coloured wash that reads on
+    // both the dark and the light material.
     private func fill(pressed: Bool) -> Color {
         if primary {
-            return .white.opacity(pressed ? 0.6 : (hovering ? 0.82 : 1))
+            return Color.accentColor.opacity(pressed ? 0.7 : (hovering ? 0.85 : 1))
         }
-        return .white.opacity(pressed ? 0.08 : (hovering ? 0.22 : 0.12))
+        return Color.primary.opacity(pressed ? 0.06 : (hovering ? 0.16 : 0.1))
     }
 }
 

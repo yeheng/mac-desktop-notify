@@ -98,7 +98,7 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(.borderless)
             }
-            Text("通知出现在屏幕顶部。点击摘要栏打开消息中心；在设置允许时，鼠标靠近也可展开。点击面板上的收起按钮或按 Esc 可收起当前消息，消息仍保留在历史中。")
+            Text("通知卡片出现在屏幕角落，与系统横幅一致的层叠样式。点击卡片展开完整正文与操作按钮；再点一次或点右上角 ×（悬停出现）收起，也可以向屏幕边缘滑走。按 Esc 收起指针下的展开卡片。消息都会保留在历史中（⌃⌥N 打开）。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

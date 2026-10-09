@@ -47,9 +47,9 @@ private final class StackHostingView: NSHostingView<ToastStackView> {
 /// workspace event, so those events re-derive the answer.
 @MainActor
 final class ToastPresenter: SurfacePresenting {
-    /// The window's resize animation, matched to the card stack's
-    /// `.easeOut(duration: 0.2)` so window and cards move on one clock.
-    private static let layoutAnimationDuration: TimeInterval = 0.2
+    /// The window's resize animation, matched to the card stack's spring
+    /// (response 0.3–0.42) so window and cards move on one clock.
+    private static let layoutAnimationDuration: TimeInterval = 0.3
 
     /// The display the stack currently belongs to. Drives the event-driven
     /// suppression probe and the screen-change check.
@@ -162,7 +162,7 @@ final class ToastPresenter: SurfacePresenting {
             contentSize: panel.contentView?.fittingSize ?? .zero,
             visibleFrame: screen.visibleFrame,
             position: AppSettings.shared.toastPosition,
-            minWidth: 396,          // 380 stack + 8 padding each side
+            minWidth: 362,          // 346 stack + 8 padding each side
             minHeight: 0
         )
         if animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {

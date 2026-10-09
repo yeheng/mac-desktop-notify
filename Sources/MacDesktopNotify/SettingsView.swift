@@ -46,8 +46,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .general: "控制灵动岛何时出现，以及它如何响应鼠标。"
-        case .appearance: "调整摘要栏、展开面板和内容密度。"
+        case .general: "控制通知何时出现、出现在屏幕的哪个位置。"
+        case .appearance: "调整卡片材质、动画与内容字号。"
         case .notifications: "选一个提醒档位，其余交给我们。"
         case .api: "让本机脚本与 Web 应用通过 HTTP、WebSocket 或 Unix socket 对接。仅监听本机。"
         case .about: "版本、接入示例与首次引导。"
@@ -419,26 +419,85 @@ private struct GeneralSettingsContent: View {
 private struct AppearanceSettingsContent: View {
     @Bindable var settings: AppSettings
 
+    /// The damping slider doubles as the on/off for the override: nil means
+    /// the per-kind default (0.86 slide / 0.68 bounce) applies.
+    private var damping: Binding<Double> {
+        Binding(
+            get: { settings.toastMotionDamping ?? (settings.toastMotionEnter == .bounce ? 0.68 : 0.86) },
+            set: { settings.toastMotionDamping = $0 }
+        )
+    }
+
     var body: some View {
         Section {
-            Picker("卡片样式", selection: $settings.toastStyleID) {
-                ForEach(ToastStyleStore.shared.styleIDs, id: \.self) { id in
-                    Text(styleLabel(id)).tag(id)
+            Picker("材质", selection: $settings.toastMaterial) {
+                ForEach(ToastMaterial.allCases, id: \.self) { material in
+                    Text(material.title).tag(material)
                 }
             }
-            SectionFooter("样式放 styles/<名>.json，同名文件覆盖内置预设；没有文件或解析失败时使用默认。改文件即时生效。")
         } header: {
-            Text("样式")
+            Text("卡片")
+        } footer: {
+            SectionFooter("卡片背景的系统毛玻璃材质，跟随浅色/深色外观；「减少透明度」开启时自动退化为实色。")
         }
 
-        styleDiagnostics
+        Section {
+            Picker("进场", selection: $settings.toastMotionEnter) {
+                ForEach(ToastMotion.allCases, id: \.self) { motion in
+                    Text(motion.title).tag(motion)
+                }
+            }
+            Picker("退场", selection: $settings.toastMotionExit) {
+                ForEach(ToastMotion.allCases, id: \.self) { motion in
+                    Text(motion.title).tag(motion)
+                }
+            }
+            SliderRow(
+                title: "进场时长",
+                value: $settings.toastMotionEnterMs,
+                range: 0...1200, step: 20,
+                minimum: "0", maximum: "1200",
+                valueText: "\(Int(settings.toastMotionEnterMs))ms"
+            )
+            SliderRow(
+                title: "退场时长",
+                value: $settings.toastMotionExitMs,
+                range: 0...1200, step: 20,
+                minimum: "0", maximum: "1200",
+                valueText: "\(Int(settings.toastMotionExitMs))ms"
+            )
+            if settings.toastMotionEnter.usesSpring {
+                SliderRow(
+                    title: "弹性",
+                    value: damping,
+                    range: 0.3...1.0, step: 0.05,
+                    minimum: "弹", maximum: "稳",
+                    valueText: String(format: "%.2f", damping.wrappedValue)
+                )
+            }
+        } header: {
+            Text("动画")
+        } footer: {
+            SectionFooter("「滑入滑出」与「弹跳」是弹簧曲线，方向跟随「通用 → 出现位置」的锚点；系统「减少动态效果」开启时所有动画关闭。")
+        }
+
+        Section {
+            SliderRow(
+                title: "内容字号",
+                value: $settings.contentFontSize,
+                range: 10...20, step: 1,
+                minimum: "10", maximum: "20",
+                valueText: "\(Int(settings.contentFontSize))pt"
+            )
+        } header: {
+            Text("正文")
+        } footer: {
+            SectionFooter("展开态 Markdown 正文的字号；标题与摘要固定为系统横幅的 13pt。")
+        }
 
         Section {
             HStack {
                 Spacer()
-                Button("打开配置文件夹") {
-                    NSWorkspace.shared.open(ToastPaths.stylesDirectory)
-                }
                 Button("恢复默认") {
                     settings.resetDisplayDefaults()
                 }
@@ -446,35 +505,6 @@ private struct AppearanceSettingsContent: View {
             }
         }
     }
-
-    /// Bundled presets are marked so it is obvious which ids the app ships and
-    /// which ones come from the user's directory.
-    private func styleLabel(_ id: String) -> String {
-        if id == ToastStyleStore.defaultStyleID { return "默认" }
-        return ToastStyleStore.shared.builtinStyleIDs.contains(id) ? "\(id)（内置）" : id
-    }
-
-    private var styleDiagnostics: some View {
-        diagnosticsSection(header: "样式诊断", messages: ToastStyleStore.shared.diagnostics)
-    }
-
-    /// The style-store diagnostics render the same way the transport errors do.
-    @ViewBuilder
-    private func diagnosticsSection(header: String, messages: [String]) -> some View {
-        if !messages.isEmpty {
-            Section {
-                ForEach(messages, id: \.self) { message in
-                    Text(message)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                        .textSelection(.enabled)
-                }
-            } header: {
-                Text(header)
-            }
-        }
-    }
-
 }
 
 // MARK: - 通知

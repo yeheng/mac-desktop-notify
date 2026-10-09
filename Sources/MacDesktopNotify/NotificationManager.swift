@@ -175,11 +175,10 @@ final class NotificationManager {
     var messages = NotificationLog()
     var unreadCount = 0
 
-    /// Where the pointer is relative to the island, as one value (see
-    /// `PointerState.swift`). Tracked (not ignored) because
-    /// `pointerNearIsland` derives from it and the compact pill's
-    /// pre-expansion cue reads that. All transitions flow through
-    /// `reduce(_:)` (+Pointer); nothing else writes it.
+    /// Which card the pointer is on, as one value (see `PointerState.swift`).
+    /// Tracked (not ignored) because the dwell hold and Esc's collapse scope
+    /// derive from it. All transitions flow through `reduce(_:)` (+Pointer);
+    /// nothing else writes it.
     var pointer = PointerState()
     /// Readable by the presenter, which re-applies display state across screen
     /// changes and must stand down while a fullscreen app owns the display.

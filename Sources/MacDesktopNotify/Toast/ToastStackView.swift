@@ -6,10 +6,10 @@ import SwiftUI
 ///
 /// - **Pile** (the default, two or more cards): the macOS Notification Center
 ///   stack. Only the newest card is whole; the ones behind it peek out as
-///   blank edges above it, narrower and dimmer the further back they are. The
-///   edges are the tap target: one click fans the stack out. A pile never
-///   grows taller than one card plus two edges, so a burst of pushes cannot
-///   take over the corner of the screen.
+///   scaled-down card silhouettes above it, narrower and dimmer the further
+///   back they are. The edges are the tap target: one click fans the stack
+///   out. A pile never grows taller than one card plus two edges, so a burst
+///   of pushes cannot take over the corner of the screen.
 /// - **Fan-out** (`manager.stackExpanded`): the plain vertical list, one card
 ///   per message, each individually clickable. A new push, an outside click,
 ///   or dropping to a single card piles the stack again.
@@ -20,14 +20,14 @@ import SwiftUI
 struct ToastStackView: View {
     private var manager: NotificationManager { .shared }
     private var settings: AppSettings { .shared }
-    private var style: ToastStyleStore { .shared }
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The stack's width. A card fits its content up to this bound, which is
-    /// what keeps a long title from stretching the window across the display;
-    /// the window itself is clamped to the screen by `ToastLayout`.
-    private var width: CGFloat { 380 }
+    /// The stack's width — the system banner's 346pt. A card fits its content
+    /// up to this bound, which is what keeps a long title from stretching the
+    /// window across the display; the window itself is clamped to the screen
+    /// by `ToastLayout`.
+    private var width: CGFloat { 346 }
 
     /// Piled or fanned out. A single card is neither — it renders whole.
     private var piled: Bool {
@@ -35,7 +35,7 @@ struct ToastStackView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: piled ? 3 : 8) {
+        VStack(alignment: .leading, spacing: piled ? 4 : 8) {
             if piled {
                 deckEdges
             }
@@ -52,22 +52,21 @@ struct ToastStackView: View {
                         .accessibilityHidden(true)
                 }
                 ToastCardView(card: card)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: insertionEdge).combined(with: .opacity),
-                        removal: .opacity
-                    ))
+                    .transition(.asymmetric(insertion: insertion, removal: removal))
             }
         }
         .padding(8)
-        .frame(width: width, alignment: .leading)
+        // `width` is the card's width (the system banner's 346); the stack's
+        // own padding rides on top so cards are not squeezed by it.
+        .frame(width: width + 16, alignment: .leading)
         // Pin the stack to the anchor edge: the presenter animates the window
         // frame alongside the cards, so mid-animation the window is taller
         // than the content, and a centred stack would float. Top-anchored
-        // positions pin to the top, bottom-right pins to the bottom — the
+        // positions pin to the top, bottom anchors pin to the bottom — the
         // edge whose cards must not move while the window grows or shrinks.
         .frame(maxHeight: .infinity, alignment: anchorAlignment)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: manager.presentations.map(\.item.id))
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: piled)
+        .animation(membershipAnimation, value: manager.presentations.map(\.item.id))
+        .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9), value: piled)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(piled
             ? "通知堆叠，共 \(manager.presentations.count) 条，点击上方边缘展开"
@@ -80,15 +79,78 @@ struct ToastStackView: View {
         piled ? Array(manager.presentations.suffix(1)) : manager.presentations
     }
 
-    /// A lone first card slides in from the corner; every later card arrives
-    /// at the bottom of the stack, which is where the newest entry always
-    /// lands.
-    private var insertionEdge: Edge {
-        manager.presentations.count == 1 ? .trailing : .bottom
+    private var anchorAlignment: Alignment {
+        settings.toastPosition.isBottom ? .bottom : .top
     }
 
-    private var anchorAlignment: Alignment {
-        settings.toastPosition == .bottomRight ? .bottom : .top
+    // MARK: - Motion (Settings driven)
+
+    /// How a card arrives, from the Settings enter motion. `slide` comes from
+    /// fully off the screen edge (the way a banner does) rather than from the
+    /// window's edge.
+    private var insertion: AnyTransition {
+        switch settings.toastMotionEnter {
+        case .slide, .bounce:
+            return .offset(slideVector).combined(with: .opacity)
+        case .fade:
+            return .opacity
+        case .zoom:
+            return .scale(scale: 0.92).combined(with: .opacity)
+        case .none:
+            return .identity
+        }
+    }
+
+    /// How a card leaves, from the Settings exit motion. `slide` exits
+    /// towards the anchor's nearest screen edge — the direction a banner
+    /// dismisses towards.
+    private var removal: AnyTransition {
+        switch settings.toastMotionExit {
+        case .slide, .bounce:
+            return .offset(slideVector).combined(with: .opacity)
+        case .fade:
+            return .opacity
+        case .zoom:
+            return .scale(scale: 0.95).combined(with: .opacity)
+        case .none:
+            return .identity
+        }
+    }
+
+    /// The off-screen direction cards travel along for `slide` / `bounce`:
+    /// the anchor's nearest edge (right for right anchors, left for left
+    /// anchors, straight up or down for the centered ones).
+    private var slideVector: CGSize {
+        switch settings.toastPosition {
+        case .topRight, .bottomRight:
+            return CGSize(width: width + 64, height: 0)
+        case .topLeft, .bottomLeft:
+            return CGSize(width: -(width + 64), height: 0)
+        case .topCenter:
+            return CGSize(width: 0, height: -140)
+        case .bottomCenter:
+            return CGSize(width: 0, height: 140)
+        }
+    }
+
+    /// The membership clock for cards joining or leaving the stack. `slide`
+    /// and `bounce` run as springs (the banner's feel); `fade` and `zoom` are
+    /// plain ease-outs. The Settings enter duration is the spring's response.
+    private var membershipAnimation: Animation? {
+        let enter = settings.toastMotionEnter
+        guard !reduceMotion, enter != .none else { return nil }
+        let seconds = max(0.05, settings.toastMotionEnterMs / 1000)
+        let damping = settings.toastMotionDamping
+        switch enter {
+        case .slide:
+            return .spring(response: seconds, dampingFraction: damping ?? 0.86)
+        case .bounce:
+            return .spring(response: seconds, dampingFraction: damping ?? 0.68)
+        case .fade, .zoom:
+            return .easeOut(duration: seconds)
+        case .none:
+            return nil
+        }
     }
 
     // MARK: - Deck edges
@@ -96,44 +158,51 @@ struct ToastStackView: View {
     /// How many cards sit behind the front of the pile.
     private var behindCount: Int { manager.presentations.count - 1 }
 
-    /// The peeking edges, deepest first so the widest, brightest edge sits
-    /// directly above the front card — the same silhouette as Notification
-    /// Center's stack. At most two edges show, however many cards are piled;
-    /// the count label says the rest.
+    /// The peeking silhouettes, deepest first so the widest, brightest edge
+    /// sits directly above the front card — the same scaled-down silhouette as
+    /// Notification Center's stack. At most two edges show, however many cards
+    /// are piled; the count label says the rest.
     private var deckEdges: some View {
-        let tokens = style.resolved(for: scheme)
+        let tokens = ResolvedToastStyle.resolve(scheme: scheme)
         let shown = min(2, behindCount)
         return Button {
             SurfaceHaptics.actionConfirmed()
             manager.setStackExpanded(true)
         } label: {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .center, spacing: 3) {
                 ForEach(Array(stride(from: shown, through: 1, by: -1)), id: \.self) { depth in
                     HStack(spacing: 6) {
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(tokens.cardFill)
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    .strokeBorder(tokens.borderColor, lineWidth: 1)
-                            }
-                            .frame(height: 8)
-                            .opacity(depth == 1 ? 0.8 : 0.55)
-                            .padding(.horizontal, CGFloat(depth) * 7)
+                        Spacer(minLength: 0)
+                        deckEdge(depth: depth)
                         if depth == shown, behindCount > 1 {
                             Text("共 \(manager.presentations.count) 条")
                                 .font(.system(size: 9, weight: .medium))
                                 .foregroundStyle(tokens.textSubtle)
                                 .fixedSize()
                         }
+                        Spacer(minLength: 0)
                     }
                 }
             }
-            // The edges are 8pt tall — far under a comfortable click target —
+            // The edges are 10pt tall — far under a comfortable click target —
             // so the tap zone bleeds a few points past the paint.
             .padding(.vertical, 2)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("展开全部 \(manager.presentations.count) 条通知")
+    }
+
+    /// One scaled-down card silhouette behind the pile's front card: the card
+    /// width times the depth's scale, the card radius scaled with it, on the
+    /// same material as a real card.
+    private func deckEdge(depth: Int) -> some View {
+        let scale: CGFloat = depth == 1 ? 0.94 : 0.88
+        return MaterialBackground(
+            cornerRadius: ToastMetrics.cardRadius * scale,
+            material: settings.toastMaterial
+        )
+        .frame(width: width * scale, height: 10)
+        .opacity(depth == 1 ? 0.75 : 0.5)
     }
 }
