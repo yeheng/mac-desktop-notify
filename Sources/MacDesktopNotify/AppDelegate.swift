@@ -17,6 +17,13 @@ extension Notification.Name {
     static let openHistoryWindow = Notification.Name("MacDesktopNotify.openHistoryWindow")
     /// Reruns onboarding from Settings → 关于。
     static let reopenOnboarding = Notification.Name("MacDesktopNotify.reopenOnboarding")
+    /// Posted when the one-line comment field (`&input=1`) opens or closes.
+    /// A text field only accepts keystrokes in a *key* window, so the toast
+    /// panel borrows key status while the field is up and hands it back when
+    /// the field goes away — the view announces each transition and the
+    /// presenter acts on it.
+    static let commentEditingDidBegin = Notification.Name("MacDesktopNotify.commentEditingDidBegin")
+    static let commentEditingDidEnd = Notification.Name("MacDesktopNotify.commentEditingDidEnd")
 }
 
 @MainActor

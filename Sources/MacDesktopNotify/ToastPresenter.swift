@@ -1,10 +1,20 @@
 import AppKit
 import SwiftUI
 
-/// A borderless panel that never activates the app: the toast is information
-/// plus a click target, not a surface to type into.
-private final class ToastPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+/// A borderless panel that floats above other apps without activating the app
+/// (`.nonactivatingPanel`), so the toast never steals the menu bar or the
+/// keyboard from whatever the user is doing.
+///
+/// It *does* become key, though: a `&input=1` action asks for a reason, and a
+/// one-line `TextField` is only usable in a key window — a panel that cannot
+/// become key renders the field but drops every keystroke on the floor. So the
+/// panel becomes key on demand while the field is open, and hands key status
+/// back when it closes (see `setCommentEditing`).
+///
+/// `canBecomeMain` stays false: the toast is never the app's main window, it
+/// just borrows key status long enough for one line of typing.
+final class ToastPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
@@ -81,6 +91,7 @@ final class ToastPresenter: SurfacePresenting {
     }
 
     func standDown() async {
+        if stackPanel?.isKeyWindow == true { stackPanel?.resignKey() }
         stackPanel?.orderOut(nil)
         if let globalClickMonitor {
             NSEvent.removeMonitor(globalClickMonitor)
@@ -108,7 +119,29 @@ final class ToastPresenter: SurfacePresenting {
     }
 
     func hide() async {
+        // A field left open when the card retires must not leave the panel
+        // holding key status for a window nobody is looking at.
+        if stackPanel?.isKeyWindow == true { stackPanel?.resignKey() }
         stackPanel?.orderOut(nil)
+    }
+
+    // MARK: - Comment input
+
+    /// Called when the one-line comment field (`&input=1`) opens or closes.
+    ///
+    /// A `TextField` in a non-key window is inert: the field renders and even
+    /// reports `AXFocused`, but the window never receives key events, so
+    /// nothing the user types lands. The panel is `.nonactivatingPanel` (it
+    /// must never steal the menu bar from the front app), which does not stop
+    /// it becoming *key* — so key status is taken for the duration of the
+    /// edit and handed back when the field closes.
+    func setCommentEditing(_ editing: Bool) {
+        guard let panel = stackPanel, panel.isVisible else { return }
+        if editing {
+            if !panel.isKeyWindow { panel.makeKeyAndOrderFront(nil) }
+        } else if panel.isKeyWindow {
+            panel.resignKey()
+        }
     }
 
     /// A fresh answer, awaited by the manager right before anything is
@@ -274,6 +307,12 @@ final class ToastPresenter: SurfacePresenting {
         }
         observers.append(addObserverOnMain(forName: AppSettings.screenRecordingDidChange) { [weak self] in
             self?.applySharingType()
+        })
+        observers.append(addObserverOnMain(forName: Notification.Name.commentEditingDidBegin) { [weak self] in
+            self?.setCommentEditing(true)
+        })
+        observers.append(addObserverOnMain(forName: Notification.Name.commentEditingDidEnd) { [weak self] in
+            self?.setCommentEditing(false)
         })
         observers.append(addObserverOnMain(forName: AppSettings.displayBehaviorDidChange) { [weak self] in
             self?.behaviorReplay.arm { [weak self] in

@@ -72,7 +72,11 @@ struct ActionRow: View {
                 commentRow(for: pending)
             }
         }
-        .onChange(of: actions) { _, _ in pending = nil; comment = "" }
+        .onChange(of: actions) { _, _ in
+            // The row is rebuilt, so the field goes with it — hand key status
+            // back the same way an explicit cancel does.
+            closeCommentRow()
+        }
     }
 
     /// One line, because a reason is a sentence - and a two-line field inside
@@ -95,7 +99,7 @@ struct ActionRow: View {
                 Button("提交") { submit(action) }
                     .buttonStyle(ActionCapsuleStyle(primary: true))
                     .accessibilityLabel("提交 \(action.label)")
-                Button("取消") { pending = nil; comment = "" }
+                Button("取消") { closeCommentRow() }
                     .buttonStyle(ActionCapsuleStyle(primary: false))
                     .accessibilityLabel("取消 \(action.label)")
             }
@@ -111,11 +115,32 @@ struct ActionRow: View {
         pending = action
         comment = ""
         commentFocused = true
+        // The panel must be key before the field can take a keystroke.
+        announceEditing(true)
     }
 
     private func submit(_ action: NotificationAction) {
         perform(action, comment)
+        closeCommentRow()
+    }
+
+    /// Every way the row goes away (submit, cancel, the row being rebuilt)
+    /// runs through here, so key status is handed back exactly once and on
+    /// every path.
+    private func closeCommentRow() {
         pending = nil
         comment = ""
+        commentFocused = false
+        announceEditing(false)
+    }
+
+    /// Tells the presenter the field went up or down. The history window is a
+    /// real (activatable) window, so it needs nothing — this only matters for
+    /// the toast panel, which observes both and ignores the rest.
+    private func announceEditing(_ editing: Bool) {
+        NotificationCenter.default.post(
+            name: editing ? .commentEditingDidBegin : .commentEditingDidEnd,
+            object: nil
+        )
     }
 }
