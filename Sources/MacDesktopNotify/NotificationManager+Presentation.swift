@@ -75,22 +75,23 @@ extension NotificationManager {
     }
 
     /// A tap on a card. The explicit-open rule: clicking is the deliberate act
-    /// that marks a message read, acting on a card retires it, and a card with
-    /// a click-through link opens it on the same path as an action button.
+    /// that marks a message read, and a card with a click-through link opens it
+    /// on the same path as an action button. Tapping never retires a card —
+    /// the second tap folds the body back up instead; only the × (or a swipe,
+    /// or an action button) takes a card off the screen.
     func tapCard(_ id: UUID) {
         guard let card = presentations.first(where: { $0.item.id == id }) else { return }
         if let url = card.item.clickURL {
             performAction(NotificationAction(label: "打开链接", url: url), for: card.item)
             return
         }
-        if !card.expanded {
+        if card.expanded {
+            collapseCard(id)
+        } else {
             // First tap expands instead of retiring: a tap on a collapsed card
             // is "show me more", not "done".
             expandCard(id)
-            return
         }
-        markCardRead(id)
-        retireCard(id, readOnRetire: false)
     }
 
     /// The close button: an explicit dismissal. The user saw the card and put
@@ -100,9 +101,9 @@ extension NotificationManager {
     }
 
     /// The stack is fully visible or fully hidden; there is no compact layer.
-    /// `openMessageCenter` opens the standalone history window instead — an
-    /// explicit user action (⌃⌥N), so the fullscreen suppression gate for
-    /// automatic presentation does not apply to it.
+    /// `openMessageCenter` opens the history pane in the Settings window
+    /// instead — an explicit user action (⌃⌥N), so the fullscreen suppression
+    /// gate for automatic presentation does not apply to it.
     func openMessageCenter() {
         NotificationCenter.default.post(name: .openHistoryWindow, object: nil)
     }

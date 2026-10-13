@@ -8,8 +8,10 @@ struct ActionCapsuleStyle: ButtonStyle {
         configuration.label
             .foregroundStyle(primary ? Color.white : Color.primary)
             .background(fill(pressed: configuration.isPressed), in: Capsule())
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .onHover { hovering = $0 }
             .animation(.easeInOut(duration: 0.12), value: hovering)
+            .animation(.easeInOut(duration: 0.12), value: configuration.isPressed)
     }
 
     // Scheme-adaptive fills: the primary capsule is the system accent (the
@@ -43,8 +45,8 @@ struct ToastContextMenu: ViewModifier {
                 Button("关掉这张") { manager.retireCard(card.item.id, readOnRetire: true) }
             }
             Divider()
-            // The full backlog in a real window: the toast is a glance, this is
-            // the browse-and-manage surface.
+            // The full backlog lives in the Settings window's 历史 pane: the
+            // toast is a glance, that is the browse-and-manage surface.
             Button("历史信息…") {
                 NotificationCenter.default.post(name: .openHistoryWindow, object: nil)
             }

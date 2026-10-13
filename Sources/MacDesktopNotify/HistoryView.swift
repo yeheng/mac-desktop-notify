@@ -1,27 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// The standalone history browser, reachable from the island's right-click
-/// menu （历史信息…). The notch panel is deliberately small and transient; a
-/// real window lets the user scroll the full backlog, read bodies inline, and
-/// manage read/delete state per message without the panel collapsing under
-/// them mid-gesture.
-@MainActor
-final class HistoryWindowController: UtilityWindowController {
-    override func makeWindow() -> NSWindow {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 540),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "历史信息"
-        window.contentView = NSHostingView(rootView: HistoryView())
-        window.contentMinSize = NSSize(width: 460, height: 320)
-        return window
-    }
-}
-
+/// The history browser, living inside the Settings window as the 历史 pane
+/// (menu bar 历史信息…, ⌃⌥N, and the card context menu all land there).
+/// The toast is a glance; this is the browse-and-manage surface: scroll the
+/// full backlog, read bodies inline, and manage read/delete state per
+/// message.
+///
 /// Where a history entry currently sits, v4 style: on screen, not yet opened,
 /// or opened （历史）. Read state - not pipeline position - decides the badge,
 /// so a message only ever becomes 历史 when the user opened it.
@@ -46,10 +31,10 @@ private enum HistoryFilter: String, CaseIterable, Identifiable {
 }
 
 /// Flat newest-first list of everything in history. Unlike the panel there is
-/// no grouping here: the window is the "show me each message" view, so every
+/// no grouping here: the pane is the "show me each message" view, so every
 /// entry gets its own row with its own 已读/删除 buttons. Tapping a row
 /// expands its body accordion-style (one open at a time, same as the panel).
-private struct HistoryView: View {
+struct HistoryView: View {
     private var manager: NotificationManager { .shared }
     @State private var expandedID: UUID?
     @State private var searchText = ""
@@ -73,22 +58,7 @@ private struct HistoryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            HStack {
-                TextField("搜索标题或正文", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("搜索历史消息")
-                Picker("筛选消息", selection: $filter) {
-                    ForEach(HistoryFilter.allCases) { Text($0.label) }
-                }
-                .labelsHidden()
-                .frame(width: 95)
-                // A new filter restarts the session: rows kept visible after
-                // being read under the unread filter re-join the filter's rule.
-                .onChange(of: filter) { _, _ in sessionRead = [] }
-            }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 10)
+            toolbar
             Divider()
             if items.isEmpty {
                 emptyState
@@ -96,7 +66,7 @@ private struct HistoryView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 6) {
                         ForEach(items) { notification in
-                            HistoryWindowRow(
+                            HistoryRow(
                                 notification: notification,
                                 status: status(of: notification),
                                 isUnread: !manager.isRead(notification),
@@ -123,7 +93,7 @@ private struct HistoryView: View {
         }
         .frame(minWidth: 460, minHeight: 300)
         // The same take-back the panel offers after a delete, mirrored here so
-        // a deletion made from this window is not the one place undo is missing.
+        // a deletion made from this pane is not the one place undo is missing.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if let notice = manager.deletionNotice {
                 HStack(spacing: 10) {
@@ -144,21 +114,26 @@ private struct HistoryView: View {
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("历史信息")
-                    .font(.system(size: 14, weight: .semibold))
-                Text("逐条浏览 · 最新在前 · 同组消息分别列出")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    /// Search, filter and the list-wide actions in one row; the pane header
+    /// above (in `HistoryPane`) already carries the title.
+    private var toolbar: some View {
+        HStack(spacing: 8) {
+            TextField("搜索标题或正文", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("搜索历史消息")
+            Picker("筛选消息", selection: $filter) {
+                ForEach(HistoryFilter.allCases) { Text($0.label) }
             }
+            .labelsHidden()
+            .frame(width: 95)
+            // A new filter restarts the session: rows kept visible after
+            // being read under the unread filter re-join the filter's rule.
+            .onChange(of: filter) { _, _ in sessionRead = [] }
             if manager.unreadCount > 0 {
                 Text("未读 \(manager.unreadCount)")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 0)
             Button("全部已读") { manager.markAllRead() }
                 .controlSize(.small)
                 .disabled(manager.unreadCount == 0)
@@ -195,12 +170,12 @@ private struct HistoryView: View {
     }
 }
 
-/// One row in the history window: urgency glyph, title, relative time, state
+/// One row in the history pane: urgency glyph, title, relative time, state
 /// badges, and the always-visible 已读/删除 pair. Tapping expands the
 /// rendered Markdown body and the action buttons inline — the actions stay
 /// reachable after the card left the screen, which is where an approval link
 /// or an ack receipt lives on.
-private struct HistoryWindowRow: View {
+private struct HistoryRow: View {
     let notification: CardPayload
     let status: HistoryRowStatus
     let isUnread: Bool
@@ -293,7 +268,7 @@ private struct HistoryWindowRow: View {
             if isExpanded {
                 // The header already carries the one-line title and the
                 // urgency glyph; the expanded area is body + actions.
-                HistoryWindowBody(bodyMarkdown: notification.bodyMarkdown)
+                HistoryBody(bodyMarkdown: notification.bodyMarkdown)
                     .padding(.leading, 25)
                 if !notification.actions.isEmpty {
                     ActionRow(actions: notification.actions) { action, comment in
@@ -343,7 +318,7 @@ private struct HistoryWindowRow: View {
 /// message opened in both places is parsed once. Follows the 外观 pane's
 /// content size, like the card does. System colors here - this is a regular
 /// window, not the floating panel.
-private struct HistoryWindowBody: View {
+private struct HistoryBody: View {
     let bodyMarkdown: String
     private var settings: AppSettings { .shared }
 

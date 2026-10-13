@@ -3,8 +3,9 @@ import ApplicationServices
 import ServiceManagement
 import SwiftUI
 
-private enum SettingsSection: String, CaseIterable, Identifiable {
+enum SettingsSection: String, CaseIterable, Identifiable {
     case general
+    case history
     case appearance
     case notifications
     case api
@@ -15,6 +16,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: "通用"
+        case .history: "历史"
         case .appearance: "外观"
         case .notifications: "通知"
         case .api: "接口"
@@ -25,6 +27,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: "gearshape"
+        case .history: "clock.arrow.circlepath"
         case .appearance: "paintbrush"
         case .notifications: "bell.fill"
         case .api: "network"
@@ -37,6 +40,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     var color: Color {
         switch self {
         case .general: .gray
+        case .history: .orange
         case .appearance: .blue
         case .notifications: .red
         case .api: .indigo
@@ -47,7 +51,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .general: "出现位置、全屏与录屏时隐藏、触觉反馈、登录启动。"
-        case .appearance: "卡片材质、动画（进场/退场/弹性）与内容字号。"
+        case .history: "逐条浏览与搜索筛选，最新在前；已读/删除与撤销，同组消息分别列出。"
+        case .appearance: "实时预览、卡片材质、动画（进场/退场/弹性）与内容字号。"
         case .notifications: "提醒档位、声音、历史保留、快捷键（⌃⌥N / Esc）、锁屏或睡眠时的行为。"
         case .api: "让本机脚本与 Web 应用通过 HTTP、WebSocket 或 Unix socket 对接。端口与监听状态，仅监听本机。"
         case .about: "版本、接入示例与首次引导。"
@@ -57,11 +62,20 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @Bindable private var settings: AppSettings
-    @State private var selection: SettingsSection? = .general
     @State private var searchText = ""
 
     init(settings: AppSettings = .shared) {
         self.settings = settings
+    }
+
+    /// Sidebar selection lives on `AppSettings` (runtime-only) so an entry
+    /// point like the menu bar's 历史信息… can preselect a pane before this
+    /// view — the window is built lazily — even exists.
+    private var selection: Binding<SettingsSection?> {
+        Binding(
+            get: { SettingsSection(rawValue: settings.selectedSettingsSection) ?? .general },
+            set: { settings.selectedSettingsSection = ($0 ?? .general).rawValue }
+        )
     }
 
     /// Tahoe's System Settings filters its sidebar by name; ours matches on
@@ -77,7 +91,7 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selection) {
+            List(selection: selection) {
                 ForEach(visibleSections) { section in
                     Label {
                         Text(section.title)
@@ -96,14 +110,16 @@ struct SettingsView: View {
                 // Keep the detail pane attached to a visible row: when the
                 // filter hides the current selection, jump to the first match.
                 let visible = visibleSections
-                if let selection, visible.contains(selection) { return }
-                self.selection = visible.first
+                if let current = selection.wrappedValue, visible.contains(current) { return }
+                selection.wrappedValue = visible.first
             }
         } detail: {
             Group {
-                switch selection ?? .general {
+                switch selection.wrappedValue ?? .general {
                 case .general:
                     SettingsPane(section: .general) { GeneralSettingsContent(settings: settings) }
+                case .history:
+                    HistoryPane()
                 case .appearance:
                     SettingsPane(section: .appearance) { AppearanceSettingsContent(settings: settings) }
                 case .notifications:
@@ -333,6 +349,32 @@ private extension StatusRow.Kind {
     }
 }
 
+// MARK: - 历史
+
+/// The history pane: the same Tahoe-style header the `SettingsPane` form
+/// pages carry, above the shared `HistoryView`. No `Form` here — the list
+/// scrolls itself, and a grouped form around it would read as a card inside
+/// a card.
+private struct HistoryPane: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 8) {
+                SettingsIconTile(symbol: SettingsSection.history.symbol, color: SettingsSection.history.color, size: 56)
+                Text(SettingsSection.history.title)
+                    .font(.title2)
+                    .bold()
+                Text(SettingsSection.history.subtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.vertical, 12)
+            Divider()
+            HistoryView()
+        }
+    }
+}
+
 // MARK: - 通用
 
 private struct GeneralSettingsContent: View {
@@ -437,15 +479,30 @@ private struct AppearanceSettingsContent: View {
 
     var body: some View {
         Section {
+            ToastStylePreview(settings: settings)
+        } header: {
+            Text("预览")
+        } footer: {
+            SectionFooter("与真实通知同一套渲染：材质与字号改动即时可见；点击卡片展开正文，× 与「重播」演示退场与进场动画。")
+        }
+
+        Section {
             Picker("材质", selection: $settings.toastMaterial) {
                 ForEach(ToastMaterial.allCases, id: \.self) { material in
                     Text(material.title).tag(material)
                 }
             }
+            SliderRow(
+                title: "透明度",
+                value: $settings.toastOpacity,
+                range: 0.4...1.0, step: 0.05,
+                minimum: "40%", maximum: "100%",
+                valueText: "\(Int((settings.toastOpacity * 100).rounded()))%"
+            )
         } header: {
             Text("卡片")
         } footer: {
-            SectionFooter("卡片背景的系统毛玻璃材质，跟随浅色/深色外观；「减少透明度」开启时自动退化为实色。")
+            SectionFooter("卡片背景的系统毛玻璃材质，跟随浅色/深色外观；「减少透明度」开启时自动退化为实色。透明度只调淡毛玻璃，文字与描边保持不透明。")
         }
 
         Section {
@@ -511,6 +568,117 @@ private struct AppearanceSettingsContent: View {
                 Spacer()
             }
         }
+    }
+}
+
+/// The 外观 pane's live preview: the same `ToastCardContent` the stack
+/// renders, fed a sample message and local state. Material and font-size
+/// changes repaint it immediately; the motion settings show through 「重播」,
+/// which runs the card out on the exit clock and back in on the enter clock —
+/// the same `ToastMotion` helpers the live stack uses, so what previews is
+/// what ships.
+private struct ToastStylePreview: View {
+    @Bindable var settings: AppSettings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var expanded = false
+    @State private var visible = true
+
+    /// A collapsed-and-expanded-worthy sample: two summary lines when
+    /// collapsed, Markdown and the 内容字号 slider's effect when expanded.
+    private let sample = CardPayload(
+        title: "构建完成",
+        bodyMarkdown: "**mac-desktop-notify** 全部 34 个测试通过，耗时 42 秒。\n\n- 单元测试 28\n- 集成测试 6",
+        urgency: .normal,
+        timeout: nil
+    )
+
+    private var enterTransition: AnyTransition {
+        settings.toastMotionEnter.transition(slideVector: slideVector, entering: true)
+    }
+
+    private var exitTransition: AnyTransition {
+        settings.toastMotionExit.transition(slideVector: slideVector, entering: false)
+    }
+
+    private var slideVector: CGSize {
+        settings.toastPosition.slideVector(cardWidth: ToastMetrics.cardWidth)
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                if visible {
+                    ToastCardContent(
+                        item: sample,
+                        expanded: expanded,
+                        onTap: { expanded.toggle() },
+                        // The content's close button already wraps this in
+                        // the exit animation, like the live × does.
+                        onClose: { visible = false }
+                    )
+                    .transition(.asymmetric(insertion: enterTransition, removal: exitTransition))
+                } else {
+                    Text("已模拟关闭")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            // Hold the row's height across a dismiss so the form below does
+            // not jump while the exit animation plays.
+            .frame(width: ToastMetrics.cardWidth)
+            .frame(minHeight: 72)
+            .frame(maxWidth: .infinity)
+
+            HStack {
+                Spacer()
+                Button("重播动画", action: replay)
+                    .disabled(!visible)
+                Spacer()
+            }
+        }
+        // Picking a different motion replays it on the spot; the sliders sit
+        // this out — a replay per drag tick would strobe the card.
+        .onChange(of: settings.toastMotionEnter) { _, _ in replay() }
+        .onChange(of: settings.toastMotionExit) { _, _ in replay() }
+    }
+
+    /// The ×'s exit, matched to the live card; also the out-half of a replay.
+    private func dismiss() {
+        withAnimation(reduceMotion ? nil : exitAnimation) {
+            visible = false
+        }
+    }
+
+    private func replay() {
+        guard visible else {
+            reenter()
+            return
+        }
+        dismiss()
+        let exitSeconds = max(0.05, settings.toastMotionExitMs / 1000)
+        DispatchQueue.main.asyncAfter(deadline: .now() + exitSeconds + 0.15) {
+            reenter()
+        }
+    }
+
+    private func reenter() {
+        expanded = false
+        withAnimation(reduceMotion ? nil : enterAnimation) {
+            visible = true
+        }
+    }
+
+    private var enterAnimation: Animation? {
+        settings.toastMotionEnter.animation(
+            milliseconds: settings.toastMotionEnterMs, damping: settings.toastMotionDamping, entering: true
+        )
+    }
+
+    private var exitAnimation: Animation? {
+        settings.toastMotionExit.animation(
+            milliseconds: settings.toastMotionExitMs, damping: nil, entering: false
+        )
     }
 }
 

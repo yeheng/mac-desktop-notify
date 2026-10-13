@@ -22,5 +22,4 @@ DerivedData/
 .workbuddy/
 repomix-output.xml
 
-# 重构期一次性审计底稿（行号随代码漂移，不入库）
-hardcoded-visual-inventory.md
+gpui-nc-replica/

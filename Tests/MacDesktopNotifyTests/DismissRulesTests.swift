@@ -144,16 +144,20 @@ final class DismissRulesTests: SettingsIsolatedTestCase {
                        "a critical takes the stack from the oldest normal card")
     }
 
-    /// 点击卡片 = 显式打开：标记已读并退役。
-    func testTapMarksReadAndRetires() {
+    /// 点击卡片 = 显式打开：展开并标记已读；再点一次只是收起正文，卡片留在
+    /// 屏上——点击永不退役卡片，只有 × / 滑走 / 操作按钮才消失。
+    func testTapExpandsThenCollapsesNeverRetires() {
         let m = NotificationManager()
         m.push(make("info"))
         let id = m.presentations.last!.item.id
-        m.expandCard(id)
+
+        m.tapCard(id)
+        XCTAssertTrue(m.presentations.last?.expanded == true, "the first tap expands")
         XCTAssertTrue(m.messages.readIDs.contains(id), "expanding by click marks it read")
 
         m.tapCard(id)
-        XCTAssertFalse(m.presentations.contains { $0.item.id == id }, "a second tap retires the card")
+        XCTAssertTrue(m.presentations.contains { $0.item.id == id }, "tapping never retires the card")
+        XCTAssertFalse(m.presentations.last!.expanded, "the second tap folds the body back up")
     }
 
     /// 点击带 clickUrl 的卡片：打开链接 + 已读 + 退役，与操作按钮同一条路径。

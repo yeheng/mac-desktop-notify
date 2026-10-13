@@ -64,6 +64,11 @@ final class AppSettings {
         didSet { save(toastMaterial.rawValue, key: Keys.toastMaterial) }
     }
 
+    /// The card material's opacity: 1.0 is the full frosted banner, lower
+    /// values let the desktop bleed through. Only the material dims — text,
+    /// borders and buttons stay fully opaque.
+    var toastOpacity: Double { didSet { save(toastOpacity, key: Keys.toastOpacity) } }
+
     /// Enter/exit motion of the cards, and its timing. `toastMotionDamping`
     /// stays nil until the user touches the slider, so the per-kind default
     /// (0.86 slide / 0.68 bounce) applies.
@@ -141,6 +146,7 @@ final class AppSettings {
         contentFontSize = defaults.object(forKey: Keys.contentFontSize.rawValue) as? Double ?? 13
         toastPosition = ToastPosition(rawValue: defaults.string(forKey: Keys.toastPosition.rawValue) ?? "") ?? .topRight
         toastMaterial = ToastMaterial(rawValue: defaults.string(forKey: Keys.toastMaterial.rawValue) ?? "") ?? .popover
+        toastOpacity = defaults.object(forKey: Keys.toastOpacity.rawValue) as? Double ?? 1.0
         toastMotionEnter = ToastMotion(rawValue: defaults.string(forKey: Keys.toastMotionEnter.rawValue) ?? "") ?? .slide
         toastMotionExit = ToastMotion(rawValue: defaults.string(forKey: Keys.toastMotionExit.rawValue) ?? "") ?? .slide
         toastMotionEnterMs = defaults.object(forKey: Keys.toastMotionEnterMs.rawValue) as? Double ?? 420
@@ -188,6 +194,7 @@ final class AppSettings {
         contentFontSize = 13
         toastPosition = .topRight
         toastMaterial = .popover
+        toastOpacity = 1.0
         toastMotionEnter = .slide
         toastMotionExit = .slide
         toastMotionEnterMs = 420
@@ -212,6 +219,7 @@ final class AppSettings {
     func resetDisplayDefaults() {
         contentFontSize = 13
         toastMaterial = .popover
+        toastOpacity = 1.0
         toastMotionEnter = .slide
         toastMotionExit = .slide
         toastMotionEnterMs = 420
@@ -224,6 +232,13 @@ final class AppSettings {
     /// chord. Observable so the settings pane can say so, instead of showing an
     /// ON toggle that does nothing.
     var panelHotkeyUnavailable = false
+
+    /// Runtime-only, deliberately not persisted and not in `Keys`: the settings
+    /// window's selected sidebar section (a `SettingsSection` raw value). It
+    /// lives here rather than in view state so the menu bar's 历史信息… (and
+    /// ⌃⌥N) can aim the window at the history pane even before the window —
+    /// and its view — exists.
+    var selectedSettingsSection = "general"
 
     /// Whether a login item in `status` should read as 「打开」.
     ///
@@ -278,6 +293,7 @@ final class AppSettings {
         case contentFontSize = "island.contentFontSize"
         case toastPosition = "toast.position"
         case toastMaterial = "toast.material"
+        case toastOpacity = "toast.opacity"
         case toastMotionEnter = "toast.motionEnter"
         case toastMotionExit = "toast.motionExit"
         case toastMotionEnterMs = "toast.motionEnterMs"

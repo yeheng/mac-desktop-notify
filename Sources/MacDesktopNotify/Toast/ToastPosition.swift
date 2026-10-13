@@ -53,6 +53,23 @@ enum ToastPosition: String, CaseIterable, Identifiable {
     var isCenter: Bool {
         self == .topCenter || self == .bottomCenter
     }
+
+    /// The off-screen direction cards travel along for the `slide` / `bounce`
+    /// motions: the anchor's nearest edge (right for right anchors, left for
+    /// left anchors, straight up or down for the centered ones). Shared by
+    /// the live stack and the settings preview.
+    func slideVector(cardWidth: CGFloat) -> CGSize {
+        switch self {
+        case .topRight, .bottomRight:
+            return CGSize(width: cardWidth + 64, height: 0)
+        case .topLeft, .bottomLeft:
+            return CGSize(width: -(cardWidth + 64), height: 0)
+        case .topCenter:
+            return CGSize(width: 0, height: -140)
+        case .bottomCenter:
+            return CGSize(width: 0, height: 140)
+        }
+    }
 }
 
 /// Pure placement: where the stack sits on a screen, and which way it grows.

@@ -5,14 +5,21 @@ enum UrgencyLevel: String, Sendable, Codable {
 }
 
 /// A tappable action shown at the bottom of a notification card.
-/// Exactly one of `url` / `script` fires on click: `url` opens via
-/// NSWorkspace (approve/deny callbacks); `script` runs a user script
-/// from the scripts directory (设计 §2.2). XOR is enforced at ingress
-/// (`PushValidator.normalizedActions`), never here.
+/// Exactly one of `url` / `script` / `callback` fires on click: `url` opens
+/// via NSWorkspace (approve/deny callbacks through the ack loopback);
+/// `script` runs a user script from the scripts directory (设计 §2.2);
+/// `callback` makes the app itself POST the decision to the sender's
+/// endpoint — no URL-scheme registration, no browser. The three-way XOR is
+/// enforced at ingress (`PushValidator.normalizedActions`), never here.
 struct NotificationAction: Sendable, Equatable, Codable {
     let label: String
     let url: URL?
     let script: String?
+    /// The sender's webhook: on click the app POSTs the decision
+    /// (label/notificationID/decidedAt/comment) to it fire-and-forget.
+    /// Unlike the `notch-notify://ack` loopback this needs nothing
+    /// registered with the system, so it works from any install location.
+    let callback: URL?
     /// The sender asked for a line of text to go with the receipt
     /// (`notch-notify://ack?...&input=1`, or `"input":1` on a script
     /// action): the button then opens an inline input before anything
@@ -20,21 +27,23 @@ struct NotificationAction: Sendable, Equatable, Codable {
     var wantsComment: Bool
     /// Per-button arguments for a script action (any JSON object), delivered
     /// to the hook as `input.args`（设计 §2.2 扩展：同名脚本按参数分叉，
-    /// e.g. `{"env":"prod"}`）. url actions ignore it.
+    /// e.g. `{"env":"prod"}`）. url and callback actions ignore it.
     var args: ScriptValue?
 
-    init(label: String, url: URL? = nil, script: String? = nil,
+    init(label: String, url: URL? = nil, script: String? = nil, callback: URL? = nil,
          wantsComment: Bool = false, args: ScriptValue? = nil) {
         self.label = label
         self.url = url
         self.script = script
+        self.callback = callback
         self.wantsComment = wantsComment
         self.args = args
     }
 
     /// History written before `script` existed has only `url`; a script
     /// action persisted before any url-optional migration carries only
-    /// `script`. Both decode; neither key is fatal.
+    /// `script`; history predating `callback` simply lacks the key. All
+    /// decode; no key is fatal.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         // Same tolerance as `PushValidator.ActionDTO`: one action missing a
@@ -43,6 +52,7 @@ struct NotificationAction: Sendable, Equatable, Codable {
         label = try container.decodeIfPresent(String.self, forKey: .label) ?? ""
         url = try container.decodeIfPresent(URL.self, forKey: .url)
         script = try container.decodeIfPresent(String.self, forKey: .script)
+        callback = try container.decodeIfPresent(URL.self, forKey: .callback)
         wantsComment = try container.decodeIfPresent(Bool.self, forKey: .wantsComment) ?? false
         args = try container.decodeIfPresent(ScriptValue.self, forKey: .args)
     }

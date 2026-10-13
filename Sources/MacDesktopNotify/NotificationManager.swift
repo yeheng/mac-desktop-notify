@@ -518,17 +518,13 @@ final class NotificationManager {
         }
         let animation: Animation?
         if removal {
-            let exit = settings.toastMotionExit
-            animation = exit == .none ? nil : .easeOut(duration: max(0.05, settings.toastMotionExitMs / 1000))
+            animation = settings.toastMotionExit.animation(
+                milliseconds: settings.toastMotionExitMs, damping: nil, entering: false
+            )
         } else {
-            let seconds = max(0.05, settings.toastMotionEnterMs / 1000)
-            let damping = settings.toastMotionDamping
-            switch settings.toastMotionEnter {
-            case .none: animation = nil
-            case .slide: animation = .spring(response: seconds, dampingFraction: damping ?? 0.86)
-            case .bounce: animation = .spring(response: seconds, dampingFraction: damping ?? 0.68)
-            case .fade, .zoom: animation = .easeOut(duration: seconds)
-            }
+            animation = settings.toastMotionEnter.animation(
+                milliseconds: settings.toastMotionEnterMs, damping: settings.toastMotionDamping, entering: true
+            )
         }
         withAnimation(animation) { body() }
     }

@@ -160,10 +160,11 @@ enum PushValidator {
         let label: String
         let url: String?
         let script: String?
+        let callback: String?
         let input: Bool?
         let args: ScriptValue?
 
-        private enum CodingKeys: String, CodingKey { case label, url, script, input, args }
+        private enum CodingKeys: String, CodingKey { case label, url, script, callback, input, args }
 
         /// `input` may be `1` (URL query habit) or `true`; both decode. Any
         /// other shape leaves it nil, so the button simply never asks for a
@@ -176,6 +177,7 @@ enum PushValidator {
             label = try container.decodeIfPresent(String.self, forKey: .label) ?? ""
             url = try container.decodeIfPresent(String.self, forKey: .url)
             script = try container.decodeIfPresent(String.self, forKey: .script)
+            callback = try container.decodeIfPresent(String.self, forKey: .callback)
             if let b = try? container.decode(Bool.self, forKey: .input) {
                 input = b
             } else if let n = try? container.decode(Int.self, forKey: .input) {
@@ -194,13 +196,18 @@ enum PushValidator {
     }
 
     /// DTO → model，所有 JSON 入口共用（URL query 载荷、HTTP body、WS 帧）。
-    /// 只做一件事：解 script-vs-url 分叉。字段限制、截断、ack 批注意图全部
-    /// 住在 `normalizedActions`——每条路径都已流经的那道闸，规则归一于此。
+    /// 只做一件事：解 script/callback/url 分叉。字段限制、截断、ack 批注
+    /// 意图全部住在 `normalizedActions`——每条路径都已流经的那道闸，规则
+    /// 归一于此。
     static func actions(from dtos: [ActionDTO]) -> [NotificationAction] {
         dtos.compactMap { dto in
             if let script = dto.script, ScriptStore.isValidName(script) {
                 return NotificationAction(label: dto.label, script: script,
                                           wantsComment: dto.input ?? false, args: dto.args)
+            }
+            if let callbackString = dto.callback, let callback = URL(string: callbackString) {
+                return NotificationAction(label: dto.label, callback: callback,
+                                          wantsComment: dto.input ?? false)
             }
             guard let urlString = dto.url, let url = URL(string: urlString) else { return nil }
             return NotificationAction(label: dto.label, url: url)
@@ -378,9 +385,10 @@ enum PushValidator {
     }
 
     /// Truncate, never reject: labels are trimmed and capped; an action
-    /// must carry exactly one of url/script (both or neither → dropped);
-    /// only the first `maxActions` survive. A push never fails because of
-    /// its actions.
+    /// must carry exactly one of url/script/callback (more than one, or
+    /// none, → dropped); a callback must be http(s) — the app itself calls
+    /// it, so schemes like `file:` have no business there; only the first
+    /// `maxActions` survive. A push never fails because of its actions.
     ///
     /// A url action's comment intent lives in its ack URL
     /// (`notch-notify://ack?...&input=1`) regardless of which door the push
@@ -392,11 +400,13 @@ enum PushValidator {
             guard !label.isEmpty else { return nil }
             let hasURL = action.url?.scheme != nil
             let hasScript = action.script.map(ScriptStore.isValidName) ?? false
-            guard hasURL != hasScript else { return nil }   // XOR
+            let hasCallback = ["http", "https"].contains(action.callback?.scheme?.lowercased() ?? "")
+            guard [hasURL, hasScript, hasCallback].filter({ $0 }).count == 1 else { return nil }
             return NotificationAction(
                 label: String(label.prefix(maxActionLabelLength)),
                 url: action.url,
                 script: action.script,
+                callback: action.callback,
                 wantsComment: hasURL
                     ? action.url.flatMap(URLNotificationParser.parseAck)?.wantsComment ?? false
                     : action.wantsComment,

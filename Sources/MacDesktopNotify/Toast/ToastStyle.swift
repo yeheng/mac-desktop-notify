@@ -13,6 +13,12 @@ enum ToastMaterial: String, CaseIterable, Sendable {
     case tooltip
     case contentBackground
     case underWindowBackground
+    case underPageBackground
+    case windowBackground
+    case titlebar
+    case sheet
+    case fullScreenUI
+    case selection
 
     var nsMaterial: NSVisualEffectView.Material {
         switch self {
@@ -24,6 +30,12 @@ enum ToastMaterial: String, CaseIterable, Sendable {
         case .tooltip: .toolTip
         case .contentBackground: .contentBackground
         case .underWindowBackground: .underWindowBackground
+        case .underPageBackground: .underPageBackground
+        case .windowBackground: .windowBackground
+        case .titlebar: .titlebar
+        case .sheet: .sheet
+        case .fullScreenUI: .fullScreenUI
+        case .selection: .selection
         }
     }
 
@@ -37,6 +49,12 @@ enum ToastMaterial: String, CaseIterable, Sendable {
         case .tooltip: "工具提示"
         case .contentBackground: "内容背景"
         case .underWindowBackground: "窗口底"
+        case .underPageBackground: "页面衬底"
+        case .windowBackground: "窗口背景"
+        case .titlebar: "标题栏"
+        case .sheet: "表单"
+        case .fullScreenUI: "全屏界面"
+        case .selection: "选中高亮"
         }
     }
 }
@@ -64,6 +82,41 @@ enum ToastMotion: String, CaseIterable, Sendable {
     var usesSpring: Bool {
         self == .slide || self == .bounce
     }
+
+    /// The membership clock this motion runs on. Shared by the live stack
+    /// (`NotificationManager.animateMembership`) and the settings preview, so
+    /// the previewed timing is the shipped timing. Exits always ease out on
+    /// the exit duration; springs and the damping override apply to entries
+    /// only.
+    func animation(milliseconds: Double, damping: Double?, entering: Bool) -> Animation? {
+        let seconds = max(0.05, milliseconds / 1000)
+        if !entering {
+            return self == .none ? nil : .easeOut(duration: seconds)
+        }
+        switch self {
+        case .none: return nil
+        case .slide: return .spring(response: seconds, dampingFraction: damping ?? 0.86)
+        case .bounce: return .spring(response: seconds, dampingFraction: damping ?? 0.68)
+        case .fade, .zoom: return .easeOut(duration: seconds)
+        }
+    }
+
+    /// The transition shape. Shared by the stack view and the settings
+    /// preview. `slide` and `bounce` travel off-screen along `slideVector`;
+    /// `fade` and `zoom` stay in place; an entering zoom opens slightly
+    /// wider than an exiting one shrinks.
+    func transition(slideVector: CGSize, entering: Bool) -> AnyTransition {
+        switch self {
+        case .slide, .bounce:
+            return .offset(slideVector).combined(with: .opacity)
+        case .fade:
+            return .opacity
+        case .zoom:
+            return .scale(scale: entering ? 0.92 : 0.95).combined(with: .opacity)
+        case .none:
+            return .identity
+        }
+    }
 }
 
 /// The card's fixed geometry and type scale, pinned to the system banner
@@ -71,6 +124,11 @@ enum ToastMotion: String, CaseIterable, Sendable {
 /// 16pt continuous corner and padding, a 1pt hairline border. These are not
 /// user-facing knobs — the banner look is the point.
 enum ToastMetrics {
+    /// The card width — the system banner's 346pt. A card fits its content
+    /// up to this bound, which is what keeps a long title from stretching the
+    /// window across the display; the window itself is clamped to the screen
+    /// by `ToastLayout`.
+    static let cardWidth = 346.0
     static let cardRadius = 16.0
     static let padding = 16.0
     /// Block spacing inside an expanded card; a collapsed card packs tighter.

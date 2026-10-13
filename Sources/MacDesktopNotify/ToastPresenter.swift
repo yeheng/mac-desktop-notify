@@ -170,6 +170,9 @@ final class ToastPresenter: SurfacePresenting {
     private func show(_ panel: ToastPanel, on screen: NSScreen) {
         layout(panel, on: screen, animated: panel.isVisible)
         applySharingType()
+        // A toast arriving while Settings is frontmost must not leap back
+        // over it.
+        applyLevelForActivation()
         panel.orderFrontRegardless()
     }
 
@@ -248,11 +251,20 @@ final class ToastPresenter: SurfacePresenting {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.level = .screenSaver
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         panel.isMovable = false
         stackPanel = panel
+        applyLevelForActivation()
         return panel
+    }
+
+    /// The stack floats at `.screenSaver` so it can sit over other apps — but
+    /// window levels are absolute, so that same level would also cover this
+    /// app's own Settings / onboarding windows the moment one opens. While
+    /// the app is active the stack drops to `.normal`: toasts stay visible
+    /// beside the window instead of walling it off.
+    private func applyLevelForActivation() {
+        stackPanel?.level = NSApp.isActive ? .normal : .screenSaver
     }
 
     // MARK: - Clicks
@@ -307,6 +319,12 @@ final class ToastPresenter: SurfacePresenting {
         }
         observers.append(addObserverOnMain(forName: AppSettings.screenRecordingDidChange) { [weak self] in
             self?.applySharingType()
+        })
+        observers.append(addObserverOnMain(forName: NSApplication.didBecomeActiveNotification) { [weak self] in
+            self?.applyLevelForActivation()
+        })
+        observers.append(addObserverOnMain(forName: NSApplication.didResignActiveNotification) { [weak self] in
+            self?.applyLevelForActivation()
         })
         observers.append(addObserverOnMain(forName: Notification.Name.commentEditingDidBegin) { [weak self] in
             self?.setCommentEditing(true)

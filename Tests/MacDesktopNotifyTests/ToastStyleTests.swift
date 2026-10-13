@@ -38,6 +38,7 @@ final class ToastStyleTests: SettingsIsolatedTestCase {
     func testMotionSettingsRoundTrip() {
         AppSettings.shared.resetForTests()
         AppSettings.shared.toastMaterial = .hudWindow
+        AppSettings.shared.toastOpacity = 0.7
         AppSettings.shared.toastMotionEnter = .bounce
         AppSettings.shared.toastMotionExit = .fade
         AppSettings.shared.toastMotionEnterMs = 600
@@ -46,6 +47,7 @@ final class ToastStyleTests: SettingsIsolatedTestCase {
 
         let reread = AppSettings()
         XCTAssertEqual(reread.toastMaterial, .hudWindow)
+        XCTAssertEqual(reread.toastOpacity, 0.7)
         XCTAssertEqual(reread.toastMotionEnter, .bounce)
         XCTAssertEqual(reread.toastMotionExit, .fade)
         XCTAssertEqual(reread.toastMotionEnterMs, 600)
@@ -53,12 +55,14 @@ final class ToastStyleTests: SettingsIsolatedTestCase {
         XCTAssertEqual(reread.toastMotionDamping, 0.5)
     }
 
-    /// Factory defaults are the system-banner look: popover material, slide
-    /// both ways, no damping override (nil = the per-kind default applies).
+    /// Factory defaults are the system-banner look: popover material at full
+    /// opacity, slide both ways, no damping override (nil = the per-kind
+    /// default applies).
     func testMotionDefaultsAreTheBannerFeel() {
         AppSettings.shared.resetForTests()
         let settings = AppSettings()
         XCTAssertEqual(settings.toastMaterial, .popover)
+        XCTAssertEqual(settings.toastOpacity, 1.0)
         XCTAssertEqual(settings.toastMotionEnter, .slide)
         XCTAssertEqual(settings.toastMotionExit, .slide)
         XCTAssertEqual(settings.toastMotionEnterMs, 420)

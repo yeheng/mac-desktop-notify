@@ -33,6 +33,9 @@ final class NotificationActionHandler {
     var ackWriter: ((NotificationAck) -> Void)?
     /// Test seam for URL opening; production leaves this nil and opens via NSWorkspace.
     var urlOpener: ((URL) -> Void)?
+    /// Test seam for callback webhooks; production leaves this nil and POSTs
+    /// via URLSession.
+    var callbackSender: ((URLRequest) -> Void)?
 
     init(ackStore: NotificationAckStore? = nil) {
         self.ackStore = ackStore
@@ -55,6 +58,10 @@ final class NotificationActionHandler {
         if action.script != nil {
             let runner = ScriptRunner.shared
             Task { await runner.runActionHook(action: action, notification: notification, comment: comment) }
+            return
+        }
+        if let callback = action.callback {
+            postCallback(to: callback, action: action, notification: notification, comment: comment)
             return
         }
         guard let actionURL = action.url else { return }
@@ -96,5 +103,58 @@ final class NotificationActionHandler {
         } else {
             NSWorkspace.shared.open(actionURL)
         }
+    }
+
+    /// A `callback` action: the app itself POSTs the decision to the sender's
+    /// endpoint — fire-and-forget, the response body is deliberately ignored
+    /// （简单的按钮 callback，不读回文本）. Unlike the `notch-notify://ack`
+    /// loopback this needs nothing registered with the system, so it works
+    /// however the app was installed.
+    private func postCallback(
+        to url: URL,
+        action: NotificationAction,
+        notification: CardPayload,
+        comment: String?
+    ) {
+        let trimmed = comment?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var body: [String: Any] = [
+            "label": action.label,
+            "notificationID": notification.id.uuidString,
+            "decidedAt": Date().timeIntervalSince1970,
+        ]
+        // A blank comment is no comment, same rule as the ack receipt.
+        if !trimmed.isEmpty {
+            body["comment"] = String(trimmed.prefix(NotificationAckStore.maxCommentLength))
+        }
+        guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = payload
+        request.timeoutInterval = 10
+        if let callbackSender {
+            callbackSender(request)
+            return
+        }
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard error == nil, (200...299).contains(status) else {
+                // A lost approval is worse than a noisy toast: follow the
+                // script-hook precedent （决策 #4) and surface the failure.
+                let reason = error?.localizedDescription ?? "HTTP \(status)"
+                Diagnostics.degrade("动作回调失败（\(action.label)）", reason: reason)
+                Task { @MainActor in
+                    NotificationIngress.deliver(
+                        CardPayload(
+                            title: "动作回调失败",
+                            bodyMarkdown: "**\(action.label)** 的回调未能送达 `\(url.absoluteString)`\n\n\(reason)",
+                            urgency: .normal,
+                            timeout: nil
+                        )
+                    )
+                }
+                return
+            }
+        }.resume()
     }
 }

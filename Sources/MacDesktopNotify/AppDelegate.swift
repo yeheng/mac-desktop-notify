@@ -13,7 +13,8 @@ extension Notification.Name {
     /// Same modal-confirmation escape hatch as `requestClearAll`, scoped to
     /// the history section only: the current message survives it.
     static let requestClearHistory = Notification.Name("MacDesktopNotify.requestClearHistory")
-    /// Opens the standalone history browser from a toast card's context menu.
+    /// Opens the history pane in the Settings window (card context menu,
+    /// onboarding, ⌃⌥N and the menu bar item all post it).
     static let openHistoryWindow = Notification.Name("MacDesktopNotify.openHistoryWindow")
     /// Reruns onboarding from Settings → 关于。
     static let reopenOnboarding = Notification.Name("MacDesktopNotify.reopenOnboarding")
@@ -33,7 +34,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// reference is what keeps it alive.
     private var presenter: ToastPresenter?
     private var settingsController: SettingsWindowController?
-    private var historyController: HistoryWindowController?
     private var onboardingController: OnboardingWindowController?
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
@@ -74,7 +74,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         presence.start()
 
         settingsController = SettingsWindowController()
-        historyController = HistoryWindowController()
         installShortcutMonitors()
         setupStatusItem()
         syncPanelHotkey()
@@ -112,7 +111,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.settingsController?.show()
         }
         addObserverOnMain(forName: .openHistoryWindow) { [weak self] in
-            self?.historyController?.show()
+            // History is a pane in the Settings window; preselect it so the
+            // window opens straight onto the backlog.
+            AppSettings.shared.selectedSettingsSection = SettingsSection.history.rawValue
+            self?.settingsController?.show()
         }
 
         // The app is inert until something calls it. A first run that ends with
@@ -306,7 +308,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePanelFromMenu() { NotificationManager.shared.togglePanel() }
     @objc private func openSettings() { settingsController?.show() }
-    @objc private func openHistory() { historyController?.show() }
+    // The same path the card context menu and ⌃⌥N take: history is a pane
+    // in the Settings window, not a window of its own.
+    @objc private func openHistory() {
+        NotificationCenter.default.post(name: .openHistoryWindow, object: nil)
+    }
     @objc private func quitApp() { NSApplication.shared.terminate(nil) }
 
     /// Clearing deletes the on-disk history too, so every destructive path

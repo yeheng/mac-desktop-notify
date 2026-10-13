@@ -87,7 +87,7 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 | `title` | string | ✅ | — | trim；超 200 字符截断；trim 后为空 → **400**（有 `script` 时除外） |
 | `body` | string | ❌ | `""` | Markdown；超 5000 字符截断 |
 | `blocks` | array | ❌ | — | 结构化正文，**非空时优先于 `body`**，见 [3.1](#31-blocks结构化正文) |
-| `island` | object | ❌ | — | 状态行，只有 `progress` 会渲染（收起态百分比）；`text`/`icon` 被接受并存档但不显示，见 [3.2](#32-island状态行) |
+| `island` | object | ❌ | — | 状态行，只有 `progress` 会渲染（细进度条 + 百分比）；`text`/`icon` 被接受并存档但不显示，见 [3.2](#32-island状态行) |
 | `urgency` | string | ❌ | `"normal"` | `low` / `normal` / `critical`；**无法识别的值回落 `normal`**（不报错） |
 | `timeout` | number | ❌ | 设置值 | 自动收起秒数，钳制到 `1...60`；`NaN`/`Inf` 视为**未提供** |
 | `group` | string | ❌ | — | 分组键；trim；超 64 字符截断；空白串视为无分组 |
@@ -120,7 +120,7 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 | 字段 | 类型 | 约束 |
 |------|------|------|
 | `text` | string | trim；超 64 字符截断；空白 → 丢弃。**当前版本不渲染**：字段仍被接受并随历史落盘，但屏幕上没有任何消费方 |
-| `progress` | number | 钳制到 `0...1`；`NaN`/`Inf` → 丢弃。收起态卡片的 meta 行显示百分比文本（如 `42%`） |
+| `progress` | number | 钳制到 `0...1`；`NaN`/`Inf` → 丢弃。收起态与展开态卡片均显示细进度条 + 百分比文本（如 `42%`），更新带过渡动画 |
 | `icon` | string | SF Symbol 名。**当前版本不渲染**：卡片头部图标固定为铃铛，紧急度以角标圆点表示；无效名同样不渲染 |
 
 规则：
@@ -135,22 +135,25 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 ```json
 [{"label": "允许", "url": "http://localhost:8080/approve"}]
 [{"label": "重跑", "script": "ci-retry", "args": {"env": "prod"}, "input": 1}]
+[{"label": "批准", "callback": "http://127.0.0.1:9000/approve"}]
 ```
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `label` | string | 必填；trim；超 24 字符截断；为空则**丢弃该按钮** |
 | `url` | string | 点击后打开。必须带 scheme |
-| `script` | string | 点击后执行脚本，与 `url` 二选一（`script` 优先）。名字规则同推送级 `script` 字段：`[A-Za-z0-9_-]{1,64}` |
+| `script` | string | 点击后执行脚本，三选一（`script` 优先于 `callback`，`callback` 优先于 `url`）。名字规则同推送级 `script` 字段：`[A-Za-z0-9_-]{1,64}` |
+| `callback` | string | 点击后由 App 自己 POST 决策到该端点（webhook），必须 http/https。见 [3.5](#35-callback按钮回调) |
 | `input` | bool \| int | 为真时点击先弹**一行输入框**。`1` 与 `true` 都接受。**去向随按钮类型而变**，见下方规则 |
 | `args` | object | 仅 script 动作；原样作为 `input.args` 传给脚本 |
 
 规则：
 
 - **最多 3 个**，第一个渲染为主按钮。
-- **`url` 与 `script` 二选一，`script` 优先**：两者都提供且 `script` 名合法时按 script 动作处理，`url` 被静默丢弃；`script` 名非法则回落到 `url`。两者都没有、或 `label` 为空 → 丢弃该按钮。
+- **`url` / `script` / `callback` 三选一**：同时提供多个时按 `script` → `callback` → `url` 的优先级取第一个合法的，其余静默丢弃；`script` 名非法则回落到 `callback`/`url`。三者都没有、或 `label` 为空 → 丢弃该按钮。
 - **`input` 的去向取决于按钮类型**（这一点极易踩坑）：
   - `script` 动作：JSON 的 `input` 生效，用户填写的内容作为 **`input.comment`** 传给脚本，**不写任何回执文件**。
+  - `callback` 动作：JSON 的 `input` 生效，填写的内容作为 POST body 的 `comment` 字段发给端点。
   - `url` 动作：JSON 的 `input` **被完全忽略**。是否要批注只能由 ack URL 自带的 `input=1` 决定，填写内容随后写进[回执文件](#附录落盘位置)。
 - 无效条目静默丢弃，不影响通知本身。
 
@@ -159,6 +162,35 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 带 `script` 时 `title` 可以省略——消息先以「⏳ 脚本生成中：<名字>」占位落地，脚本完成后原地替换。脚本返回对象的字段（title/body/urgency/timeout/group/actions）覆盖消息。
 
 失败时正文写入 `⚠️ 脚本失败：<原因>` 与日志尾 3 行。契约、全局 API 与超时见 README「[脚本](../README.md#脚本)」章节。
+
+### 3.5 `callback`：按钮回调
+
+`url` 动作的 ack 回执（`notch-notify://ack?…`）依赖 URL scheme 注册——那要求 .app 落在 `/Applications` 并被 LaunchServices 收录，命令行直接跑二进制或从 `build/` 目录启动时不可用。`callback` 动作不经过系统：点击后 **App 自己**向该端点发一个 HTTP POST，任何安装方式都能用。
+
+```bash
+curl http://127.0.0.1:4770/v1/push -d '{
+  "title": "部署审批",
+  "urgency": "critical",
+  "actions": [
+    {"label": "批准", "callback": "http://127.0.0.1:9000/approve"},
+    {"label": "驳回", "callback": "http://127.0.0.1:9000/reject", "input": 1}
+  ]
+}'
+```
+
+点击后端点收到的 POST(`Content-Type: application/json`):
+
+```json
+{"label": "批准", "notificationID": "6F9C2B1A-…", "decidedAt": 1789999999.17}
+```
+
+规则：
+
+- **点火即忘**：不读响应文本，不等业务结果；`decidedAt` 是 Unix 秒。
+- `comment` 键只在用户真的填了批注（`input` 为真）时出现；空批注省略该键，与 ack 回执同一条规则。
+- 非 2xx 或网络错误：推一条「动作回调失败」的普通级诊断通知（与脚本失败同一先例），不会静默吞掉一次审批。
+- 端点必须 http/https；其他 scheme（`file:` 等）的动作在入口即被丢弃。
+- 点击即退役卡片、标记已读，与 URL/script 按钮同一条路径。
 
 ---
 
@@ -208,7 +240,7 @@ curl http://127.0.0.1:4770/v1/push -d '{
 }'
 ```
 
-`text` 与 `icon` 仍被接受并存档，但当前版本不渲染；只有 `progress` 会在收起态卡片上显示百分比（见 [3.2](#32-island状态行)）。
+`text` 与 `icon` 仍被接受并存档，但当前版本不渲染；只有 `progress` 会在卡片上显示为细进度条 + 百分比（见 [3.2](#32-island状态行)）。
 
 **审批流（ack 回执）：**
 
