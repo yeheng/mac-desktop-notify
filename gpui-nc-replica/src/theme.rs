@@ -56,7 +56,6 @@ pub const MAX_VISIBLE_BANNERS: usize = 3;
 
 pub const ENTER_MS: u64 = 280;
 pub const EXIT_MS: u64 = 180;
-pub const AUTO_DISMISS_MS: u64 = 5000;
 /// Countdown tick; also drives the auto-dismiss progress bar's smoothness.
 pub const DISMISS_TICK_MS: u64 = 50;
 pub const SNAP_BACK_MS: u64 = 180;
@@ -109,6 +108,89 @@ pub fn banner_height(body_lines: usize) -> f32 {
 }
 
 // ---- Appearance ---------------------------------------------------------
+
+/// 卡片毛玻璃材质（设置 → 外观 → 材质）: a curated subset of
+/// `NSVisualEffectView.Material`, the same cases Swift `ToastMaterial`
+/// offers. Persisted by case name (camelCase, Swift's raw values); `id()`
+/// is the AppKit raw value the material seam applies.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ToastMaterial {
+    #[default]
+    Popover,
+    Menu,
+    HudWindow,
+    Sidebar,
+    HeaderView,
+    Tooltip,
+    ContentBackground,
+    UnderWindowBackground,
+    UnderPageBackground,
+    WindowBackground,
+    Titlebar,
+    Sheet,
+    FullScreenUI,
+    Selection,
+}
+
+impl ToastMaterial {
+    pub const ALL: [Self; 14] = [
+        Self::Popover,
+        Self::Menu,
+        Self::HudWindow,
+        Self::Sidebar,
+        Self::HeaderView,
+        Self::Tooltip,
+        Self::ContentBackground,
+        Self::UnderWindowBackground,
+        Self::UnderPageBackground,
+        Self::WindowBackground,
+        Self::Titlebar,
+        Self::Sheet,
+        Self::FullScreenUI,
+        Self::Selection,
+    ];
+
+    /// The `NSVisualEffectView.Material` raw value (Swift `nsMaterial`).
+    pub fn id(self) -> isize {
+        match self {
+            Self::Titlebar => 3,
+            Self::Selection => 4,
+            Self::Menu => 5,
+            Self::Popover => 6,
+            Self::Sidebar => 7,
+            Self::Sheet => 8,
+            Self::WindowBackground => 9,
+            Self::HudWindow => 10,
+            Self::FullScreenUI => 11,
+            Self::Tooltip => 12,
+            Self::ContentBackground => 13,
+            Self::UnderWindowBackground => 14,
+            Self::UnderPageBackground => 15,
+            Self::HeaderView => 16,
+        }
+    }
+
+    /// The settings picker's label (Swift `ToastMaterial.title`).
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Popover => "系统横幅",
+            Self::Menu => "菜单",
+            Self::HudWindow => "HUD（深色）",
+            Self::Sidebar => "边栏",
+            Self::HeaderView => "表头",
+            Self::Tooltip => "工具提示",
+            Self::ContentBackground => "内容背景",
+            Self::UnderWindowBackground => "窗口底",
+            Self::UnderPageBackground => "页面衬底",
+            Self::WindowBackground => "窗口背景",
+            Self::Titlebar => "标题栏",
+            Self::Sheet => "表单",
+            Self::FullScreenUI => "全屏界面",
+            Self::Selection => "选中高亮",
+        }
+    }
+}
 
 pub fn is_dark(appearance: WindowAppearance) -> bool {
     matches!(

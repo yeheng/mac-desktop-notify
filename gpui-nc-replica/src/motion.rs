@@ -1,40 +1,24 @@
-//! Customizable banner motion: enter/exit/snap-back animation styles,
-//! selected with `NC_MOTION=slide|spring|fade` (default: spring).
-//! `NC_PROGRESS=1` enables the optional auto-dismiss progress bar.
+//! Customizable banner motion: enter/exit/snap-back animation styles
+//! (`Config::motion`, seeded by `NC_MOTION=slide|spring|fade`).
 
 use gpui_kit::*;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::theme;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MotionStyle {
     /// macOS default: slide in from / out to the right edge.
     Slide,
     /// Slide driven by a physically simulated spring (slight overshoot).
+    #[default]
     Spring,
     /// Fade in place. The card's drop shadow is ramped by opacity³ on a
     /// rounded wrapper because GPUI has no group compositing — a translucent
     /// card would otherwise show its own shadow through itself as a slab.
     Fade,
-}
-
-impl MotionStyle {
-    pub fn from_env() -> Self {
-        if crate::macos::accessibility_preference("accessibilityDisplayShouldReduceMotion") {
-            return Self::Fade;
-        }
-        match std::env::var("NC_MOTION").as_deref() {
-            Ok("spring") => Self::Spring,
-            Ok("fade") => Self::Fade,
-            Ok("slide") => Self::Slide,
-            _ => Self::Spring,
-        }
-    }
-}
-
-pub fn progress_enabled() -> bool {
-    std::env::var("NC_PROGRESS").as_deref() == Ok("1")
 }
 
 /// Spring slide-in: slight overshoot.

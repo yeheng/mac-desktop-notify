@@ -15,8 +15,13 @@ pub struct NotificationCard {
     pub hovered: bool,
     pub shadowed: bool,
     pub progress: Option<f32>,
+    body_font_size: f32,
     footer: Option<AnyElement>,
     material: Option<std::rc::Rc<std::cell::RefCell<crate::macos::MaterialHost>>>,
+    /// `NSVisualEffectView.Material` raw value (设置 → 外观 → 材质).
+    material_style: isize,
+    /// 0.4…1.0, applied to the material view only.
+    material_opacity: f32,
 }
 
 impl NotificationCard {
@@ -27,15 +32,27 @@ impl NotificationCard {
             hovered: false,
             shadowed: true,
             progress: None,
+            body_font_size: theme::BODY_FONT_SIZE,
             material: None,
+            material_style: crate::theme::ToastMaterial::Popover.id(),
+            material_opacity: 1.0,
             footer: None,
         }
+    }
+
+    /// 内容字号 (设置 → 外观 → 内容字号): the body column's text size. The
+    /// rest of the type ramp is fixed so the card keeps its hierarchy.
+    pub fn body_font_size(mut self, size: f32) -> Self {
+        self.body_font_size = size.clamp(10., 20.);
+        self
     }
 
     pub(crate) fn material(
         mut self,
         host: std::rc::Rc<std::cell::RefCell<crate::macos::MaterialHost>>,
         enabled: bool,
+        style: crate::theme::ToastMaterial,
+        opacity: f32,
     ) -> Self {
         if enabled
             && cfg!(target_os = "macos")
@@ -44,6 +61,9 @@ impl NotificationCard {
             )
         {
             self.material = Some(host);
+            // 透明度仅作用于毛玻璃材质（Swift `toastOpacity`）。
+            self.material_style = style.id();
+            self.material_opacity = opacity.clamp(0.4, 1.0);
         }
         self
     }
@@ -97,10 +117,12 @@ impl RenderOnce for NotificationCard {
             .rounded(px(theme::CARD_RADIUS))
             .bg(bg)
             .when_some(material, |this, host| {
+                let style = self.material_style;
+                let opacity = self.material_opacity;
                 this.child(
                     canvas(
                         move |bounds, window, _| {
-                            host.borrow_mut().update(id, bounds, 1., window);
+                            host.borrow_mut().update(id, bounds, opacity, style, window);
                         },
                         |_, _, _, _| {},
                     )
@@ -168,33 +190,33 @@ impl RenderOnce for NotificationCard {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(primary)
                                     .truncate()
-                                    .child(self.item.title.clone()),
+                                    .child(self.item.payload.title.clone()),
                             )
                             .child(
                                 div()
-                                    .text_size(px(theme::BODY_FONT_SIZE))
+                                    .text_size(px(self.body_font_size))
                                     .line_height(px(theme::BODY_LINE_HEIGHT))
                                     .text_color(primary)
                                     .line_clamp(2)
-                                    .child(self.item.body.clone()),
+                                    // 收起态显示纯文本摘要，不漏 Markdown 语法；
+                                    // 代码块丢弃，与 Swift MarkdownPreview 一致。
+                                    .child(crate::markdown_preview::preview_text(
+                                        &self.item.payload.body,
+                                        2,
+                                    )),
                             ),
                     )
                     .child(AppIcon::new(self.item.app, theme::APP_ICON_LG)),
             )
-            .when_some(
-                self.item
-                    .notification
-                    .as_ref()
-                    .and_then(|n| n.island.clone()),
-                |this, status| {
+            .when_some(self.item.payload.island.clone(), |this, status| {
                     this.child(
                         div()
                             .mt_1()
                             .line_height(px(14.))
                             .text_size(px(theme::HEADER_FONT_SIZE))
                             .text_color(secondary)
-                            .child(status["text"].as_str().unwrap_or_default().to_owned())
-                            .when_some(status["progress"].as_f64(), |this, p| {
+                            .child(status.text.unwrap_or_default())
+                            .when_some(status.progress, |this, p| {
                                 this.child(
                                     div()
                                         .h(px(2.))

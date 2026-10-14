@@ -26,7 +26,7 @@ impl Render for NotificationDetail {
             let comment = self.comment.clone();
             actions = actions.child(
                 Button::new(("detail-action", ix))
-                    .label(action["label"].as_str().unwrap_or_default().to_owned())
+                    .label(action.label.clone())
                     .on_click(move |_, window, cx| {
                         let text = comment.read(cx).value().to_string();
                         crate::notification_action::perform(
@@ -76,7 +76,7 @@ impl Render for NotificationDetail {
                 self.notification
                     .actions
                     .iter()
-                    .any(|a| a["wantsComment"].as_bool() == Some(true)),
+                    .any(|a| a.wants_comment),
                 |el| el.child(Input::new(&self.comment)),
             )
             .child(actions)

@@ -56,7 +56,11 @@ impl Drop for Listeners {
 }
 
 impl Listeners {
-    pub fn start(sender: Sender, hub: crate::events::EventHub) -> Self {
+    pub fn start(
+        sender: Sender,
+        config: crate::config::Config,
+        hub: crate::events::EventHub,
+    ) -> Self {
         let stopping = Arc::new(AtomicBool::new(false));
         let active = Arc::new(AtomicUsize::new(0));
         let mut result = Self {
@@ -67,13 +71,8 @@ impl Listeners {
             http_address: None,
             unix: false,
         };
-        if std::env::var("NC_HTTP").as_deref() != Ok("0") {
-            let port = std::env::var("NC_HTTP_PORT").unwrap_or_else(|_| "4770".into());
-            match port
-                .parse::<u16>()
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
-                .and_then(|p| TcpListener::bind(("127.0.0.1", p)))
-            {
+        if config.http_enabled {
+            match TcpListener::bind(("127.0.0.1", config.http_port)) {
                 Ok(listener) => {
                     if listener.set_nonblocking(true).is_ok() {
                         result.http = true;
@@ -113,7 +112,7 @@ impl Listeners {
                 Err(e) => eprintln!("HTTP listener unavailable: {e}"),
             }
         }
-        if std::env::var("NC_SOCKET").as_deref() != Ok("0") {
+        if config.socket_enabled {
             let preferred = std::env::var("NC_SOCKET_PATH").unwrap_or_else(|_| {
                 format!(
                     "{}/Library/Application Support/MacDesktopNotify/api.sock",
@@ -476,6 +475,23 @@ fn websocket<S: Connection>(
                 let path = match frame["op"].as_str() {
                     Some("push") => Some("/v1/push"),
                     Some("clear") => Some("/v1/clear"),
+                    // Swift guards the exec door up front: an absent `script`
+                    // gets its own error instead of the generic decode one.
+                    Some("exec") if frame.get("script").and_then(Value::as_str).is_none() => {
+                        let mut result = serde_json::Map::new();
+                        result.insert("ok".into(), Value::Bool(false));
+                        result.insert("error".into(), Value::String("缺少 script".into()));
+                        if let Some(reference) = reference {
+                            result.insert("ref".into(), reference);
+                        }
+                        if socket
+                            .send(Message::text(Value::Object(result).to_string()))
+                            .is_err()
+                        {
+                            return;
+                        }
+                        continue;
+                    }
                     Some("exec") => Some("/v1/exec"),
                     _ => None,
                 };
@@ -493,6 +509,8 @@ fn websocket<S: Connection>(
                     error(400, "未知操作", None)
                 };
                 let mut result = result.as_object().cloned().unwrap_or_default();
+                // The `field` hint is HTTP-only in Swift's WS result frames.
+                result.remove("field");
                 result.insert("type".into(), "result".into());
                 if let Some(reference) = reference {
                     result.insert("ref".into(), reference);

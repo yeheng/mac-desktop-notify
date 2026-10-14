@@ -17,6 +17,9 @@ tungstenite = { version = "0.29", default-features = false, features = ["handsha
 [target."cfg(target_os = \"macos\")".dependencies]
 objc = "0.2"
 cocoa-foundation = "0.2"
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+core-graphics = "0.24"
 
 [profile.release]
 debug = true

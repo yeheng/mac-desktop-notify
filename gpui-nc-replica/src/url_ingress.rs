@@ -14,7 +14,7 @@ pub(crate) fn parse(raw: &str) -> Result<Operation, String> {
         query.entry(key.into_owned()).or_insert(value.into_owned());
     }
     if url.host_str() == Some("clear") {
-        return Ok(Operation::Clear(api::group(
+        return Ok(Operation::Clear(api::norm_group(
             query.get("group").map(String::as_str),
         )));
     }
