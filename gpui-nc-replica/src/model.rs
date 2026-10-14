@@ -34,18 +34,61 @@ pub struct NotificationItem {
 }
 
 impl NotificationItem {
-    pub(crate) fn height(&self) -> f32 {
-        theme::banner_height(theme::body_line_estimate(
+    /// Collapsed card height (Swift's banner-quiet form): padding, header,
+    /// the summary stack, plus the optional status / progress / meta rows.
+    pub(crate) fn collapsed_height(&self) -> f32 {
+        let preview = crate::markdown_preview::preview_text(
             &self.payload.body,
-            theme::BANNER_WIDTH,
-        )) + if !self.payload.actions.is_empty() {
-            theme::ACTION_ROW_HEIGHT
+            theme::SUMMARY_LINES,
+        );
+        let lines = if preview.is_empty() {
+            0
         } else {
-            0.
-        } + if self.payload.island.is_some() {
-            theme::STATUS_ROW_HEIGHT
+            theme::body_line_estimate(&self.payload.body)
+        };
+        let mut h = theme::banner_height(lines);
+        let island = self.payload.island.as_ref();
+        if island.is_some_and(|s| s.text.is_some()) {
+            h += theme::COLLAPSED_STACK_GAP + theme::STATUS_LINE_HEIGHT;
+        }
+        if island.is_some_and(|s| s.progress.is_some()) {
+            h += theme::COLLAPSED_STACK_GAP + theme::PROGRESS_ROW_HEIGHT;
+        }
+        if self.payload.occurrences > 1 || !self.payload.tags.is_empty() {
+            h += theme::COLLAPSED_STACK_GAP + theme::META_ROW_HEIGHT;
+        }
+        h
+    }
+
+    /// Expanded card height: the header (title up to 3 lines), the markdown
+    /// body estimate, status, and the action row. Clamped to the glance
+    /// budget the stack window is sized for.
+    pub(crate) fn expanded_height(&self) -> f32 {
+        let mut h = 2.0 * theme::CARD_PAD
+            + theme::title_line_estimate(&self.payload.title) as f32 * theme::TITLE_LINE_HEIGHT
+            + theme::BLOCK_GAP;
+        let island = self.payload.island.as_ref();
+        if island.is_some_and(|s| s.progress.is_some()) {
+            h += theme::EXPANDED_GAP + theme::PROGRESS_ROW_HEIGHT;
+        }
+        if island.is_some_and(|s| s.text.is_some()) {
+            h += theme::EXPANDED_GAP + theme::STATUS_LINE_HEIGHT;
+        }
+        if !self.payload.body.trim().is_empty() {
+            h += theme::markdown_height(&self.payload.body);
+        }
+        if !self.payload.actions.is_empty() {
+            h += theme::EXPANDED_GAP + theme::ACTION_ROW_HEIGHT;
+        }
+        h.min(theme::expanded_max_height())
+    }
+
+    /// The height the card shows right now.
+    pub(crate) fn height(&self, expanded: bool) -> f32 {
+        if expanded {
+            self.expanded_height()
         } else {
-            0.
+            self.collapsed_height()
         }
     }
 }
@@ -65,6 +108,9 @@ pub struct BannerState {
     pub item: NotificationItem,
     pub phase: BannerPhase,
     pub hovered: bool,
+    /// Click-to-expand in place (Swift `tapCard`): expanding marks the
+    /// message read; a second click folds the card back up.
+    pub expanded: bool,
     /// Milliseconds left before auto-dismiss; drives the progress bar.
     pub remaining_ms: u64,
     pub duration_ms: u64,
@@ -263,6 +309,7 @@ impl Store {
                 item,
                 phase: BannerPhase::Entering,
                 hovered: false,
+                expanded: false,
                 remaining_ms: duration_ms,
                 duration_ms,
                 exit_offset: 0.,
@@ -778,6 +825,42 @@ impl Store {
         }
     }
 
+    /// Mark read without retiring the card — the deliberate open (Swift
+    /// `tapCard` expands and marks read; the card stays on screen grown).
+    pub fn mark_read_in_place(&mut self, id: u64, cx: &mut Context<Store>) {
+        let Some(notification_id) = self
+            .banners
+            .iter()
+            .find(|b| b.item.id == id)
+            .map(|b| b.item.payload.id)
+        else {
+            return;
+        };
+        self.reminders.cancel_if_matches(notification_id);
+        if let Some(entry) = self.history.iter_mut().find(|n| n.id == notification_id) {
+            entry.read = true;
+        }
+        self.commit_history();
+        cx.notify();
+    }
+
+    /// Click-to-expand (Swift `tapCard`): collapsed → expanded (marking
+    /// read), expanded → folded. Returns the new state and the height the
+    /// slot animates from/to.
+    pub fn toggle_expand(&mut self, id: u64, cx: &mut Context<Store>) -> Option<(bool, f32, f32)> {
+        let b = self.banners.iter_mut().find(|b| b.item.id == id)?;
+        let from = b.item.height(b.expanded);
+        b.expanded = !b.expanded;
+        let expanded = b.expanded;
+        let to = b.item.height(expanded);
+        if expanded {
+            self.mark_read_in_place(id, cx);
+        } else {
+            cx.notify();
+        }
+        Some((expanded, from, to))
+    }
+
     /// 现在 / N 分钟前 / N 小时前 / 昨天 / N 天前
     pub fn relative_time(item: &NotificationItem) -> String {
         format_relative_time(item.received.elapsed())
@@ -877,10 +960,11 @@ mod tests {
 
     #[test]
     fn stack_window_geometry_is_sane() {
-        // Top inset + three tallest cards + two gaps + bottom bleed.
+        // Top inset + one fully expanded card + two collapsed cards + two
+        // gaps + bottom bleed.
         let expected = theme::EDGE_TOP
-            + 3.0
-                * (theme::BANNER_HEIGHT_MAX + theme::ACTION_ROW_HEIGHT + theme::STATUS_ROW_HEIGHT)
+            + theme::expanded_max_height()
+            + 2.0 * theme::banner_height(2)
             + 2.0 * theme::STACK_GAP
             + theme::SHADOW_BLEED;
         assert_eq!(theme::stack_window_height(), expected);
@@ -889,19 +973,33 @@ mod tests {
 
     #[test]
     fn body_line_estimate_buckets() {
-        assert_eq!(theme::body_line_estimate("短消息", theme::BANNER_WIDTH), 1);
-        assert_eq!(theme::body_line_estimate("", theme::BANNER_WIDTH), 1);
-        // 40 CJK chars ≈ 520px > 278px text column (348 - pads - 38pt icon)
+        assert_eq!(theme::body_line_estimate("短消息"), 1);
+        // An empty body contributes no preview line to the height.
+        let empty = crate::api::validate(
+            &serde_json::to_vec(&serde_json::json!({"title": "t", "body": ""})).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(empty.title, "t");
+        // 40 CJK chars ≈ 520px > 274px text column (346 - pads - 30pt tile - gap)
         let long: String = "字".repeat(40);
-        assert_eq!(theme::body_line_estimate(&long, theme::BANNER_WIDTH), 2);
-        // clamped at 2
+        assert_eq!(theme::body_line_estimate(&long), 2);
+        // clamped at the summary budget
         let very_long: String = "字".repeat(400);
-        assert_eq!(
-            theme::body_line_estimate(&very_long, theme::BANNER_WIDTH),
-            2
-        );
-        assert_eq!(theme::banner_height(1), theme::BANNER_HEIGHT_MIN);
-        assert_eq!(theme::banner_height(2), theme::BANNER_HEIGHT_MAX);
+        assert_eq!(theme::body_line_estimate(&very_long), 2);
+        assert_eq!(theme::banner_height(1), 2.0 * theme::CARD_PAD + 37.0);
+        assert_eq!(theme::banner_height(2), 2.0 * theme::CARD_PAD + 55.0);
+        // The expanded form is always at least as tall as the collapsed one.
+        let n = crate::api::validate(
+            &serde_json::to_vec(&serde_json::json!({"title": "标题", "body": "短"})).unwrap(),
+        )
+        .unwrap();
+        let item = NotificationItem {
+            id: 1,
+            app: AppKind::Notify,
+            received: Instant::now(),
+            payload: n,
+        };
+        assert!(item.expanded_height() >= item.collapsed_height());
     }
 
     #[test]
@@ -932,8 +1030,10 @@ mod tests {
 
     #[test]
     fn swipe_threshold_within_card() {
-        assert!(theme::SWIPE_DISMISS_THRESHOLD < theme::BANNER_WIDTH);
-        assert!(theme::DRAG_RUBBER_BAND > 0.0);
+        const {
+            assert!(theme::SWIPE_DISMISS_THRESHOLD < theme::BANNER_WIDTH);
+            assert!(theme::DRAG_RUBBER_BAND > 0.0);
+        }
     }
 
     #[test]

@@ -9,46 +9,83 @@ use gpui_kit::*;
 use crate::model::AppKind;
 
 // ---- Metrics (px) -------------------------------------------------------
-// Measured from reference/banner-options-menu-light.jpg (banner ≈ 348×65pt,
-// radius ≈12pt, × circle 20pt centered on the corner) and
-// reference/banner-hover-states-light.jpg (stack gap ≈5pt, Options pill
-// bottom-right). See reference/NOTES.md.
+// The card's fixed geometry, pinned to the system banner — Swift
+// `ToastMetrics` (ToastStyle.swift, measured on macOS 26): 346pt wide,
+// 16pt continuous corner and padding, 13pt semibold title over a 13pt
+// regular summary, a 1pt hairline border. See reference/NOTES.md for the
+// source measurements.
 
-/// Banner card width.
-pub const BANNER_WIDTH: f32 = 348.0;
-/// Banner height with a 1-line body (text column 33pt < 38pt large icon).
-pub const BANNER_HEIGHT_MIN: f32 = 71.0;
-/// Banner height with a 2-line body.
-pub const BANNER_HEIGHT_MAX: f32 = 82.0;
-pub const ACTION_ROW_HEIGHT: f32 = 34.;
-pub const STATUS_ROW_HEIGHT: f32 = 24.;
+/// Banner card width (Swift `cardWidth`).
+pub const BANNER_WIDTH: f32 = 346.0;
 pub const CARD_RADIUS: f32 = 16.0;
-pub const CARD_PAD_X: f32 = 12.0;
-pub const CARD_PAD_Y_TOP: f32 = 7.0;
-pub const CARD_PAD_Y_BOTTOM: f32 = 8.0;
-/// Small app icon in the card header row.
-pub const APP_ICON_SM: f32 = 15.0;
-/// Large app icon on the card's right side (Big Sur+ banners and NC cards).
-pub const APP_ICON_LG: f32 = 38.0;
-/// Gap between the text column and the large app icon.
-pub const ICON_TEXT_GAP: f32 = 8.0;
-pub const HEADER_FONT_SIZE: f32 = 11.0;
+pub const CARD_PAD: f32 = 16.0;
+/// Block spacing inside an expanded card; a collapsed card packs tighter.
+pub const BLOCK_GAP: f32 = 8.0;
 pub const TITLE_FONT_SIZE: f32 = 13.0;
 pub const BODY_FONT_SIZE: f32 = 13.0;
 pub const TITLE_LINE_HEIGHT: f32 = 17.0;
-pub const BODY_LINE_HEIGHT: f32 = 16.0;
-pub const HEADER_TITLE_GAP: f32 = 3.0;
-/// Vertical gap between stacked banners.
+/// Body line box: 13pt type with Swift's `lineSpacing(2)`.
+pub const BODY_LINE_HEIGHT: f32 = 18.0;
+/// Relative time / meta / progress-label size (Swift's 10pt subtle text).
+pub const SUBTLE_FONT_SIZE: f32 = 10.0;
+pub const SUBTLE_LINE_HEIGHT: f32 = 13.0;
+/// Island status text (11pt) line box.
+pub const STATUS_LINE_HEIGHT: f32 = 14.0;
+/// Lines of plain-text summary a collapsed card shows (Swift `summaryLines`).
+pub const SUMMARY_LINES: usize = 2;
+/// HStack gap between the icon tile and the text column.
+pub const ICON_TEXT_GAP: f32 = 10.0;
+/// Header ↔ collapsed-stack gap (Swift `spacing: expanded ? gap : 2`).
+pub const COLLAPSED_GAP: f32 = 2.0;
+/// Gaps inside the collapsed stack (preview / progress / meta).
+pub const COLLAPSED_STACK_GAP: f32 = 4.0;
+/// Gaps inside the expanded stack.
+pub const EXPANDED_GAP: f32 = 10.0;
+
+// Sender tile (Swift `appIcon`).
+pub const TOAST_ICON: f32 = 30.0;
+pub const TOAST_ICON_RADIUS: f32 = 7.0;
+/// Urgency badge dot on the tile's bottom-trailing corner.
+pub const BADGE_DOT: f32 = 10.0;
+
+// Deck pile (Swift `ToastStackView`): only the newest card is whole; the
+// ones behind tuck flush against its top edge, ~7pt per layer, narrower and
+// dimmer the further back.
+pub const DECK_PEEK: f32 = 7.0;
+pub const DECK_SCALE_1: f32 = 0.94;
+pub const DECK_SCALE_2: f32 = 0.88;
+pub const DECK_SHOWN: usize = 2;
+pub const DECK_DIM_1: f32 = 0.75;
+pub const DECK_DIM_2: f32 = 0.5;
+/// Gap between fanned-out cards (Swift `spacing: piled ? 0 : 8`).
 pub const STACK_GAP: f32 = 8.0;
+
+/// Hover close (×) disc; straddles the card's top-left corner (Swift
+/// `offset(x: -5, y: -5)`), revealed with a scale 0.5 → 1 spring.
+pub const CLOSE_BUTTON_SIZE: f32 = 22.0;
+pub const CLOSE_BUTTON_OFFSET: f32 = -5.0;
+/// Hover "详情 ▾" pill at the card's bottom-right.
+pub const OPTIONS_PILL_HEIGHT: f32 = 22.0;
+
+/// Progress capsule (Swift `ProgressCapsule`).
+pub const PROGRESS_CAPSULE_HEIGHT: f32 = 4.0;
+/// The capsule row: capsule + "N%" label at 10pt.
+pub const PROGRESS_ROW_HEIGHT: f32 = 13.0;
+/// Meta row (×N tag / tags) line box.
+pub const META_ROW_HEIGHT: f32 = 14.0;
+/// Action button row height in the expanded card.
+pub const ACTION_ROW_HEIGHT: f32 = 30.0;
+/// Expanded body line clamp — a banner is a glance surface, not a document.
+pub const EXPANDED_MAX_BODY_LINES: usize = 8;
+
+/// Hover brightening of the card surface (Swift `primary.opacity(0.045)`) —
+/// the Notification Center row highlight; layout never moves.
+pub const HOVER_FILL_ALPHA: f32 = 0.045;
+
 /// Distance from the top of the visible screen area to the first banner.
 pub const EDGE_TOP: f32 = 10.0;
 /// Distance from the right screen edge to the banner's right edge.
 pub const EDGE_RIGHT: f32 = 10.0;
-/// Hover close (×) circle; centered on the card's top-left corner.
-pub const CLOSE_BUTTON_SIZE: f32 = 20.0;
-pub const CLOSE_BUTTON_OFFSET: f32 = -10.0;
-/// Hover "选项 ▾" pill at the card's bottom-right.
-pub const OPTIONS_PILL_HEIGHT: f32 = 22.0;
 /// Transparent margin around the cards so drop shadows are not clipped by
 /// the window bounds. Also the window's click-capture area, so keep modest.
 pub const SHADOW_BLEED: f32 = 30.0;
@@ -60,51 +97,107 @@ pub const EXIT_MS: u64 = 180;
 pub const DISMISS_TICK_MS: u64 = 50;
 pub const SNAP_BACK_MS: u64 = 180;
 pub const HOVER_FADE_MS: u64 = 120;
-/// Thin auto-dismiss countdown bar along the card's bottom edge.
-pub const PROGRESS_BAR_HEIGHT: f32 = 2.0;
-/// Horizontal drag distance that triggers swipe-to-dismiss.
+/// Horizontal drag distance that triggers swipe-to-dismiss (Swift: 90).
 pub const SWIPE_DISMISS_THRESHOLD: f32 = 90.0;
-/// Rubber-band allowance when dragging left (against the dismiss direction).
+/// Drag opacity floor: `max(0.25, 1 - |offset| / 320)` (Swift).
+pub const DRAG_FADE_DISTANCE: f32 = 320.0;
+pub const DRAG_MIN_OPACITY: f32 = 0.25;
+/// Rubber-band allowance when dragging against the dismiss direction.
 pub const DRAG_RUBBER_BAND: f32 = 12.0;
+/// Per-card entrance delay in a simultaneous burst.
+pub const ENTER_STAGGER_MS: u64 = 40;
 
 /// Width of the banner stack window (cards + shadow bleed).
 pub const fn stack_window_width() -> f32 {
     BANNER_WIDTH + 2.0 * SHADOW_BLEED
 }
 
-/// Height of the banner stack window; sized for a full stack of the
-/// tallest cards. Top inset is EDGE_TOP (window is pinned to the visible
-/// area's top edge), bottom gets full shadow bleed.
+/// Height of the banner stack window; sized for one fully expanded card
+/// over a full collapsed stack. Top inset is EDGE_TOP (window is pinned to
+/// the visible area's top edge), bottom gets full shadow bleed.
 pub const fn stack_window_height() -> f32 {
     EDGE_TOP
-        + MAX_VISIBLE_BANNERS as f32 * (BANNER_HEIGHT_MAX + ACTION_ROW_HEIGHT + STATUS_ROW_HEIGHT)
+        + expanded_max_height()
+        + (MAX_VISIBLE_BANNERS - 1) as f32 * banner_height(2)
         + (MAX_VISIBLE_BANNERS - 1) as f32 * STACK_GAP
         + SHADOW_BLEED
 }
 
-/// Rough line count for a body string at BODY_FONT_SIZE inside a card.
-/// CJK glyphs are ~1em wide, ASCII ~0.5em; real macOS banners grow with the
-/// body, clamped at 2 lines. The text column shares the card with the 38pt
-/// large app icon.
-pub fn body_line_estimate(body: &str, card_width: f32) -> usize {
-    let content_width = card_width - 2.0 * CARD_PAD_X - APP_ICON_LG - ICON_TEXT_GAP;
+/// Height budget of the tallest possible expanded card.
+pub const fn expanded_max_height() -> f32 {
+    2.0 * CARD_PAD
+        + 3.0 * TITLE_LINE_HEIGHT
+        + BLOCK_GAP
+        + EXPANDED_MAX_BODY_LINES as f32 * BODY_LINE_HEIGHT
+        + 2.0 * (EXPANDED_GAP + PROGRESS_ROW_HEIGHT)
+        + EXPANDED_GAP
+        + ACTION_ROW_HEIGHT
+}
+
+/// Rough line count for a body string at BODY_FONT_SIZE inside a text
+/// column of `content_width`. CJK glyphs are ~1em wide, ASCII ~0.5em.
+fn line_estimate(body: &str, content_width: f32, clamp: usize) -> usize {
     let width: f32 = body
         .chars()
         .map(|c| if c.is_ascii() { 6.8 } else { BODY_FONT_SIZE })
         .sum();
-    let lines = (width / content_width).ceil() as usize;
-    lines.clamp(1, 2)
+    let lines = (width / content_width.max(1.0)).ceil() as usize;
+    lines.clamp(1, clamp)
 }
 
-/// Card height for a body with the given number of lines.
-/// 1 line: 7+15+3+max(33, 38)+8 = 71pt (the 38pt large icon sets the
-/// floor); 2 lines: 7+15+3+49+8 = 82pt.
-pub fn banner_height(body_lines: usize) -> f32 {
-    if body_lines >= 2 {
-        BANNER_HEIGHT_MAX
-    } else {
-        BANNER_HEIGHT_MIN
+/// Collapsed summary lines for a body: the text column shares the card with
+/// the 30pt icon tile.
+pub fn body_line_estimate(body: &str) -> usize {
+    let content_width = BANNER_WIDTH - 2.0 * CARD_PAD - TOAST_ICON - ICON_TEXT_GAP;
+    line_estimate(body, content_width, SUMMARY_LINES)
+}
+
+/// Expanded header title lines: the header shares the row with the tile and
+/// the time label; the expanded form clamps at 3 (Swift `lineLimit`).
+pub fn title_line_estimate(title: &str) -> usize {
+    let content_width =
+        BANNER_WIDTH - 2.0 * CARD_PAD - TOAST_ICON - ICON_TEXT_GAP - SUBTLE_LINE_HEIGHT * 4.0;
+    let width: f32 = title
+        .chars()
+        .map(|c| if c.is_ascii() { 6.8 } else { TITLE_FONT_SIZE })
+        .sum();
+    ((width / content_width.max(1.0)).ceil() as usize).clamp(1, 3)
+}
+
+/// Height of the rendered expanded markdown body: each heading sits on its
+/// own title line, prose/list items wrap at the content width, code blocks
+/// are dropped — the same block semantics as the collapsed preview.
+pub fn markdown_height(body: &str) -> f32 {
+    let content_width = BANNER_WIDTH - 2.0 * CARD_PAD - 14.0; // bullet + gap
+    let mut h = 0.0;
+    for segment in crate::markdown_preview::segments(body) {
+        match segment {
+            crate::markdown_preview::Segment::Prose(lines) => {
+                for line in lines {
+                    h += line_estimate(&line, content_width, EXPANDED_MAX_BODY_LINES) as f32
+                        * BODY_LINE_HEIGHT;
+                }
+            }
+            crate::markdown_preview::Segment::Heading(_) => {
+                h += TITLE_LINE_HEIGHT + 4.0;
+            }
+            crate::markdown_preview::Segment::List(items) => {
+                for item in items {
+                    h += line_estimate(&item, content_width, EXPANDED_MAX_BODY_LINES) as f32
+                        * BODY_LINE_HEIGHT;
+                }
+            }
+            crate::markdown_preview::Segment::Code => {}
+        }
     }
+    h
+}
+
+/// Collapsed card height: padding + max(icon tile, header + summary stack)
+/// + the optional status/progress/meta rows.
+pub const fn banner_height(body_lines: usize) -> f32 {
+    let stack = TITLE_LINE_HEIGHT + COLLAPSED_GAP + body_lines as f32 * BODY_LINE_HEIGHT;
+    2.0 * CARD_PAD + if stack > TOAST_ICON { stack } else { TOAST_ICON }
 }
 
 // ---- Appearance ---------------------------------------------------------
@@ -212,19 +305,57 @@ pub fn card_bg(dark: bool) -> Hsla {
     }
 }
 
-pub fn card_bg_hover(dark: bool) -> Hsla {
+pub fn card_border(dark: bool) -> Hsla {
+    // Swift `ResolvedToastStyle.borderColor`: hairline light-on-dark /
+    // dark-on-light on system surfaces.
     if dark {
-        hsla(240.0 / 360.0, 0.04, 0.24, 1.0)
+        hsla(0.0, 0.0, 1.0, 0.18)
     } else {
-        hsla(240.0 / 360.0, 0.10, 1.00, 1.0)
+        hsla(0.0, 0.0, 0.0, 0.12)
     }
 }
 
-pub fn card_border(dark: bool) -> Hsla {
+/// The quiet tier under `text_secondary` (Swift `textSubtle`): relative
+/// times, summaries, meta rows.
+pub fn text_subtle(dark: bool) -> Hsla {
     if dark {
-        hsla(0.0, 0.0, 1.0, 0.10)
+        hsla(0.0, 0.0, 1.0, 0.66)
     } else {
-        hsla(0.0, 0.0, 0.0, 0.08)
+        hsla(0.0, 0.0, 0.0, 0.55)
+    }
+}
+
+/// Hover row highlight: primary at 4.5% over the surface, the Notification
+/// Center look (Swift hover overlay).
+pub fn hover_fill(dark: bool) -> Hsla {
+    if dark {
+        hsla(0.0, 0.0, 1.0, HOVER_FILL_ALPHA)
+    } else {
+        hsla(0.0, 0.0, 0.0, HOVER_FILL_ALPHA)
+    }
+}
+
+/// Urgency tints (Swift `ResolvedToastStyle` levels); the critical red is
+/// the only one the card paints with — low goes secondary, normal takes the
+/// sender tile's brand color.
+pub fn level_error() -> Hsla {
+    rgb(0xDF6E7B).into()
+}
+
+/// Deck edge dimming by depth (1 = directly behind the front card).
+pub fn deck_dim(depth: usize) -> f32 {
+    if depth == 1 {
+        DECK_DIM_1
+    } else {
+        DECK_DIM_2
+    }
+}
+
+pub fn deck_scale(depth: usize) -> f32 {
+    if depth == 1 {
+        DECK_SCALE_1
+    } else {
+        DECK_SCALE_2
     }
 }
 
@@ -259,6 +390,11 @@ pub fn close_glyph(dark: bool) -> Hsla {
     } else {
         hsla(0.0, 0.0, 0.0, 0.60)
     }
+}
+
+/// The close disc's small grounded shadow (Swift: black 18%, radius 2, y 1).
+pub fn close_shadow(_dark: bool) -> Vec<BoxShadow> {
+    vec![BoxShadow::new(px(0.0), px(1.0), hsla(0.0, 0.0, 0.0, 0.18)).blur_radius(px(2.0))]
 }
 
 pub fn shadow_color(dark: bool) -> Hsla {

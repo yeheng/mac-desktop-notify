@@ -120,6 +120,17 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
     /// filters anything - grouping is `group`'s job, tags only label.
     /// Optional so history written before this field existed still decodes.
     var tags: [String]
+    /// Per-message override of the system-notification decision (`native` on
+    /// the push): `true` forces the mirror on, `false` forces it off, `nil`
+    /// follows `AppSettings.nativeNotificationMode`.
+    ///
+    /// It only decides the *extra* system notification - never whether the
+    /// card is shown. Combining `native: true` with a silenced app is how a
+    /// sender says "this one belongs in the notification center, and nothing
+    /// on my screen".
+    ///
+    /// Optional so history written before this field existed still decodes.
+    var native: Bool?
 
     init(
         id: UUID = UUID(),
@@ -134,7 +145,8 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
         island: StatusLine? = nil,
         occurrences: Int = 1,
         clickURL: URL? = nil,
-        tags: [String] = []
+        tags: [String] = [],
+        native: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -149,6 +161,7 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
         self.occurrences = occurrences
         self.clickURL = clickURL
         self.tags = tags
+        self.native = native
     }
 
     /// Lenient decoding, on the `NotificationAction` precedent: the snapshot is
@@ -173,6 +186,7 @@ struct CardPayload: Identifiable, Sendable, Equatable, Codable {
         occurrences = try container.decodeIfPresent(Int.self, forKey: .occurrences) ?? 1
         clickURL = try container.decodeIfPresent(URL.self, forKey: .clickURL)
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        native = try container.decodeIfPresent(Bool.self, forKey: .native)
     }
 
     /// A non-empty trimmed group, or `nil`. Blank groups never collapse anything.

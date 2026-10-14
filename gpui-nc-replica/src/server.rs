@@ -335,58 +335,6 @@ fn write_response(writer: &mut impl Write, (code, body): (u16, Value)) -> io::Re
     write!(writer,"HTTP/1.1 {code} {reason}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len())?;
     writer.write_all(&body)
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn accepts_fragmented_body() {
-        struct Fragments(&'static [u8]);
-        impl Read for Fragments {
-            fn read(&mut self, b: &mut [u8]) -> io::Result<usize> {
-                if self.0.is_empty() {
-                    return Ok(0);
-                }
-                b[0] = self.0[0];
-                self.0 = &self.0[1..];
-                Ok(1)
-            }
-        }
-        let r = read_request(&mut Fragments(
-            b"POST /v1/push HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}",
-        ))
-        .unwrap();
-        assert_eq!(r.body, b"{}");
-    }
-    #[test]
-    fn rejects_ambiguous_framing() {
-        for raw in [
-            "POST / HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nx",
-            "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n",
-            "POST / HTTP/1.1\r\nContent-Length: 1048577\r\n\r\n",
-        ] {
-            assert!(read_request(&mut raw.as_bytes()).is_err());
-        }
-    }
-    #[test]
-    fn socket_never_unlinks_live_listener_or_file() {
-        let path = std::env::temp_dir().join(format!("nc-{}.sock", uuid::Uuid::new_v4()));
-        std::fs::write(&path, b"keep").unwrap();
-        assert!(bind_unix(&path).is_err());
-        assert_eq!(std::fs::read(&path).unwrap(), b"keep");
-        std::fs::remove_file(&path).unwrap();
-        let listener = bind_unix(&path).unwrap();
-        assert!(bind_unix(&path).is_err());
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        drop(listener);
-        let listener = bind_unix(&path).unwrap();
-        drop(listener);
-        std::fs::remove_file(&path).unwrap();
-    }
-}
-
 fn call(mut sender: Sender, request: Request) -> (u16, Value) {
     let (reply, receive) = oneshot::channel();
     if futures::executor::block_on(sender.send(Envelope { request, reply })).is_err() {
@@ -394,6 +342,8 @@ fn call(mut sender: Sender, request: Request) -> (u16, Value) {
     }
     futures::executor::block_on(receive).unwrap_or_else(|_| error(503, "服务已停止", None))
 }
+
+
 fn websocket<S: Connection>(
     mut stream: S,
     request: Request,
@@ -544,5 +494,57 @@ fn websocket<S: Connection>(
             }
             Err(_) => return,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn accepts_fragmented_body() {
+        struct Fragments(&'static [u8]);
+        impl Read for Fragments {
+            fn read(&mut self, b: &mut [u8]) -> io::Result<usize> {
+                if self.0.is_empty() {
+                    return Ok(0);
+                }
+                b[0] = self.0[0];
+                self.0 = &self.0[1..];
+                Ok(1)
+            }
+        }
+        let r = read_request(&mut Fragments(
+            b"POST /v1/push HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}",
+        ))
+        .unwrap();
+        assert_eq!(r.body, b"{}");
+    }
+    #[test]
+    fn rejects_ambiguous_framing() {
+        for raw in [
+            "POST / HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nx",
+            "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n",
+            "POST / HTTP/1.1\r\nContent-Length: 1048577\r\n\r\n",
+        ] {
+            assert!(read_request(&mut raw.as_bytes()).is_err());
+        }
+    }
+    #[test]
+    fn socket_never_unlinks_live_listener_or_file() {
+        let path = std::env::temp_dir().join(format!("nc-{}.sock", uuid::Uuid::new_v4()));
+        std::fs::write(&path, b"keep").unwrap();
+        assert!(bind_unix(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"keep");
+        std::fs::remove_file(&path).unwrap();
+        let listener = bind_unix(&path).unwrap();
+        assert!(bind_unix(&path).is_err());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        drop(listener);
+        let listener = bind_unix(&path).unwrap();
+        drop(listener);
+        std::fs::remove_file(&path).unwrap();
     }
 }

@@ -23,13 +23,21 @@ enum NotificationIngress {
     /// Sound is not here on purpose: the manager fires `soundPlayer` inside
     /// `push`, exactly when a message turns `.displayed`, so no door can sound
     /// a withheld message or stay silent about a shown one.
+    ///
+    /// The system-notification mirror sits here for the same reason the script
+    /// backfill does: it is a step every door must take, and a door that
+    /// forgets it produces a message that is stored but unreachable. The
+    /// mirror reads the outcome, so it can tell "on screen" from "stored
+    /// only" without a door telling it.
     @discardableResult
     static func deliver(
         _ notification: CardPayload,
         to manager: NotificationManager = .shared,
-        runner: ScriptRunner = .shared
+        runner: ScriptRunner = .shared,
+        notifier: NativeDelivering = NativeNotifier.shared
     ) -> PushOutcome {
         let outcome = manager.push(notification)
+        notifier.mirror(notification, outcome: outcome, suppressed: manager.displaySuppressed)
         if notification.script != nil {
             Task { await runner.backfill(notification: notification) }
         }

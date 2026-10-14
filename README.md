@@ -84,7 +84,7 @@ open 'notch-notify://push?title=构建完成&body=项目编译成功'
 || `script` | `string` | ❌ | _(无)_ | JSC 脚本名 `[A-Za-z0-9_-]{1,64}`，推送时执行并回填字段；带 `script` 时 `title` 可省（见[脚本](#脚本)） |
 || `tags` | `string` | ❌ | _(无)_ | 标签，逗号分隔（`tags=ci,prod`）；最多 8 个，每个 trim 后 ≤24 字符，大小写不敏感去重。只用于展示与历史搜索 |
 
-`blocks` 与 `island`（状态行）是结构化字段，只有本地 API 的 JSON 体能携带：见 [docs/api.md §3](docs/api.md#3-推送字段参考)。
+`blocks` 与 `island`（状态行）是结构化字段，只有本地 API 的 JSON 体能携带：见 [docs/api.md §3](docs/api.md#3-推送字段参考)。`native`（覆盖系统通知档位）同理，URL Scheme 不携带该字段。
 
 #### 编码与转义（重要）
 
@@ -312,6 +312,8 @@ open 'notch-notify://clear?group=ci-build'
 || `POST` | `/v1/push` | 推送通知，同步返回 `outcome` 与 `id`（URL Scheme 做不到） |
 || `POST` | `/v1/clear` | 清除通知；body 缺省或为空 = 清空全部，`{"group":"ci"}` 只清该分组 |
 || `POST` | `/v1/exec` | 手动执行脚本，同步等结果 |
+|| `POST` | `/v1/silence` | 静默；body 缺省或为空 = 静默 1 小时，`{"minutes":30}` 指定分钟，`{"minutes":0}` 取消 |
+|| `DELETE` | `/v1/silence` | 取消静默 |
 || `GET` | `/v1/history?limit=20` | 最近历史，默认 20 条、上限 50 条，含已读标记与未读数 |
 || `GET` | `/v1/status` | 未读数、历史条数、静默状态与各监听器状态 |
 
@@ -328,7 +330,7 @@ curl http://127.0.0.1:4770/v1/push \
 # → {"outcome":"displayed","id":"…"}
 ```
 
-WebSocket 连上先收 `hello`（带当前未读数），随后实时推送 `ack`（审批回执）与 `unreadCount`（未读数变化）——磁盘轮询可以退役了。同一连接也可直接发 `push` / `clear` / `exec` 命令，`ref` 关联请求与结果。
+WebSocket 连上先收 `hello`（带当前未读数），随后实时推送 `ack`（审批回执）与 `unreadCount`（未读数变化）——磁盘轮询可以退役了。同一连接也可直接发 `push` / `clear` / `exec` / `silence` 命令，`ref` 关联请求与结果。
 
 仅绑定本机地址并不足以挡住浏览器：DNS rebinding 能把恶意域名解析到 127.0.0.1（Host 头是唯一还写着预期主机的东西）。因此每个请求都校验 Host，WebSocket 升级时额外校验 Origin，两者只有本机取值才放行，其余返回 403。
 
@@ -570,6 +572,29 @@ Toast 卡片默认与系统横幅同源：毛玻璃材质、13pt 字体阶梯、
 
 授权采用**即时请求**：第一条需要补发的消息出现时才弹出系统授权对话框，此时用户有上下文；被拒绝后设置页会给出可见提示与跳转入口，而不是让开关停在一个不生效的 ON 上。
 
+### 脚本化控制
+
+此前这两件事只能点菜单栏，现在都有接口了：
+
+```bash
+SOCK="$HOME/Library/Application Support/MacDesktopNotify/api.sock"
+
+# 静默 30 分钟：所有消息只进历史（可再取消）
+curl --unix-socket "$SOCK" http://127.0.0.1/v1/silence -d '{"minutes":30}'
+curl -X DELETE --unix-socket "$SOCK" http://127.0.0.1/v1/silence
+
+# 只进通知中心，屏幕上什么都不弹
+curl --unix-socket "$SOCK" http://127.0.0.1/v1/silence -d '{"minutes":30}'
+curl --unix-socket "$SOCK" http://127.0.0.1/v1/push \
+  -d '{"title":"夜间批量任务完成","native":true}'
+
+# 单条豁免：即使全局设为「关闭」也要进系统通知
+curl --unix-socket "$SOCK" http://127.0.0.1/v1/push \
+  -d '{"title":"发布完成","native":true}'
+```
+
+`native` 是三态的：缺省跟随全局设置，`true` 强制补发，`false` 强制不补发，类型错误则回落为缺省（丢弃该值而不丢消息）。它**只决定额外那条系统通知**，不改变卡片是否显示，也不改变发声次数——卡片在屏时系统通知保持静默。完整规则见 [docs/api.md §3.6](docs/api.md)。
+
 > **已知限制**：应用未运行时（进程未启动）推送本身就无法到达，系统通知无从补发；`auto` 档无法感知专注模式（Focus）——这是刻意不探测私有状态的取舍，活在专注模式里的用户应选「每条都发」并接受重复。
 
 ---
@@ -577,7 +602,7 @@ Toast 卡片默认与系统横幅同源：毛玻璃材质、13pt 字体阶梯、
 ## 项目结构
 
 ```
-Sources/MacDesktopNotify/                       # 10457 行 · 60 个 Swift 文件
+Sources/MacDesktopNotify/                       # 10615 行 · 60 个 Swift 文件
 ├── main.swift                          # 入口
 ├── AppDelegate.swift                   # 应用代理：装配单例、URL Scheme 入口、菜单栏、快捷键、推送诊断
 ├── AppSettings.swift                   # 类型化设置与持久化（@Observable）、提醒档位、离开时行为枚举
@@ -639,7 +664,7 @@ Sources/MacDesktopNotify/                       # 10457 行 · 60 个 Swift 文�
     ├── MarkdownPreview.swift            # Markdown 拍平为纯文本摘要（收起态与历史行共用）
     └── ScreenProbe.swift                # 全屏判定（纯谓词，可测）+ NSScreen.displayID
 
-Tests/MacDesktopNotifyTests/            # 40 个测试文件（SettingsIsolatedTestCase 提供全量 defaults 隔离）
+Tests/MacDesktopNotifyTests/            # 41 个测试文件（SettingsIsolatedTestCase 提供全量 defaults 隔离）
 ```
 
 ---

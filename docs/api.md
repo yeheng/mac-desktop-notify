@@ -95,6 +95,7 @@ NotchNotify 对外提供三条通道：**Unix Socket**、**HTTP**、**WebSocket*
 | `clickUrl` | string | ❌ | — | 点击通知卡打开的链接；必须带 scheme（自定义 scheme 也算），非法值**丢弃链接**不影响消息。点击行为与操作按钮同路：打开 URL、标已读、退役卡片 |
 | `tags` | array | ❌ | `[]` | 标签，最多 8 个，每个 trim 后 ≤24 字符；大小写不敏感去重；超出截断，坏条目丢弃。**只用于展示与历史搜索**，不参与分组（分组用 `group`）。URL Scheme 用 `tags=a,b,c` 逗号分隔 |
 | `script` | string | ❌ | — | JSC 脚本名，`[A-Za-z0-9_-]{1,64}`；非法 → **400**。见 [3.4](#34-script脚本回填) |
+| `native` | boolean \| number | ❌ | 跟随应用设置 | 是否**额外**补发一条系统通知，见 [3.6](#36-native系统通知覆盖) |
 
 ### 3.1 `blocks`：结构化正文
 
@@ -192,6 +193,31 @@ curl http://127.0.0.1:4770/v1/push -d '{
 - 端点必须 http/https；其他 scheme（`file:` 等）的动作在入口即被丢弃。
 - 点击即退役卡片、标记已读，与 URL/script 按钮同一条路径。
 
+### 3.6 `native`：系统通知覆盖
+
+消息除了自定义卡片还可以进入 macOS 通知中心，档位在「设置 → 通知 → 系统通知中心」。`native` 让**单条消息**覆盖这个全局档位：
+
+| 取值 | 行为 |
+|---|---|
+| 缺省 | 跟随应用设置（默认「卡片不可见时」：仅静默、锁屏或被全屏应用压制时补发） |
+| `true` / `1` | 强制补发系统通知，不论全局档位与卡片是否在屏 |
+| `false` / `0` | 强制不补发，不论全局档位 |
+| 其他类型 | **回落为缺省**（值被丢弃，消息照常送达） |
+
+```bash
+# 这条只进通知中心，不要在屏幕上弹卡片
+curl --unix-socket "$HOME/Library/Application Support/MacDesktopNotify/api.sock" \
+  http://127.0.0.1/v1/silence -d '{"minutes":30}'
+curl --unix-socket "$HOME/Library/Application Support/MacDesktopNotify/api.sock" \
+  http://127.0.0.1/v1/push -d '{"title":"夜间批量任务完成","native":true}'
+```
+
+三条边界，说清楚比藏着好：
+
+- **只管「额外」的那条通知**，不管卡片。`native:true` 不会让被静默的消息弹出卡片——想要「只进通知中心」，把它和 `/v1/silence` 一起用（如上例）。
+- **不改变发声次数。** 卡片在屏时系统通知保持静默（`声音只响一次`），否则强制补发会变成两条消息响两次。
+- **需已授权。** 用户拒绝过系统通知权限时，补发静默失败；「设置 → 通知」会显示该状态。
+
 ---
 
 ## 4. HTTP
@@ -203,6 +229,8 @@ curl http://127.0.0.1:4770/v1/push -d '{
 | `POST` | `/v1/push` | 推送通知，**同步返回结果**（URL Scheme 做不到） |
 | `POST` | `/v1/clear` | 清除通知；body 缺省或为空 = 清空全部，`{"group":"ci"}` 只清该分组 |
 | `POST` | `/v1/exec` | 手动执行脚本，同步等结果 |
+| `POST` | `/v1/silence` | 静默；body 缺省或为空 = 静默 1 小时，`{"minutes":30}` = 指定分钟，`{"minutes":0}` = 取消 |
+| `DELETE` | `/v1/silence` | 取消静默 |
 | `GET` | `/v1/history?limit=20` | 最近历史，默认 20、上限 50，含已读标记与未读数 |
 | `GET` | `/v1/status` | 未读数、历史条数、静默状态、各监听器状态 |
 
@@ -297,7 +325,36 @@ curl http://127.0.0.1:4770/v1/exec \
 
 `logs` 是脚本 `console.log` 的收集结果，上界 **200 行 × 2000 字符**，超出部分追加一条截断标记（`ScriptRunner.swift:9-10,271-274`）。并发脚本超过 4 条（或僵尸线程达到 8 条）时新任务返回 `busy`，不会排队等待。
 
-### 4.5 `GET /v1/history`
+### 4.5 `POST /v1/silence` / `DELETE /v1/silence`
+
+把消息全部拦下、只进历史（静默中）或全部放行——菜单栏那一项此前只能点。
+
+```bash
+# 静默 1 小时（与菜单栏「静默 1 小时」同一个值）
+curl --unix-socket "$HOME/Library/Application Support/MacDesktopNotify/api.sock" \
+  http://127.0.0.1/v1/silence -d ''
+# 静默 30 分钟
+curl ... http://127.0.0.1/v1/silence -d '{"minutes":30}'
+# 取消
+curl -X DELETE ... http://127.0.0.1/v1/silence
+```
+
+```json
+{"ok": true, "silenced": true, "until": 1789999999.17}
+{"ok": true, "silenced": false, "until": null}
+```
+
+| 规则 | 说明 |
+|---|---|
+| body 缺省或为空 | 等价于 `{"minutes":60}` |
+| `minutes <= 0` | 取消静默（与 `DELETE` 等价，一条端点即可撤销） |
+| 上限 | 钳制到 **1440 分钟**（1 天）；不报错 |
+| body 不是合法 JSON | **400**，且**不改变静默状态**（绝不会把一次坏请求读成「取消静默」） |
+| `until` | Unix 秒（Double），取消时为 `null` |
+
+静默期间所有消息（含 `critical`）只进历史，`outcome` 仍为 `withheld`；配合推送的 `native:true` 可实现「只进通知中心，屏幕上什么都不弹」。菜单栏项的标题随状态自动翻转（每次打开菜单时重新求值）。
+
+### 4.6 `GET /v1/history`
 
 ```bash
 curl 'http://127.0.0.1:4770/v1/history?limit=5'
@@ -318,7 +375,7 @@ curl 'http://127.0.0.1:4770/v1/history?limit=5'
 - `timestamp` 是 **Unix 秒**（Double），不是 Foundation 参考日期。
 - `actions` 是存储后的完整 action 对象（含 `wantsComment`、`args`），不是原始 DTO。
 
-### 4.6 `GET /v1/status`
+### 4.7 `GET /v1/status`
 
 ```json
 {"unreadCount":3,"historyCount":12,"silenced":false,"pendingCount":0,
@@ -327,7 +384,7 @@ curl 'http://127.0.0.1:4770/v1/history?limit=5'
 
 `pendingCount` **恒为 0**，是保留字段。v4 已删除待显示队列，但为不破坏既有客户端而保留。
 
-### 4.7 Unix Socket
+### 4.8 Unix Socket
 
 ```bash
 # 带引号的空格路径在 curl 8.7+ 可直接使用；个别旧版 curl 的 --unix-socket
@@ -399,13 +456,22 @@ socket 文件在 app 启动时创建，**退出时删除**（`applicationWillTer
 
 {"op":"exec","ref":"r3","script":"ci-status","input":{"run":42},"timeoutMs":1000}
 {"type":"result","ref":"r3","ok":true,"result":{"state":"passed"},"logs":["…"]}
+
+{"op":"silence","ref":"r4","minutes":30}
+{"type":"result","ref":"r4","ok":true,"result":{"silenced":true,"until":1789999999.17}}
+
+{"op":"silence","ref":"r5","minutes":0}
+{"type":"result","ref":"r5","ok":true,"result":{"silenced":false,"until":null}}
 ```
 
 | `op` | 载荷字段 |
 |------|---------|
-| `push` | 与 HTTP `POST /v1/push` 的 body **完全相同**（见 [第 3 节](#3-推送字段参考)），字段平铺在帧顶层 |
+| `push` | 与 HTTP `POST /v1/push` 的 body **完全相同**（见 [第 3 节](#3-推送字段参考)，含 `native`），字段平铺在帧顶层 |
 | `clear` | `group`（可选；缺失或无法归一化 = 清空全部） |
 | `exec` | `script`（必填）、`input`、`timeoutMs` |
+| `silence` | `minutes`（可选，缺省 60；`<= 0` 取消）。与 HTTP 端点走同一条管道与同一个钳制 |
+
+> `silence` 的结果放在 `result` 而不是 `outcome`/`id`：它是唯一不需要返回消息 id 的命令，socket 客户端不必再轮询 `/v1/status` 才知道自己刚要来了什么。
 
 **结果帧形状**：
 

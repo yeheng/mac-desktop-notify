@@ -91,6 +91,11 @@ final class AppSettings {
     }
 
     var soundEnabled: Bool { didSet { save(soundEnabled, key: Keys.soundEnabled) } }
+    /// How a message also reaches the macOS notification center. See
+    /// `NativeNotificationMode` for what each option costs.
+    var nativeNotificationMode: NativeNotificationMode {
+        didSet { save(nativeNotificationMode.rawValue, key: Keys.nativeNotificationMode) }
+    }
     var launchAtLogin: Bool { didSet { save(launchAtLogin, key: Keys.launchAtLogin) } }
     var persistHistory: Bool { didSet { save(persistHistory, key: Keys.persistHistory) } }
     var quietMode: QuietMode { didSet { save(quietMode.rawValue, key: Keys.quietMode) } }
@@ -153,6 +158,9 @@ final class AppSettings {
         toastMotionExitMs = defaults.object(forKey: Keys.toastMotionExitMs.rawValue) as? Double ?? 260
         toastMotionDamping = defaults.object(forKey: Keys.toastMotionDamping.rawValue) as? Double
         soundEnabled = defaults.object(forKey: Keys.soundEnabled.rawValue) as? Bool ?? true
+        nativeNotificationMode = NativeNotificationMode(
+            rawValue: defaults.string(forKey: Keys.nativeNotificationMode.rawValue) ?? ""
+        ) ?? .auto
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin.rawValue) as? Bool ?? false
         persistHistory = defaults.object(forKey: Keys.persistHistory.rawValue) as? Bool ?? true
         quietMode = QuietMode(rawValue: defaults.string(forKey: Keys.quietMode.rawValue) ?? "") ?? .off
@@ -201,6 +209,7 @@ final class AppSettings {
         toastMotionExitMs = 260
         toastMotionDamping = nil
         soundEnabled = true
+        nativeNotificationMode = .auto
         launchAtLogin = false
         persistHistory = true
         quietMode = .off
@@ -306,6 +315,7 @@ final class AppSettings {
         case notchWidthOffset = "island.notchWidthOffset"
         case notchHeightOffset = "island.notchHeightOffset"
         case soundEnabled = "island.soundEnabled"
+        case nativeNotificationMode = "native.notificationMode"
         case launchAtLogin = "island.launchAtLogin"
         // Retired with the ⌘-family global shortcuts (they conflicted with
         // Finder and every app's own menus; ⌃⌥N covers the same ground with

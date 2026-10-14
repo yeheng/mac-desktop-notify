@@ -45,11 +45,16 @@ final class APIRouter: Sendable {
             return await clear(request)
         case ("POST", "/v1/exec"):
             return await execScript(request)
+        case ("POST", "/v1/silence"):
+            return await silence(request)
+        case ("DELETE", "/v1/silence"):
+            return await resumeSilence()
         case ("GET", "/v1/history"):
             return await history(request)
         case ("GET", "/v1/status"):
             return await status()
-        case (_, "/v1/push"), (_, "/v1/clear"), (_, "/v1/exec"), (_, "/v1/history"), (_, "/v1/status"):
+        case (_, "/v1/push"), (_, "/v1/clear"), (_, "/v1/exec"),
+             (_, "/v1/silence"), (_, "/v1/history"), (_, "/v1/status"):
             return .error(status: 405, reason: "方法不允许", field: nil)
         default:
             return .error(status: 404, reason: "未知路径", field: nil)
@@ -74,6 +79,7 @@ final class APIRouter: Sendable {
         let script: String?
         let clickUrl: String?
         let tags: [PushValidator.TagDTO]?
+        let native: PushValidator.NativeDTO?
     }
 
     private enum PushResult {
@@ -92,7 +98,7 @@ final class APIRouter: Sendable {
             title: payload.title ?? "", body: bodyText, urgencyRaw: payload.urgency,
             timeout: payload.timeout, group: payload.group, actions: actions,
             script: payload.script, island: PushValidator.normalizedIsland(payload.island),
-            clickUrl: payload.clickUrl, tags: tags
+            clickUrl: payload.clickUrl, tags: tags, native: payload.native?.value
         ) {
         case .success(let notification):
             // Only jump to MainActor when calling manager.
@@ -134,6 +140,7 @@ final class APIRouter: Sendable {
         let script: String?
         let clickUrl: String?
         let tags: [PushValidator.TagDTO]?
+        let native: PushValidator.NativeDTO?
     }
 
     private struct PushResponse: Codable {
@@ -154,7 +161,7 @@ final class APIRouter: Sendable {
         let payload = PushPayload(
             title: dto.title, body: dto.body, urgency: dto.urgency, timeout: dto.timeout,
             group: dto.group, actions: dto.actions, blocks: dto.blocks, island: dto.island,
-            script: dto.script, clickUrl: dto.clickUrl, tags: dto.tags)
+            script: dto.script, clickUrl: dto.clickUrl, tags: dto.tags, native: dto.native)
         switch await performPush(payload) {
         case .delivered(let outcome, let id):
             return .ok(PushResponse(outcome: outcome.label, id: id.uuidString))
@@ -191,6 +198,77 @@ final class APIRouter: Sendable {
     }
     private struct ClearDTO: Decodable {
         let group: String?
+    }
+
+    // MARK: - Silence
+
+    /// The silence window the sender asked for. Absent means the same thing
+    /// the menu bar item does: one hour. `minutes <= 0` cancels instead, so a
+    /// caller holding the deadline it was given can undo it with the same
+    /// endpoint rather than having to learn a second verb.
+    static let defaultSilenceMinutes = 60
+    static let maxSilenceMinutes = 1440
+
+    private struct SilenceDTO: Decodable {
+        let minutes: Int?
+    }
+
+    private struct SilenceResponse: Codable {
+        let ok: Bool
+        let silenced: Bool
+        /// Unix epoch seconds, matching `HistoryItemDTO.timestamp` and the ack
+        /// receipt's `decidedAt`: `Date` itself would serialize as Foundation's
+        /// reference-date seconds, which no client expects.
+        let until: Double?
+    }
+
+    /// What a resolved silence request means: a deadline to set, or nothing
+    /// to do. Pure, so the clamp is testable without a manager.
+    enum SilenceRequest: Equatable {
+        case silence(minutes: Int)
+        case resume
+    }
+
+    static func resolveSilence(minutes raw: Int?) -> SilenceRequest {
+        let minutes = raw ?? defaultSilenceMinutes
+        guard minutes > 0 else { return .resume }
+        return .silence(minutes: min(minutes, maxSilenceMinutes))
+    }
+
+    /// 静默开关的脚本入口：菜单栏那一项在此之前只能点。
+    ///
+    /// It is the same `silence`/`resumeFromSilence` the menu item calls, so the
+    /// menu's title follows automatically — `menuNeedsUpdate` re-derives it on
+    /// every open rather than trusting the last local toggle.
+    private func silence(_ request: APIRequest) async -> APIResponse {
+        // An absent or empty body means "one hour", the same default the menu
+        // item uses. A present body must parse: garbage is a 400, never a
+        // silent resume (the `clear` endpoint's rule).
+        var minutes: Int?
+        if let body = request.body, !body.isEmpty {
+            guard let dto = try? JSONDecoder().decode(SilenceDTO.self, from: body) else {
+                return .error(status: 400, reason: "请求体不是合法 JSON", field: nil)
+            }
+            minutes = dto.minutes
+        }
+
+        switch Self.resolveSilence(minutes: minutes) {
+        case .resume:
+            return await resumeSilence()
+        case .silence(let value):
+            let deadline = Date().addingTimeInterval(TimeInterval(value * 60))
+            return await MainActor.run {
+                manager.silence(until: deadline)
+                return .ok(SilenceResponse(ok: true, silenced: true, until: deadline.timeIntervalSince1970))
+            }
+        }
+    }
+
+    private func resumeSilence() async -> APIResponse {
+        await MainActor.run {
+            manager.resumeFromSilence()
+            return .ok(SilenceResponse(ok: true, silenced: false, until: nil))
+        }
     }
 
     private func clear(_ request: APIRequest) async -> APIResponse {
@@ -276,8 +354,10 @@ final class APIRouter: Sendable {
         let script: String?
         let clickUrl: String?
         let tags: [PushValidator.TagDTO]?
+        let native: PushValidator.NativeDTO?
         let input: ScriptValue?
         let timeoutMs: Int?
+        let minutes: Int?
     }
 
     private struct WSResultFrame: Encodable {
@@ -317,7 +397,7 @@ final class APIRouter: Sendable {
             let payload = PushPayload(
                 title: dto.title, body: dto.body, urgency: dto.urgency, timeout: dto.timeout,
                 group: dto.group, actions: dto.actions, blocks: dto.blocks, island: dto.island,
-                script: dto.script, clickUrl: dto.clickUrl, tags: dto.tags)
+                script: dto.script, clickUrl: dto.clickUrl, tags: dto.tags, native: dto.native)
             switch await performPush(payload) {
             case .delivered(let outcome, let id):
                 return encodeFrame(WSResultFrame(
@@ -329,6 +409,28 @@ final class APIRouter: Sendable {
             case .rejected(let rejection):
                 return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: rejection.description))
             }
+        case "silence":
+            // One silence pipeline with the HTTP door: the same clamp, the
+            // same "an unparsable body never silently resumes" rule. The
+            // result frame carries the resulting state so a socket client does
+            // not have to poll `/v1/status` to learn what it just asked for.
+            let request: APIRequest
+            if dto.minutes == nil {
+                request = APIRequest(method: "POST", path: "/v1/silence", query: [:], body: nil)
+            } else {
+                let body = try? JSONSerialization.data(withJSONObject: ["minutes": dto.minutes!])
+                request = APIRequest(method: "POST", path: "/v1/silence", query: [:], body: body)
+            }
+            let response = await silence(request)
+            if response.status == 200, let payload = try? JSONDecoder().decode(SilenceResponse.self, from: response.body) {
+                return encodeFrame(WSResultFrame(
+                    ref: dto.ref, ok: true,
+                    result: .object(["silenced": .bool(payload.silenced),
+                                     "until": payload.until.map { .number($0) } ?? .null])
+                ), ref: dto.ref)
+            }
+            let reason = String(data: response.body, encoding: .utf8) ?? "静默请求失败"
+            return encodeFrame(WSResultFrame(ref: dto.ref, ok: false, error: reason))
         case "clear":
             // One clear pipeline with the HTTP door: an unnormalizable group
             // means "clear everything"; a wrong-typed group failed the frame
@@ -422,6 +524,10 @@ struct HistoryItemDTO: Codable {
     let group: String?
     let tags: [String]
     let read: Bool
+    /// Tri-state, like the push field: absent from the JSON when the message
+    /// never carried one, so a client can tell "follow the app setting" from
+    /// an explicit `false`.
+    let native: Bool?
 
     init(item: CardPayload, read: Bool) {
         self.id = item.id
@@ -434,5 +540,6 @@ struct HistoryItemDTO: Codable {
         self.actions = item.actions
         self.group = item.group
         self.read = read
+        self.native = item.native
     }
 }

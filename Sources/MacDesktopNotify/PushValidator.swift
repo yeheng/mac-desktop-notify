@@ -57,6 +57,10 @@ enum PushValidator {
         var actions: [NotificationAction]
         var clickURL: URL?
         var tags: [String]
+        /// Per-message override of the system-notification decision. Kept
+        /// tri-state on purpose: `nil` means "follow the app setting", which is
+        /// a different answer from either `true` or `false`.
+        var native: Bool?
     }
 
     /// The one normalization of sender-controlled fields.
@@ -75,7 +79,8 @@ enum PushValidator {
         group: String?,
         actions: [NotificationAction],
         clickUrl: String? = nil,
-        tags: [String] = []
+        tags: [String] = [],
+        native: Bool? = nil
     ) -> Fields {
         var trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedTitle.count > maxTitleLength {
@@ -89,7 +94,8 @@ enum PushValidator {
             group: normalizedGroup(group),
             actions: normalizedActions(actions),
             clickURL: normalizedClickURL(clickUrl),
-            tags: normalizedTags(tags)
+            tags: normalizedTags(tags),
+            native: native
         )
     }
 
@@ -189,7 +195,25 @@ enum PushValidator {
         }
     }
 
-    /// TagDTO → [String]. The tolerant entries the decoder kept become the
+    /// `native` as the JSON ingresses decode it. Tolerant on the `TagDTO`
+/// precedent: a wrongly-typed value becomes nil — which means "follow the app
+/// setting" — rather than failing the whole push. `1`/`0` decode like
+/// `ActionDTO.input` does, since the URL query habit is already established.
+struct NativeDTO: Decodable {
+    let value: Bool?
+
+    init(from decoder: Decoder) throws {
+        if let flag = try? Bool(from: decoder) {
+            value = flag
+        } else if let number = try? Int(from: decoder) {
+            value = number != 0
+        } else {
+            value = nil
+        }
+    }
+}
+
+/// TagDTO → [String]. The tolerant entries the decoder kept become the
     /// strings the model stores; nil entries (wrongly-typed) are dropped here.
     static func tags(from dtos: [TagDTO]) -> [String] {
         dtos.compactMap(\.value)
@@ -344,7 +368,8 @@ enum PushValidator {
         script: String? = nil,
         island: StatusLine? = nil,
         clickUrl: String? = nil,
-        tags: [String] = []
+        tags: [String] = [],
+        native: Bool? = nil
     ) -> Result<CardPayload, PushRejection> {
         var rawTitle = title
         if let script {
@@ -359,7 +384,7 @@ enum PushValidator {
         let fields = normalize(
             title: rawTitle, body: body, urgencyRaw: urgencyRaw,
             timeout: timeout, group: group, actions: actions, clickUrl: clickUrl,
-            tags: tags
+            tags: tags, native: native
         )
         guard !fields.title.isEmpty else { return .failure(.missingTitle) }
 
@@ -373,7 +398,8 @@ enum PushValidator {
             script: script,
             island: island,
             clickURL: fields.clickURL,
-            tags: fields.tags
+            tags: fields.tags,
+            native: fields.native
         ))
     }
 

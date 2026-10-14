@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import ServiceManagement
 import SwiftUI
+import UserNotifications
 
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general
@@ -693,6 +694,11 @@ private struct NotificationSettingsContent: View {
     /// pane kept saying "未授权" until something unrelated forced a redraw.
     @State private var axTrusted = AXIsProcessTrusted()
 
+    /// Same live-query discipline as `axTrusted`, for the system notification
+    /// center's own permission: the user can grant or revoke it in System
+    /// Settings while this pane is open.
+    @State private var nativeAuth: UNAuthorizationStatus = NativeNotifier.shared.authorizationStatus
+
     /// Choosing a preset writes its values; the picker itself is derived, so
     /// a custom combination left over from older per-toggle settings shows as
     /// no selection instead of a lie.
@@ -760,6 +766,45 @@ private struct NotificationSettingsContent: View {
         // 用户去系统设置授权后切回来：重新查询，否则界面一直显示"未授权"。
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             axTrusted = AXIsProcessTrusted()
+            nativeAuth = NativeNotifier.shared.authorizationStatus
+        }
+        .onAppear { NativeNotifier.shared.refreshAuthorizationStatus() }
+
+        Section {
+            Picker("系统通知中心", selection: $settings.nativeNotificationMode) {
+                ForEach(NativeNotificationMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        } header: {
+            Text("系统通知中心")
+        } footer: {
+            VStack(alignment: .leading, spacing: 6) {
+                SectionFooter(settings.nativeNotificationMode.detail)
+                switch nativeAuth {
+                case .denied:
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("系统通知权限已被拒绝，补发的通知不会出现。", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.callout)
+                        Button("打开系统通知设置") {
+                            NSWorkspace.shared.open(
+                                URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!
+                            )
+                        }
+                    }
+                case .notDetermined:
+                    SectionFooter("尚未请求授权：第一条需要补发的消息出现时，系统会弹出授权对话框。")
+                case .authorized, .provisional, .ephemeral:
+                    Label("已授权，消息可进入系统通知中心", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.callout)
+                @unknown default:
+                    EmptyView()
+                }
+            }
         }
 
         Section {

@@ -211,11 +211,13 @@ mod tests {
         let directory = std::env::temp_dir().join(format!("nc-config-{}", uuid::Uuid::new_v4()));
         let path = directory.join("settings.json");
 
-        let mut config = Config::default();
-        config.http_port = 5000;
-        config.motion = crate::motion::MotionStyle::Slide;
-        config.away = crate::presence::AwayBehavior::Off;
-        config.dwell_seconds = 10.;
+        let config = Config {
+            http_port: 5000,
+            motion: crate::motion::MotionStyle::Slide,
+            away: crate::presence::AwayBehavior::Off,
+            dwell_seconds: 10.,
+            ..Config::default()
+        };
         config.save_at(path.clone());
 
         let loaded = Config::load_at(path.clone());

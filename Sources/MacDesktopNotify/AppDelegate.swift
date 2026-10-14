@@ -74,6 +74,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         presence.start()
 
         settingsController = SettingsWindowController()
+        // Inert until installed: the singleton is reachable from every test
+        // process, and only the app may hand it the notification center.
+        NativeNotifier.shared.install()
         installShortcutMonitors()
         setupStatusItem()
         syncPanelHotkey()
