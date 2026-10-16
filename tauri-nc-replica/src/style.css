@@ -1,0 +1,815 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* ------------------------------------------------------------------------
+ * NcReplica (Tauri) — 设计变量
+ *
+ * 一一对应 Swift 版：
+ *   Toast/ToastStyle.swift   → ToastMetrics / ResolvedToastStyle
+ *   Toast/ToastPosition.swift → ToastLayout / slideVector
+ *   AppSettings.swift        → 运行时设置（Rust 侧 config.rs 下发）
+ * ---------------------------------------------------------------------- */
+
+:root {
+  /* ToastMetrics —— 固定几何，跟随系统横幅（macOS 26 实测） */
+  --toast-card-width: 346px;
+  --toast-card-radius: 16px;
+  --toast-card-padding: 16px;
+  --toast-stack-padding: 8px;
+  --toast-block-gap: 8px;
+  --toast-collapsed-gap: 2px;
+  --toast-title-size: 13px;
+  --toast-body-size: 13px;
+  --toast-meta-size: 10px;
+  --toast-action-size: 11px;
+  --toast-border-width: 1px;
+  --toast-summary-lines: 2;
+  --toast-deck-peek: 7px;
+  --toast-margin: 16px;
+  --toast-icon-tile: 30px;
+
+  /* ResolvedToastStyle —— 语义色（浅色） */
+  --toast-text-primary: #000000;
+  --toast-text-subtle: rgba(0, 0, 0, 0.55);
+  --toast-border: rgba(0, 0, 0, 0.12);
+  --toast-accent: #007aff;
+  --toast-hover-wash: rgba(0, 0, 0, 0.045);
+  --toast-level-success: #49a88b;
+  --toast-level-warning: #c89743;
+  --toast-level-error: #df6e7b;
+
+  /* shadcn-vue 基础 token（new-york / neutral） */
+  --radius: 0.5rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* ResolvedToastStyle —— 语义色（深色） */
+    --toast-text-primary: #ffffff;
+    --toast-text-subtle: rgba(255, 255, 255, 0.66);
+    --toast-border: rgba(255, 255, 255, 0.18);
+    --toast-accent: #0a84ff;
+    --toast-hover-wash: rgba(255, 255, 255, 0.045);
+
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.985 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.556 0 0);
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+    overscroll-behavior: none;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+      "Helvetica Neue", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  #app {
+    background: transparent;
+  }
+  /* 设置窗口不透明（跟随系统外观）；toast 窗口保持全透明。 */
+  body.opaque {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    overflow: auto;
+  }
+}
+
+/* ------------------------------------------------------------------------
+ * 通知中心（Toast 栈）
+ *
+ * 窗口本身透明：卡片背面是 Rust 侧逐面维护的 NSVisualEffectView
+ * （material.rs，对应 Swift MaterialBackground），DOM 只画文字、
+ * 描边与交互铬件。因此 .toast-card 没有 CSS 背景。
+ * ---------------------------------------------------------------------- */
+
+.toast-root {
+  width: calc(var(--toast-card-width) + 2 * var(--toast-stack-padding));
+  box-sizing: border-box;
+  padding: var(--toast-stack-padding);
+  display: flex;
+  flex-direction: column;
+  /* 顶锚点贴窗口顶、底锚点贴窗口底：ToastStackView 的 anchorAlignment */
+}
+
+.toast-root[data-anchor="bottom"] {
+  justify-content: flex-end;
+}
+
+.toast-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.toast-stack[data-piled="true"] {
+  gap: 0;
+}
+
+.toast-stack[data-piled="false"] {
+  gap: var(--toast-block-gap);
+}
+
+/* 同组消息分隔标签（ToastStackView 的 "同组消息"） */
+.group-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--toast-text-subtle);
+  padding: 0 4px 2px;
+  line-height: 1.2;
+  user-select: none;
+}
+
+/* ---- 卡片 --------------------------------------------------------------- */
+
+.toast-card {
+  position: relative;
+  width: var(--toast-card-width);
+  box-sizing: border-box;
+  border-radius: var(--toast-card-radius);
+  will-change: transform, opacity;
+  touch-action: none;
+  user-select: none;
+  cursor: default;
+}
+
+.toast-card[data-dragging="true"] {
+  transition: none !important;
+}
+
+/* 发丝描边 + 悬停增亮：覆盖在原生材质之上（allowsHitTesting=false） */
+.toast-card-border,
+.toast-card-wash {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--toast-card-radius);
+  pointer-events: none;
+}
+
+.toast-card-border {
+  border: var(--toast-border-width) solid var(--toast-border);
+}
+
+.toast-card-wash {
+  background: var(--toast-hover-wash);
+  opacity: 0;
+  transition: opacity 0.15s ease-in-out;
+}
+
+.toast-card[data-hovering="true"] .toast-card-wash {
+  opacity: 1;
+}
+
+.toast-card-inner {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  padding: var(--toast-card-padding);
+  border-radius: var(--toast-card-radius);
+}
+
+.toast-card[data-expanded="true"] .toast-card-inner {
+  align-items: flex-start;
+}
+
+.toast-card[data-expanded="false"] .toast-card-inner {
+  align-items: center;
+}
+
+.toast-card-column {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.toast-card[data-expanded="true"] .toast-card-column {
+  gap: var(--toast-block-gap);
+}
+
+.toast-card[data-expanded="false"] .toast-card-column {
+  gap: var(--toast-collapsed-gap);
+}
+
+/* ---- 头部 --------------------------------------------------------------- */
+
+.toast-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.toast-card-title {
+  font-size: var(--toast-title-size);
+  font-weight: 600;
+  color: var(--toast-text-primary);
+  line-height: 1.35;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast-card[data-expanded="true"] .toast-card-title {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.toast-card-header-spacer {
+  flex: 1 1 auto;
+  min-width: 4px;
+}
+
+.toast-card-time,
+.toast-card-level {
+  font-size: var(--toast-meta-size);
+  font-weight: 500;
+  color: var(--toast-text-subtle);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.toast-card-level[data-urgency="critical"] {
+  color: var(--toast-level-error);
+}
+
+.toast-card-level[data-urgency="low"] {
+  color: var(--toast-text-subtle);
+}
+
+/* ---- App 图标磁贴 ------------------------------------------------------- */
+
+.toast-icon-tile {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--toast-icon-tile);
+  height: var(--toast-icon-tile);
+  border-radius: 7px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--toast-accent) 82%, transparent),
+    var(--toast-accent)
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+
+.toast-icon-tile svg {
+  width: 15px;
+  height: 15px;
+}
+
+.toast-icon-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.8);
+}
+
+.toast-icon-badge[data-urgency="low"] {
+  background: var(--toast-text-subtle);
+}
+.toast-icon-badge[data-urgency="normal"] {
+  background: var(--toast-accent);
+}
+.toast-icon-badge[data-urgency="critical"] {
+  background: var(--toast-level-error);
+}
+
+/* ---- 收起态摘要 --------------------------------------------------------- */
+
+.toast-card-summary {
+  font-size: var(--toast-body-size);
+  line-height: 1.45;
+  color: var(--toast-text-subtle);
+  display: -webkit-box;
+  -webkit-line-clamp: var(--toast-summary-lines);
+  line-clamp: var(--toast-summary-lines);
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.toast-card-collapsed {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.toast-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.toast-occurrence {
+  font-size: var(--toast-meta-size);
+  font-weight: 600;
+  color: var(--toast-text-subtle);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.toast-tags {
+  font-size: var(--toast-meta-size);
+  font-weight: 500;
+  color: var(--toast-text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- 进度胶囊 ----------------------------------------------------------- */
+
+.toast-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.toast-progress-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--toast-text-primary) 12%, transparent);
+  overflow: hidden;
+}
+
+.toast-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: var(--toast-accent);
+  transition: width 0.25s ease-out;
+}
+
+.toast-progress-value {
+  font-size: var(--toast-meta-size);
+  font-weight: 500;
+  color: var(--toast-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 展开态 ------------------------------------------------------------- */
+
+/* grid 0fr→1fr 技巧：展开/收起的高度弹簧补间 */
+.toast-card-body-slot {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.toast-card[data-expanded="true"] .toast-card-body-slot {
+  grid-template-rows: 1fr;
+}
+
+.toast-card-body-clip {
+  overflow: hidden;
+  min-height: 0;
+  /* 展开态正文的滚动预算：窗口本身已被 Rust 钳制到 60% 屏高，
+     长正文在卡内滚动而非被裁掉（Swift 在此处直接裁切，属已知偏差）。 */
+  max-height: calc(var(--toast-max-stack-height, 100vh) - 140px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--toast-text-primary) 25%, transparent) transparent;
+}
+
+/* ---- 层叠边缘的出入（grid 0fr→1fr 高度补间） --------------------------- */
+
+.toast-deck-slot {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.toast-deck-slot[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+.toast-deck-clip {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.toast-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--toast-block-gap);
+  padding-top: var(--toast-block-gap);
+}
+
+/* MarkdownBlocksView 的排版（MarkdownBlocksStyle） */
+.md-prose {
+  font-size: var(--toast-body-size);
+  line-height: 1.5;
+  color: var(--toast-text-primary);
+  user-select: text;
+  word-break: break-word;
+}
+
+.md-heading {
+  font-size: calc(var(--toast-body-size) + 2px);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--toast-text-primary);
+  user-select: text;
+}
+
+.md-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.md-list-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.md-list-marker {
+  font-size: var(--toast-body-size);
+  color: color-mix(in srgb, var(--toast-text-primary) 60%, transparent);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+.md-list-text {
+  font-size: var(--toast-body-size);
+  line-height: 1.5;
+  color: var(--toast-text-primary);
+  user-select: text;
+  word-break: break-word;
+}
+
+.md-code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: var(--toast-body-size);
+  line-height: 1.5;
+  color: var(--toast-text-primary);
+  background: color-mix(in srgb, var(--toast-text-primary) 8%, transparent);
+  border-radius: 7px;
+  padding: 9px;
+  overflow-x: auto;
+  white-space: pre;
+  user-select: text;
+}
+
+.md-inline-code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.92em;
+  background: color-mix(in srgb, var(--toast-text-primary) 8%, transparent);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+
+.md-link {
+  color: var(--toast-accent);
+  text-decoration: none;
+}
+
+.md-link:hover {
+  text-decoration: underline;
+}
+
+/* ---- 操作按钮行（ActionRow / ActionCapsuleStyle） ----------------------- */
+
+.toast-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast-actions-row {
+  display: flex;
+  gap: 8px;
+}
+
+.toast-action-capsule {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  font-size: var(--toast-action-size);
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 6px 12px;
+  border-radius: 999px;
+  transition: background-color 0.12s ease-in-out, transform 0.12s ease-in-out,
+    opacity 0.12s ease-in-out;
+}
+
+.toast-action-capsule:active {
+  transform: scale(0.97);
+}
+
+.toast-action-capsule[data-primary="true"] {
+  background: var(--toast-accent);
+  color: #fff;
+}
+
+.toast-action-capsule[data-primary="true"]:hover {
+  background: color-mix(in srgb, var(--toast-accent) 85%, transparent);
+}
+
+.toast-action-capsule[data-primary="false"] {
+  background: color-mix(in srgb, var(--toast-text-primary) 10%, transparent);
+  color: var(--toast-text-primary);
+}
+
+.toast-action-capsule[data-primary="false"]:hover {
+  background: color-mix(in srgb, var(--toast-text-primary) 16%, transparent);
+}
+
+.toast-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.toast-comment-label {
+  font-size: var(--toast-meta-size);
+  font-weight: 500;
+  color: var(--toast-text-subtle);
+}
+
+.toast-comment-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.toast-comment-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  appearance: none;
+  border: 0;
+  outline: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--toast-text-primary);
+  background: color-mix(in srgb, var(--toast-text-primary) 14%, transparent);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+/* ---- 左上角关闭按钮（hover 显隐，探出卡片边缘） -------------------------- */
+
+.toast-close-btn {
+  position: absolute;
+  left: -5px;
+  top: -5px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--toast-text-subtle);
+  /* 圆盘背面同样是原生材质（material.rs 的 close-* 面） */
+  background: transparent;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: opacity 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.toast-close-btn::after {
+  /* 圆盘描边（Swift CloseButton 的 Circle().strokeBorder） */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 0.5px solid color-mix(in srgb, var(--toast-text-primary) 12%, transparent);
+}
+
+.toast-close-btn svg {
+  width: 9px;
+  height: 9px;
+}
+
+.toast-close-btn[data-visible="false"] {
+  opacity: 0;
+  transform: scale(0.5);
+  pointer-events: none;
+}
+
+.toast-close-btn[data-visible="true"] {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* ---- 层叠边缘（deck edges） --------------------------------------------- */
+
+.toast-deck {
+  display: flex;
+  flex-direction: column;
+  /* 点击热区比 7pt 漆面大一点（Swift .padding(.vertical, 2)） */
+  padding: 2px 0;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  width: 100%;
+}
+
+.toast-deck-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--toast-deck-peek);
+}
+
+.toast-deck-edge {
+  height: var(--toast-deck-peek);
+  /* 上圆角与卡片一致，底部被前排卡片盖住 → 原生面的 maskedCorners */
+  border-radius: var(--toast-card-radius) var(--toast-card-radius) 0 0;
+  flex: 0 0 auto;
+}
+
+.toast-deck-edge[data-depth="1"] {
+  width: calc(var(--toast-card-width) * 0.94);
+}
+
+.toast-deck-edge[data-depth="2"] {
+  width: calc(var(--toast-card-width) * 0.88);
+}
+
+.toast-deck-count {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--toast-text-subtle);
+  white-space: nowrap;
+}
+
+/* ---- 右键菜单（ToastContextMenu） --------------------------------------- */
+
+.toast-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 168px;
+  padding: 5px;
+  border-radius: 8px;
+  /* 菜单也是原生材质面（menu 材质由 Rust 侧单独挂载时使用 CSS 近似） */
+  background: color-mix(in srgb, var(--toast-text-primary) 12%, transparent);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border: 0.5px solid var(--toast-border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+  font-size: 12px;
+  color: var(--toast-text-primary);
+}
+
+.toast-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.toast-menu-item:hover:not(:disabled),
+.toast-menu-item[data-highlighted="true"] {
+  background: var(--toast-accent);
+  color: #fff;
+}
+
+.toast-menu-item:disabled {
+  opacity: 0.4;
+}
+
+.toast-menu-separator {
+  height: 0.5px;
+  margin: 5px 8px;
+  background: var(--toast-border);
+}
+
+.toast-menu-label {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--toast-text-subtle);
+}
+
+/* ------------------------------------------------------------------------
+ * 动效（Settings 驱动；对应 Swift ToastMotion.animation/transition）
+ * 减少动态效果时整体关闭（accessibilityDisplayShouldReduceMotion）
+ * ---------------------------------------------------------------------- */
+
+.toast-root[data-reduce-motion="true"] * {
+  transition-duration: 0.01ms !important;
+}
+
+/* ── 调试纯色模式（VITE_DEBUG_SOLID=1）───────────────────────────
+ * 毛玻璃在亮色壁纸下难辨，调试期用 DOM 纯色盖住原生材质面；
+ * 视觉验收（对齐 Swift 版）时移除 .env 里的开关即可恢复玻璃。 */
+[data-debug-solid="true"] .toast-card {
+  background: #2c2c30;
+}
+@media (prefers-color-scheme: light) {
+  [data-debug-solid="true"] .toast-card {
+    background: #f2f2f5;
+  }
+}
+[data-debug-solid="true"] .toast-deck-edge {
+  background: #3a3a40;
+}
+@media (prefers-color-scheme: light) {
+  [data-debug-solid="true"] .toast-deck-edge {
+    background: #e8e8ec;
+  }
+}
+[data-debug-solid="true"] .toast-close-btn {
+  background: #4a4a52;
+}
+@media (prefers-color-scheme: light) {
+  [data-debug-solid="true"] .toast-close-btn {
+    background: #dcdce2;
+  }
+}

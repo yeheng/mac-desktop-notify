@@ -1,0 +1,33 @@
+[package]
+name = "nc-replica-tauri"
+version = "0.1.0"
+edition = "2021"
+description = "Tauri 一比一复刻 Swift 版通知中心（NotchNotify Toast 栈）"
+
+[lib]
+name = "nc_replica_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-deep-link = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+url = "2"
+unicode-segmentation = "1"
+futures = "0.3"
+tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
+ureq = { version = "3", features = ["json"] }
+tokio = { version = "1", features = ["time"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", features = ["exception"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSString"] }
+block2 = "0.6"
+
+[profile.release]
+debug = true
