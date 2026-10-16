@@ -1,7 +1,7 @@
 //! 脚本文件存储（Swift `ScriptStore` 移植）：按名读取 scripts/ 目录下的
 //! `<name>.js`。名字校验与推送入口共用同一条规则（`model::valid_script`），
-//! 两处漂移等于路径穿越。源码本身在 toast webview 里执行（前端 TS 宿主，
-//! 见 `src/lib/scriptRunner.ts`），本模块只负责磁盘。
+//! 两处漂移等于路径穿越。源码由 bun 子进程引擎执行（`script_host.rs`），
+//! 本模块只负责磁盘。
 
 use std::path::PathBuf;
 

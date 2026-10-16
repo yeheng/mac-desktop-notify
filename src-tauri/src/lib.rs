@@ -49,14 +49,6 @@ pub fn run() {
             platform::borrow_key,
             platform::release_key,
             platform::open_url,
-            script_host::read_script,
-            script_host::notify_push,
-            script_host::notify_clear,
-            script_host::script_fetch,
-            script_host::script_exec_complete,
-            script_host::apply_script_fields,
-            script_host::apply_script_failure,
-            script_host::push_script_diagnostic,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

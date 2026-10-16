@@ -43,7 +43,7 @@ Swift 版是一个 **无 Dock 图标的 accessory 应用**，完整功能面：
 │  │ 全屏探测/系统通知/  │  │ toast webview (MPA toast.html)│  │
 │  │ NSSound/托盘/热键   │  │ settings webview (settings.html)│ │
 │  └───────────────────┘  └────────────────────────────────┘  │
-│  ┌─ script engine ── rquickjs + 阻塞 fetch (ureq) + 看门狗 ┐ │
+│  ┌─ script engine ── bun 子进程（同步桥 = Worker+Atomics）+ 看门狗杀 ─┐ │
 │  └─────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -94,7 +94,7 @@ src/
 | 10 | URL Scheme notch-notify:// | tauri-plugin-deep-link | ✅ |
 | 11 | HTTP + WS @ 127.0.0.1:4770 | axum/tokio，Host/Origin 校验照抄 HTTPCodec | ✅ |
 | 12 | Unix socket 0600 | tokio + UnixListener + chmod | ✅ |
-| 13 | JSC 脚本（同步 fetch/notify.push/看门狗/并发 4） | **难点⑦**：rquickjs + ureq 阻塞 + 独立线程 | ⚠️ 工作量 |
+| 13 | JSC 脚本（同步 fetch/notify.push/看门狗/并发 4） | **难点⑦**：bun 子进程 + Worker/Atomics 同步桥（现有脚本零改写） | ✅ 已落地 |
 | 14 | 系统通知中心三档（线程/原地更新/timeSensitive） | **难点⑧**：objc2 直调 UNUserNotificationCenter | ⚠️ 工作量 |
 | 15 | ⌃⌥N 全局热键（免辅助功能） | tauri-plugin-global-shortcut（同为 Carbon 注册） | ✅ |
 | 16 | Esc 监听（需辅助功能 + 指针在卡上才收） | **难点⑤**：CGEventTap via objc2 | ⚠️ |
@@ -140,7 +140,7 @@ CGEventTap（需辅助功能授权）+ 只在指针悬停已展开卡时消费�
 DwellPolicy/DelayedEvents 是「唯一表格 + 键控簿记」的纯函数设计，可 1:1 移植到 Rust 并**直接复用 Swift 测试用例的输入输出**（41 个测试文件是现成的验收规格）。风险最低、工作量最大（~1,600 行逻辑 + 测试）。
 
 **⑦ 脚本引擎**
-rquickjs（QuickJS 绑定）替代 JavaScriptCore：ES2023 支持良好。同步 `fetch` 用 ureq 阻塞调用在脚本线程内实现（10s 超时）；`notify.push`/`clear` 回调进 manager；看门狗 + 僵尸线程上限 8、并发闸 4 照抄。QuickJS 与 JSC 的 API 差异（极新语法、Date 精度）属边缘情况。
+**已落地（2026-10-16 三改方案）**：bun 子进程执行——脚本本来就是 JS，bun 就是 JS 运行时。宿主 `host.js` 跑在 bun 主线程，`bridge_worker.js` 独占 stdin/stdout 行 JSON IPC；Worker + SharedArrayBuffer + Atomics 把 fetch/notify/console 复刻成**同步**桥（bun 主线程 Atomics.wait 已验证可用），共享 scripts/ 目录里的现有同步风格脚本零改写。fetch 走 bun 原生（宿主内限 http/https、10s）；notify 经 stdio 请求-应答。并发闸 4 照抄；看门狗到点**杀进程**——子进程可中断，Swift 的僵尸线程熔断线不再需要。
 
 **⑧ 系统通知中心镜像**
 三档路由是纯函数（好移植）。UNUserNotificationCenter 的「同 identifier 原地更新 / threadIdentifier 分组 / interruptionLevel」需要 objc2 手写薄封装（~300 行 Rust）；tauri-plugin-notification 做不到原地更新，不采用。
@@ -194,7 +194,7 @@ rquickjs（QuickJS 绑定）替代 JavaScriptCore：ES2023 支持良好。同步
 **Phase 4 — 动作 + 脚本**
 4.1 ack 回执（token 校验/落盘/24h 清理/input=1 批注行）
 4.2 callback webhook POST + 失败诊断通知
-4.3 rquickjs 引擎：fetch/notify.push/console.log/并发闸/看门狗/exec 端点/按钮 script 钩子/推送回填（含「脚本生成中→完成」占位卡流转）
+4.3 bun 子进程引擎：同步 fetch/notify.push/console.log/并发闸/看门狗杀/exec 端点/按钮 script 钩子/推送回填（含「脚本生成中→完成」占位卡流转）✅
 → 验收：README「脚本」节的 ci-status/ci-retry 双脚本全链路演示通过
 
 **Phase 5 — 平台集成 + 打磨**
@@ -225,7 +225,7 @@ rquickjs（QuickJS 绑定）替代 JavaScriptCore：ES2023 支持良好。同步
 1. **非激活面板 spike 失败**（中低概率）→ 降级为方案 B，交互面 95% 保留（点击瞬间焦点闪烁）
 2. **backdrop-filter 不透窗采样**（低概率）→ 退到方案 B 或接受「仅窗口内容参与模糊」
 3. **细节还原的长尾**：动画手感/材质色差需要逐项对表打磨，是工期最主要的滑点来源
-4. **rquickjs 与 JSC 行为差异**：边缘脚本语义不同，属可接受偏差
+4. ~~rquickjs 与 JSC 行为差异~~（已消除：bun 就是 JSC 系 JS 引擎）。新风险：**bun 为运行时外部依赖**——缺失时脚本功能降级（exec 报「bun 不可用」、回填把错误写进卡片）；解析顺序 NC_BUN_PATH → ~/.bun/bin/bun → PATH
 5. **两 App 共存**：单实例锁只管自己；若用户同时启动 Swift 版，sock/端口冲突需要文件锁互斥提示
 
 ---
@@ -260,4 +260,45 @@ rquickjs（QuickJS 绑定）替代 JavaScriptCore：ES2023 支持良好。同步
   WKWebView 的 KVO observer 未注册完，过早 `setContentView` 抛 NSRangeException
   （objc2 exception::catch 捕获后重试，第二次成功）
 - 状态：cargo test 24/24 绿、vue-tsc 0 错、vite 构建通过、demo 卡片端到端
-  （Rust push → state 事件 → Vue 栈 → 帧上报 → NSVisualEffectView）可见
+
+### 2026-10-16（续）：Phase 4.3 脚本引擎——前端 webview 方案（已被同日 bun 方案取代）
+
+> 本节保留决策轨迹。webview 方案的致命伤：Tauri invoke 只有 Promise，
+> fetch/notify 只能做成异步桥，要求脚本写 `await fetch(...)`——而共享
+> scripts/ 目录里的现有脚本（README 契约）是同步风格，全部需要改写。
+> 引擎寄居 toast webview 也意味着窗口未就绪时 exec 不可用。同日被
+> 「bun 子进程」方案取代（见下节）。
+
+### 2026-10-16（续）：Phase 4.3 脚本引擎落地——bun 子进程（用户拍板，最终）
+
+脚本/插件由 **bun 子进程**执行（`bun host.js bridge_worker.js`），Rust 不引
+嵌入式引擎，前端 webview 回归纯投影。宿主 JS 内嵌在二进制
+（`script_assets/`，include_str!），启动时安装到 `NcReplica/script-host/`
+（内容变化才重写）：
+
+- **同步桥是一比一复刻的关键**：`host.js` 跑用户脚本（`new Function`，
+  console/notify/fetch 参数遮蔽），`bridge_worker.js` 独占 stdin/stdout 的
+  行 JSON IPC；主线程经 SharedArrayBuffer + Atomics 等应答，把
+  fetch/notify/console.log 变成**同步调用**——bun 主线程 Atomics.wait
+  已实测可用（1.3.14），现有同步风格脚本零改写。
+- **线协议**：Rust → 子进程 stdin 首行 `{"__envelope",source,input}`，此后
+  notify 应答 `{"id","result"}`；子进程 → stdout 每行
+  `{"type":"log"|"notify"|"result",…}`。手测踩过一个真 bug：两行应答同
+  chunk 到达时第二条会被丢（等待者未注册）——worker 按id 缓存早到应答修复。
+- **与 Swift 的两处刻意差异**：① 看门狗到点**杀进程**，超时脚本不再泄漏
+  成僵尸线程，熔断线 8 删除（并发闸 4 保留）；② fetch 走 bun 原生（宿主内
+  限 http/https、10s AbortSignal），不经 Rust 代理。
+- **Rust 侧**（`script_host.rs`）：并发闸 CAS + SlotGuard（panic 不漏槽）、
+  日志环 200 行/2000 字符（Swift ThreadBox 同款含截断标记）、notify 桥走
+  validator 同一道闸 + deliver oneshot 同步等去向、stderr 排水线程（防管道
+  塞死）+ 尾 3 行诊断；`dispatch_exec` 同步应答（预算 100ms…10s 路由层钳制）；
+  `spawn_backfill`（deliver 漏斗，displayed/withheld 都回填）与
+  `spawn_hook`（script 按钮，失败推诊断卡）后台线程。bun 解析：
+  NC_BUN_PATH → ~/.bun/bin/bun（.app 从 Finder 启动时 PATH 没有它）→ PATH。
+- **前端**：scriptRunner/scriptHost 两个文件删除，toast webview 与脚本
+  彻底解耦（exec 不再依赖窗口就绪）。
+- 修复既有阻塞（沿上节）：`StackEvent::SetMaterial` 枚举/调用不匹配、
+  ack 测试环境变量竞态互斥。
+- 状态：cargo test 75/75 绿（含 3 个真实 bun e2e：同步脚本、看门狗 400ms
+  杀死 while(true)、本地 HTTP 服务器 fetch 全链路——bun 缺席自动跳过）、
+  vue-tsc 0 错、vite 构建通过。

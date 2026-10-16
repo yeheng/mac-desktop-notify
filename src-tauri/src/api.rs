@@ -1253,8 +1253,8 @@ mod tests {
 
     #[test]
     fn exec_route_answers_outcome_payload() {
-        // 测试环境没有 app 句柄，前端引擎无从接单：语义 = 超时兜底，
-        // 200 + ok:false（Swift execScript 同款：脚本失败也是 200）。
+        // 不存在的脚本：加载在 spawn 之前快速失败，测试不依赖 bun。
+        // 语义与 Swift execScript 同款：脚本失败也是 200，错误在载荷里。
         let b = bridge();
         let d = as_dyn(&b);
         let (status, v) = route(
@@ -1262,13 +1262,13 @@ mod tests {
             "POST",
             "/v1/exec",
             &HashMap::new(),
-            Some(r#"{"script":"ci","input":{"a":1},"timeoutMs":100}"#.as_bytes()),
+            Some(r#"{"script":"definitely-missing","input":{"a":1},"timeoutMs":100}"#.as_bytes()),
         );
         assert_eq!(status, 200);
         assert_eq!(v["ok"], false);
-        assert_eq!(v["error"], "timeout");
+        assert_eq!(v["error"], "脚本未找到：definitely-missing");
         assert!(v["logs"].is_array());
-        // 坏 JSON 是 400。
+        // 坏 JSON / 无体是 400。
         let (status, _) = route(&d, "POST", "/v1/exec", &HashMap::new(), Some(b"not json"));
         assert_eq!(status, 400);
         let (status, _) = route(&d, "POST", "/v1/exec", &HashMap::new(), None);
@@ -1279,11 +1279,11 @@ mod tests {
     fn ws_exec_frame_carries_outcome_and_missing_script_error() {
         let b = bridge();
         let d = as_dyn(&b);
-        let v = handle_ws_command(&d, r#"{"op":"exec","ref":"e1","script":"ci","input":{},"timeoutMs":100}"#);
+        let v = handle_ws_command(&d, r#"{"op":"exec","ref":"e1","script":"definitely-missing"}"#);
         assert_eq!(v["type"], "result");
         assert_eq!(v["ref"], "e1");
         assert_eq!(v["ok"], false);
-        assert_eq!(v["error"], "timeout");
+        assert_eq!(v["error"], "脚本未找到：definitely-missing");
         assert!(v["logs"].is_array());
         let v = handle_ws_command(&d, r#"{"op":"exec","ref":"e2"}"#);
         assert_eq!(v["ok"], false);

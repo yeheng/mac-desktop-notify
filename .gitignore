@@ -1,21 +1,11 @@
 .DS_Store
-/.build
-/build
-/Packages
+.build/
+build/
+Packages/
 xcuserdata/
 DerivedData/
-.swiftpm/configuration/registries.json
-.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
-.netrc
-
 # Git worktrees
 .worktrees/
-
-# Rust (egui-notify 子项目)
-/egui-notify/target
-
-# Superpowers subagent-driven-development scratch (ledger, briefs, reports, review packages)
-/.superpowers/
 
 # Local agent/AI workspace data
 .claude/

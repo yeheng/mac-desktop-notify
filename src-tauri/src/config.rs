@@ -409,6 +409,32 @@ pub fn scripts_dir() -> PathBuf {
         })
 }
 
+/// bun 宿主文件（host.js / bridge_worker.js）的安装目录：本复刻自己的
+/// NcReplica 目录（宿主是引擎内部件，不是用户脚本）。NC_SCRIPT_HOST_DIR
+/// 供测试改道。
+pub fn script_host_dir() -> PathBuf {
+    std::env::var("NC_SCRIPT_HOST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                .join("Library/Application Support/NcReplica/script-host")
+        })
+}
+
+/// bun 可执行文件：NC_BUN_PATH → ~/.bun/bin/bun（官方安装位，.app 从
+/// Finder 启动时 PATH 里没有它）→ PATH 里的 bun。
+pub fn bun_path() -> PathBuf {
+    if let Ok(path) = std::env::var("NC_BUN_PATH") {
+        return PathBuf::from(path);
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let local = PathBuf::from(home).join(".bun/bin/bun");
+    if local.is_file() {
+        return local;
+    }
+    PathBuf::from("bun")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -340,9 +340,9 @@ impl StackActor {
 
         // 脚本回填漏斗（Swift NotificationIngress）：每个能带 script 字段
         // 的门都从这里自动获得回填，去向是 displayed 还是 withheld 无关——
-        // 引擎在 toast webview，真正的执行由前端 `script://backfill` 接手。
+        // 引擎是 bun 子进程（script_host），后台线程执行。
         if item.script.is_some() {
-            crate::script_host::emit_backfill(&item);
+            crate::script_host::spawn_backfill(item.clone());
         }
 
         if self.is_quiet_public(&item) {
@@ -499,10 +499,10 @@ impl StackActor {
                 });
             }
             crate::model::ActionKind::Script { .. } => {
-                // 脚本钩子在 toast webview 执行：卡随点击退役（与 URL 按钮
-                // 同构），钩子 fire-and-forget，失败由前端回调诊断推送
-                // （Swift runActionHook 同款时序）。
-                crate::script_host::emit_hook(&action, &item, comment.clone());
+                // 脚本钩子由 bun 子进程执行（Swift runActionHook 同款时序）：
+                // 卡随点击退役（与 URL 按钮同构），钩子后台跑，失败自推
+                // 诊断通知。
+                crate::script_host::spawn_hook(action, item, comment.clone());
             }
         }
         self.retire(card, true);
@@ -1030,11 +1030,6 @@ mod action_tests {
 static EVENT_TX: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<StackEvent>> =
     std::sync::OnceLock::new();
 static APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
-
-/// 应用句柄（script_host 等无窗口上下文的模块向 toast webview 发事件的口）。
-pub fn app_handle() -> Option<&'static tauri::AppHandle> {
-    APP_HANDLE.get()
-}
 
 /// 启动装配：建通道、spawn actor（tauri 的 tokio 运行时上）。
 pub fn init(app: tauri::AppHandle) {
