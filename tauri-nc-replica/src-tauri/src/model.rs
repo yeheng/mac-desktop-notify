@@ -65,6 +65,24 @@ pub enum ActionKind {
     Callback { url: String },
 }
 
+/// 推送去向：displayed = 上屏展示；withheld = 静默/离开闸门拦下只入历史
+/// （Swift PushOutcome）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PushOutcome {
+    Displayed,
+    Withheld,
+}
+
+impl PushOutcome {
+    /// wire 名（Swift PushOutcome.label）。
+    pub fn label(self) -> &'static str {
+        match self {
+            PushOutcome::Displayed => "displayed",
+            PushOutcome::Withheld => "withheld",
+        }
+    }
+}
+
 /// 卡片上的一个可点按钮。`wants_comment` 要求在点火前先要一行文字：
 /// Url 来自 ack URL 解析，其余来自 `input` 标志（Swift normalizedActions）。
 #[derive(Clone, Debug, PartialEq)]
@@ -109,6 +127,12 @@ impl From<&NotificationAction> for ActionWire {
         }
         wire
     }
+}
+
+/// wire JSON → 动作（命令层入口；非法条目 = None，被枚举丢掉）。
+pub fn action_from_value(value: serde_json::Value) -> Option<NotificationAction> {
+    let wire: ActionWire = serde_json::from_value(value).ok()?;
+    NotificationAction::try_from(wire).ok()
 }
 
 /// wire → model。没有 kind 的条目在枚举里没有表示，history 解码只丢这一个

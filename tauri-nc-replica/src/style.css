@@ -442,12 +442,14 @@
 .toast-card-body-clip {
   overflow: hidden;
   min-height: 0;
-  /* 展开态正文的滚动预算：窗口本身已被 Rust 钳制到 60% 屏高，
-     长正文在卡内滚动而非被裁掉（Swift 在此处直接裁切，属已知偏差）。 */
-  max-height: calc(var(--toast-max-stack-height, 100vh) - 140px);
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--toast-text-primary) 25%, transparent) transparent;
+  /* 超长正文在此截断（设计变更：无点击展开，恒直显）。 */
+  max-height: var(--toast-body-max, 320px);
+}
+
+/* 截断指示：底部 26px 渐隐（mask 作用于内容本身，玻璃/纯色底皆宜）。 */
+.toast-card-body-clip[data-truncated="true"] {
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 26px), transparent 100%);
+  mask-image: linear-gradient(#000 calc(100% - 26px), transparent 100%);
 }
 
 /* ---- 层叠边缘的出入（grid 0fr→1fr 高度补间） --------------------------- */

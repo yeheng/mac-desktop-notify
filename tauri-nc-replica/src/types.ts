@@ -39,8 +39,12 @@ export interface Presentation {
   tags: string[];
   clickUrl: string | null;
   island: StatusLine | null;
+  /** 推送触发的回填脚本名（Swift CardPayload.script；null = 无）。 */
+  script: string | null;
   occurrences: number;
   read: boolean;
+  /** 系统通知中心镜像档（null = 跟随应用设置）。 */
+  native: boolean | null;
   expanded: boolean;
 }
 

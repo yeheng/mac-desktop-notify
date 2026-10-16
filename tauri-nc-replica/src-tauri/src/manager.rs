@@ -125,12 +125,13 @@ pub fn set_stack_expanded(expanded: bool) {
 
 #[tauri::command]
 pub fn perform_action(card_id: String, action: serde_json::Value, comment: Option<String>) {
-    // action 的 wire 形状带 label/url/...；状态机只认索引。
-    // 前端 ActionRow 传完整对象——用 label 找索引（Phase 4 换成完整路径）。
-    let _ = &action;
+    // 前端传完整 wire 对象；反解成模型动作（非法条目直接忽略）。
+    let Some(act) = crate::model::action_from_value(action) else {
+        return;
+    };
     stack::send(StackEvent::PerformAction {
         card: parse_id(card_id),
-        action: 0,
+        action: act,
         comment,
     });
 }
@@ -138,11 +139,6 @@ pub fn perform_action(card_id: String, action: serde_json::Value, comment: Optio
 #[tauri::command]
 pub fn drag_dismiss(id: String) {
     stack::send(StackEvent::DragDismiss(parse_id(id)));
-}
-
-#[tauri::command]
-pub fn dismiss_expanded() {
-    stack::send(StackEvent::DismissExpanded);
 }
 
 #[tauri::command]

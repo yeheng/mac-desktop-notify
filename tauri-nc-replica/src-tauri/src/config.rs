@@ -212,6 +212,8 @@ pub struct Config {
     pub http_enabled: bool,
     pub http_port: u16,
     pub socket_enabled: bool,
+    /// Unix socket 路径（None = 默认 api.sock；客户端契约路径）。
+    pub socket_path: Option<String>,
 }
 
 impl Default for Config {
@@ -238,6 +240,7 @@ impl Default for Config {
             http_enabled: true,
             http_port: 4770,
             socket_enabled: true,
+            socket_path: None,
         }
     }
 }
@@ -392,6 +395,17 @@ pub fn acks_dir() -> PathBuf {
         .unwrap_or_else(|_| {
             PathBuf::from(std::env::var("HOME").unwrap_or_default())
                 .join("Library/Application Support/MacDesktopNotify/acks")
+        })
+}
+
+/// 脚本目录：与 Swift 版共用（`MacDesktopNotify/scripts`），现有脚本直接
+/// 复用（设计 D2）。NC_SCRIPTS_DIR 供测试改道。
+pub fn scripts_dir() -> PathBuf {
+    std::env::var("NC_SCRIPTS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                .join("Library/Application Support/MacDesktopNotify/scripts")
         })
 }
 

@@ -2,7 +2,11 @@
 
 mod config;
 mod dwell;
+mod ack_store;
+mod actions;
+mod api;
 mod history;
+mod history_store;
 mod layout;
 #[cfg(target_os = "macos")]
 mod manager;
@@ -10,6 +14,9 @@ mod markdown;
 mod notifier;
 #[cfg(target_os = "macos")]
 mod platform;
+mod script;
+mod script_host;
+mod script_store;
 mod stack;
 mod model;
 mod url_ingress;
@@ -31,7 +38,6 @@ pub fn run() {
             manager::set_stack_expanded,
             manager::perform_action,
             manager::drag_dismiss,
-            manager::dismiss_expanded,
             manager::remind_later,
             manager::set_material,
             manager::push_demo,
@@ -43,15 +49,39 @@ pub fn run() {
             platform::borrow_key,
             platform::release_key,
             platform::open_url,
+            script_host::read_script,
+            script_host::notify_push,
+            script_host::notify_clear,
+            script_host::script_fetch,
+            script_host::script_exec_complete,
+            script_host::apply_script_fields,
+            script_host::apply_script_failure,
+            script_host::push_script_diagnostic,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
             stack::init(handle.clone());
             // 平台鼠标监听发出的「点外」事件 → 收摞。
-            let tx_handle = handle.clone();
-            let _ = handle.listen("platform://outside-click", move |_| {
+            let _ = handle.listen("platform://outside-click", |_| {
                 stack::send(StackEvent::OutsideClick);
-                let _ = &tx_handle;
+            });
+
+            // notch-notify:// 深链路由（push / clear；ack 在 Phase 4 接动作路径）。
+            let dl_handle = handle.clone();
+            use tauri_plugin_deep_link::DeepLinkExt;
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    let raw = url.to_string();
+                    if let Ok(item) = crate::url_ingress::parse_push(&raw) {
+                        stack::send(StackEvent::Deliver { item, reply: None });
+                    } else if let Ok(group) = crate::url_ingress::parse_clear_group(&raw) {
+                        match group {
+                            Some(key) => stack::send(StackEvent::ClearGroup(key)),
+                            None => stack::send(StackEvent::ClearAll),
+                        }
+                    }
+                }
+                let _ = &dl_handle;
             });
             platform::setup(&handle)?;
             install_tray(app)?;
@@ -61,10 +91,18 @@ pub fn run() {
                 std::thread::sleep(std::time::Duration::from_millis(800));
                 manager::push_demo(demo.clone());
             });
+            // 三通道 API（HTTP/WS + Unix socket；失败进 flags，不阻断启动）。
+            api::start(std::sync::Arc::new(api::ActorBridge));
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // 只回收本进程绑定的 socket 文件（Swift stop() 同款）。
+                api::cleanup_socket();
+            }
+        });
 }
 
 /// 最小托盘（Phase 5.1 提前）：Phase 3 之前的手动推放入口。

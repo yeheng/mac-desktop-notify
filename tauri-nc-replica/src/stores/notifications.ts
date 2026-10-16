@@ -144,9 +144,6 @@ export const toastStore = {
   remindLater(id: string, seconds: number) {
     void invoke("remind_later", { id, seconds });
   },
-  dismissExpanded() {
-    void invoke("dismiss_expanded");
-  },
 
   // ---- 演示 / 静默 --------------------------------------------------------
 

@@ -1,22 +1,20 @@
 <script setup lang="ts">
 /**
- * Swift ToastCardView + ToastCardContent：一张活卡片。
+ * 一张活卡片（ToastCardView + ToastCardContent 的直展变体）。
  *
- * 交互词汇表与 Swift 一致：
- * - 点击 = 展开（并标已读）；再点 = 收起；点击永不退役卡片；
+ * - 正文永远直接展示：超过 max-height 截断（底部渐隐），操作按钮与
+ *   元信息恒可见、永不截断；
+ * - 点击 = 标记已读（无展开/收起）；clickUrl 卡片点击即打开并退役；
  * - 左上 × = 显式关闭（标已读），hover 才显形；
  * - 朝最近屏幕边缘拖拽 = 滑走（保留未读），短拖弹回；
- * - hover 只暂停倒计时、增亮表面，永不展开；
- * - clickUrl 卡片点击即打开链接（Rust 侧 tap_card 决策）。
+ * - hover 只暂停倒计时、增亮表面。
  *
  * 卡片背面是原生材质（无 CSS 背景）：DOM 只画文字、发丝描边、悬停盥洗
  * 与交互铬件；几何由 useFrameReporter 每帧同步给 material.rs。
  */
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { toastStore } from "@/stores/notifications";
-import { useNow } from "@/composables/useNow";
-import { previewText } from "@/lib/markdown";
-import { describe, clockTime } from "@/lib/relativeTime";
+import { clockTime } from "@/lib/relativeTime";
 import {
   DRAG_OPACITY_RANGE,
   rubberBand,
@@ -37,7 +35,6 @@ const emit = defineEmits<{
   (e: "context-menu", payload: { cardId: string; x: number; y: number }): void;
 }>();
 
-const now = useNow();
 const hovering = ref(false);
 const card = ref<HTMLElement | null>(null);
 
@@ -175,9 +172,21 @@ function onBodyClick(event: MouseEvent) {
 // ---- 内容 -----------------------------------------------------------------
 
 const item = computed(() => props.presentation);
-const preview = computed(() => previewText(item.value.bodyMarkdown, 2));
 const progress = computed(() => item.value.island?.progress ?? null);
-const expanded = computed(() => item.value.expanded);
+
+// ---- 超长截断：max-height 之外的内容裁掉（渐隐），按钮不受影响 --------
+const bodyClip = ref<HTMLElement | null>(null);
+const truncated = ref(false);
+async function measureTruncation() {
+  await nextTick();
+  const el = bodyClip.value;
+  truncated.value = !!el && el.scrollHeight > el.clientHeight + 2;
+}
+watch(
+  () => [props.presentation.bodyMarkdown, props.settings.contentFontSize],
+  measureTruncation,
+  { immediate: true },
+);
 const levelText = computed(() => {
   switch (item.value.urgency) {
     case "low":
@@ -188,7 +197,6 @@ const levelText = computed(() => {
       return "";
   }
 });
-const relativeTime = computed(() => describe(item.value.timestamp * 1000, now.value));
 const hasMeta = computed(() => item.value.occurrences > 1 || item.value.tags.length > 0);
 </script>
 
@@ -198,7 +206,7 @@ const hasMeta = computed(() => item.value.occurrences > 1 || item.value.tags.len
     class="toast-card"
     data-surface="card"
     :data-card-id="presentation.id"
-    :data-expanded="expanded"
+    data-expanded="true"
     :data-hovering="hovering"
     :data-dragging="dragging"
     :style="cardStyle"
@@ -216,18 +224,19 @@ const hasMeta = computed(() => item.value.occurrences > 1 || item.value.tags.len
         <div class="toast-card-header">
           <span class="toast-card-title">{{ presentation.title }}</span>
           <span class="toast-card-header-spacer" />
-          <template v-if="expanded">
-            <span v-if="levelText" class="toast-card-level" :data-urgency="presentation.urgency">{{
-              levelText
-            }}</span>
-            <span class="toast-card-time">{{ clockTime(presentation.timestamp * 1000) }}</span>
-          </template>
-          <span v-else class="toast-card-time">{{ relativeTime }}</span>
+          <span v-if="levelText" class="toast-card-level" :data-urgency="presentation.urgency">{{
+            levelText
+          }}</span>
+          <span class="toast-card-time">{{ clockTime(presentation.timestamp * 1000) }}</span>
         </div>
 
-        <!-- 展开态：完整正文 + 操作按钮（grid 0fr→1fr 高度补间） -->
-        <div v-if="expanded" class="toast-card-body-slot">
-          <div class="toast-card-body-clip">
+        <!-- 正文恒显：max-height 内完整，超出截断（渐隐） -->
+        <div class="toast-card-body-slot">
+          <div
+            ref="bodyClip"
+            class="toast-card-body-clip"
+            :data-truncated="truncated"
+          >
             <div class="toast-card-body">
               <ProgressCapsule v-if="progress !== null" :progress="progress!" />
               <MarkdownBody
@@ -235,19 +244,10 @@ const hasMeta = computed(() => item.value.occurrences > 1 || item.value.tags.len
                 :body-markdown="presentation.bodyMarkdown"
                 :font-size="settings.contentFontSize"
               />
-              <ActionRow
-                v-if="presentation.actions.length"
-                :card-id="presentation.id"
-                :actions="presentation.actions"
-              />
             </div>
           </div>
-        </div>
 
-        <!-- 收起态：纯文本摘要，绝不漏 Markdown 语法 -->
-        <div v-else class="toast-card-collapsed">
-          <span v-if="preview" class="toast-card-summary">{{ preview }}</span>
-          <ProgressCapsule v-if="progress !== null" :progress="progress!" />
+          <!-- 元信息与操作按钮在截断区之外：超长正文永不挤掉它们 -->
           <div v-if="hasMeta" class="toast-meta-row">
             <span v-if="presentation.occurrences > 1" class="toast-occurrence">
               ×{{ presentation.occurrences }}
@@ -256,6 +256,11 @@ const hasMeta = computed(() => item.value.occurrences > 1 || item.value.tags.len
               {{ presentation.tags.join(" · ") }}
             </span>
           </div>
+          <ActionRow
+            v-if="presentation.actions.length"
+            :card-id="presentation.id"
+            :actions="presentation.actions"
+          />
         </div>
       </div>
     </div>

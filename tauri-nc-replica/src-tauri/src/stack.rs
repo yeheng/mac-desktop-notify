@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::dwell::{DwellPolicy, DwellTiming};
 use crate::history::NotificationLog;
-use crate::model::{CardPayload, Urgency};
+use crate::model::{CardPayload, NotificationAction, PushOutcome, Urgency};
 
 /// 屏上同时可见的卡片数（Swift visibleCardLimit = 4）。
 pub const VISIBLE_CARD_LIMIT: usize = 4;
@@ -27,26 +27,49 @@ pub const VISIBLE_CARD_LIMIT: usize = 4;
 
 pub enum StackEvent {
     /// 入口投递（URL scheme / HTTP / WS / demo 都汇到这里）。
-    Deliver(CardPayload),
+    /// 投递一条消息。reply 是 HTTP/WS 门要的同步 PushOutcome 应答
+    /// （URL scheme 等 fire-and-forget 门传 None）。
+    Deliver {
+        item: CardPayload,
+        reply: Option<tokio::sync::oneshot::Sender<PushOutcome>>,
+    },
     Tap(Uuid),
     Close(Uuid),
     /// 悬停只暂停该卡倒计时，永不展开（Swift PointerState）。
     Hover(Uuid, bool),
     SetStackExpanded(bool),
     DragDismiss(Uuid),
-    /// Esc：收起指针所在的已展开卡。
-    DismissExpanded,
     /// 点击落在栈外：展开着的层叠收回为一摞。
     OutsideClick,
     /// 动作按钮（Phase 4 完整实现；现阶段 url 类直接打开并退役）。
-    PerformAction { card: Uuid, action: usize, comment: Option<String> },
+    /// 点了一个动作按钮（完整动作对象 + 可选批注——Swift
+    /// manager.performAction(action:for:comment:) 同款）。
+    PerformAction {
+        card: Uuid,
+        action: NotificationAction,
+        comment: Option<String>,
+    },
     RemindLater { id: Uuid, seconds: f64 },
     Silence(Option<f64>),
     ClearAll,
+    /// `clear?group=`：只清某个分组（屏上 + 历史）。
+    ClearGroup(String),
     PushDemo,
     SetMaterial(String),
     /// 全屏/压制信号（Phase 5.2 接系统事件；语义先行）。
     DisplaySuppressed(bool),
+    /// 脚本回填成功：返回对象里出现的字段覆盖消息（Swift
+    /// ScriptRunner.backfill 的 applySuccess 落点）。
+    ApplyScriptFields {
+        id: Uuid,
+        fields: serde_json::Value,
+    },
+    /// 脚本回填失败：错误 + 日志尾写进消息本体（失败也是回填）。
+    ApplyScriptFailure {
+        id: Uuid,
+        error: String,
+        logs: Vec<String>,
+    },
     Timer(TimerKey),
 }
 
@@ -196,7 +219,12 @@ impl StackActor {
 
     fn handle(&mut self, event: StackEvent) {
         match event {
-            StackEvent::Deliver(item) => self.deliver(item),
+            StackEvent::Deliver { item, reply } => {
+                let outcome = self.deliver(item);
+                if let Some(reply) = reply {
+                    let _ = reply.send(outcome);
+                }
+            }
             StackEvent::Tap(id) => self.tap(id),
             StackEvent::Close(id) => self.retire(id, true),
             StackEvent::Hover(id, hovering) => {
@@ -213,16 +241,12 @@ impl StackActor {
                 self.broadcast();
             }
             StackEvent::DragDismiss(id) => self.retire(id, false),
-            StackEvent::DismissExpanded => {
-                // 「点击展开」已移除：卡片永远完整态，Esc 无可收起。
-                // （如需 Esc=关闭指针所在卡，另立语义再接。）
-            }
             StackEvent::OutsideClick => {
                 self.state.stack_expanded = false;
                 self.broadcast();
             }
-            StackEvent::PerformAction { card, action, comment: _ } => {
-                self.perform_action(card, action);
+            StackEvent::PerformAction { card, action, comment } => {
+                self.perform_action(card, action, comment);
             }
             StackEvent::RemindLater { id, seconds } => self.remind_later(id, seconds),
             StackEvent::Silence(minutes) => {
@@ -247,9 +271,26 @@ impl StackActor {
                 self.notify.window_visible(false);
                 self.broadcast();
             }
+            StackEvent::ClearGroup(key) => {
+                let ids: Vec<Uuid> = self
+                    .state
+                    .cards
+                    .iter()
+                    .filter(|c| c.item.grouping_key() == Some(key.as_str()))
+                    .map(|c| c.item.id)
+                    .collect();
+                for id in ids {
+                    self.retire(id, false);
+                }
+                self.state.log.remove_group(&key);
+                if self.state.cards.is_empty() {
+                    self.notify.window_visible(false);
+                }
+                self.broadcast();
+            }
             StackEvent::PushDemo => {
                 let item = self.demo_item();
-                self.deliver(item);
+                let _ = self.deliver(item);
             }
             StackEvent::SetMaterial(key) => {
                 if let Some(m) = crate::config::ToastMaterial::parse(&key) {
@@ -259,13 +300,17 @@ impl StackActor {
                 }
             }
             StackEvent::DisplaySuppressed(suppressed) => self.set_display_suppressed(suppressed),
+            StackEvent::ApplyScriptFields { id, fields } => self.apply_script_fields(id, &fields),
+            StackEvent::ApplyScriptFailure { id, error, logs } => {
+                self.apply_script_failure(&id, &error, &logs);
+            }
             StackEvent::Timer(key) => self.timer_fired(key),
         }
     }
 
     // ── deliver / present ──────────────────────────────────────────────
 
-    fn deliver(&mut self, item: CardPayload) {
+    fn deliver(&mut self, item: CardPayload) -> PushOutcome {
         // 分组顶替：同组旧消息（屏上与历史）先走，×N 累计继承。
         let mut item = item;
         if let Some(key) = item.grouping_key().map(str::to_string) {
@@ -293,12 +338,20 @@ impl StackActor {
 
         self.state.log.record(item.clone());
 
+        // 脚本回填漏斗（Swift NotificationIngress）：每个能带 script 字段
+        // 的门都从这里自动获得回填，去向是 displayed 还是 withheld 无关——
+        // 引擎在 toast webview，真正的执行由前端 `script://backfill` 接手。
+        if item.script.is_some() {
+            crate::script_host::emit_backfill(&item);
+        }
+
         if self.is_quiet_public(&item) {
             self.broadcast();
-            return;
+            return PushOutcome::Withheld;
         }
 
         self.present(item);
+        PushOutcome::Displayed
     }
 
     fn is_quiet_public(&self, item: &CardPayload) -> bool {
@@ -399,17 +452,57 @@ impl StackActor {
 
     // ── 动作按钮（Phase 4 的临时路径） ─────────────────────────────────
 
-    fn perform_action(&mut self, card: Uuid, action: usize) {
+    fn perform_action(&mut self, card: Uuid, action: NotificationAction, comment: Option<String>) {
         let Some(index) = self.state.card_index(card) else { return };
-        let Some(act) = self.state.cards[index].item.actions.get(action).cloned() else {
-            return;
-        };
-        match &act.kind {
+        let item = self.state.cards[index].item.clone();
+        let comment = crate::ack_store::normalize_comment(comment);
+        match &action.kind {
             crate::model::ActionKind::Url { url } => {
-                self.perform_open(url);
+                // ack 是回环：点击落成磁盘回执，不开浏览器（Swift execute
+                // 在点击时才解析——各传输门的点击行为一致）。
+                match crate::url_ingress::parse_ack(url) {
+                    Some((token, label, _wants)) => {
+                        crate::actions::record_ack(&token, &label, &action, item.id, comment);
+                    }
+                    None => self.perform_open(url),
+                }
             }
-            crate::model::ActionKind::Callback { .. } | crate::model::ActionKind::Script { .. } => {
-                // Phase 4：ack 回执 / webhook POST / 脚本钩子。
+            crate::model::ActionKind::Callback { url } => {
+                let body =
+                    crate::actions::callback_body(&action, item.id, comment, crate::ack_store::now_epoch());
+                let url = url.clone();
+                let label = action.label.clone();
+                let target = url.clone();
+                crate::actions::send_callback(url, body, move |reason| {
+                    // 丢掉的批准比吵人的通知更糟：失败推诊断通知（决策 #4）。
+                    eprintln!("[callback] 动作回调失败（{label}）：{reason}");
+                    let item = crate::model::CardPayload {
+                        id: uuid::Uuid::new_v4(),
+                        title: "动作回调失败".into(),
+                        body_markdown: format!(
+                            "**{label}** 的回调未能送达 `{target}`\n\n{reason}"
+                        ),
+                        urgency: crate::model::Urgency::Normal,
+                        timeout: None,
+                        timestamp: crate::ack_store::now_epoch(),
+                        actions: vec![],
+                        group: None,
+                        tags: vec![],
+                        read: false,
+                        click_url: None,
+                        island: None,
+                        script: None,
+                        occurrences: 1,
+                        native: None,
+                    };
+                    crate::stack::send(StackEvent::Deliver { item, reply: None });
+                });
+            }
+            crate::model::ActionKind::Script { .. } => {
+                // 脚本钩子在 toast webview 执行：卡随点击退役（与 URL 按钮
+                // 同构），钩子 fire-and-forget，失败由前端回调诊断推送
+                // （Swift runActionHook 同款时序）。
+                crate::script_host::emit_hook(&action, &item, comment.clone());
             }
         }
         self.retire(card, true);
@@ -422,6 +515,34 @@ impl StackActor {
                 crate::platform::open_url_direct(&url);
             });
         }
+    }
+
+    // ── 脚本回填报到（前端引擎执行完写回） ──────────────────────────────
+
+    /// 成功：屏上的卡与历史条目都改写（Swift update(id:) 打在同一个消息
+    /// 数组上，这里是它的两份镜像）。改写可能动了 urgency/timeout/actions，
+    /// 寿命规则按新字段重新武装（arm_live_rules 幂等，保留剩余预算）。
+    fn apply_script_fields(&mut self, id: Uuid, fields: &serde_json::Value) {
+        if let Some(index) = self.state.card_index(id) {
+            crate::script::apply_success(fields, &mut self.state.cards[index].item);
+            self.arm_live_rules(id);
+        }
+        self.state
+            .log
+            .update(id, |entry| crate::script::apply_success(fields, entry));
+        self.broadcast();
+    }
+
+    fn apply_script_failure(&mut self, id: &Uuid, error: &str, logs: &[String]) {
+        if let Some(index) = self.state.card_index(*id) {
+            let name = self.state.cards[index].item.script.clone().unwrap_or_default();
+            crate::script::apply_failure(error, logs, &name, &mut self.state.cards[index].item);
+        }
+        self.state.log.update(*id, |entry| {
+            let name = entry.script.clone().unwrap_or_default();
+            crate::script::apply_failure(error, logs, &name, entry);
+        });
+        self.broadcast();
     }
 
     // ── 稍后提醒 ───────────────────────────────────────────────────────
@@ -745,10 +866,162 @@ impl StackActor {
             _ => {
                 let mut item = base();
                 item.title = "构建完成".into();
-                item.body_markdown = "项目编译成功，全部 12 个目标通过测试。".into();
+                item.body_markdown = "项目编译成功，全部 12 个目标通过测试。\n\n## 明细\n\n- API Server：✅ 3m12s\n- Web App：✅ 2m04s\n- 数据库迁移：✅ 41s\n- 契约测试：✅ 1m18s\n- 性能回归：✅ 未超基线 3%\n- 镜像构建：✅ 5m50s（含层缓存命中）\n- 部署清单校验：✅\n- 冒烟环境发布：✅ 已就绪\n\n产物已上传 Artifacts，`v1.2.3` 标签已打，等待审批流。".into();
+                item.tags = vec!["ci".into()];
+                item.actions = vec![NotificationAction {
+                    label: "查看日志".into(),
+                    kind: crate::model::ActionKind::Url {
+                        url: "https://ci.example.com/runs/42".into(),
+                    },
+                    wants_comment: false,
+                }];
                 item
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod action_tests {
+    use super::*;
+    use crate::model::{ActionKind, NotificationAction};
+
+    /// NC_ACKS_DIR 是进程级环境变量，两个 ack 测试并行改写会互相踩
+    /// （一个 remove_var 撞上另一个的 read 就是 flaky）——互斥串行。
+    static ACKS_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn acks_env_guard() -> std::sync::MutexGuard<'static, ()> {
+        match ACKS_ENV.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn card_with_ack() -> CardPayload {
+        CardPayload {
+            id: Uuid::new_v4(),
+            title: "部署审批".into(),
+            body_markdown: "v1.2.3".into(),
+            urgency: Urgency::Critical,
+            timeout: None,
+            timestamp: crate::model::now_secs(),
+            actions: vec![],
+            group: None,
+            tags: vec![],
+            read: false,
+            click_url: None,
+            island: None,
+            script: None,
+            occurrences: 1,
+            native: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn ack_click_records_receipt_and_retires() {
+        let _env = acks_env_guard();
+        let dir = std::env::temp_dir().join(format!("nc-acks-{}", Uuid::new_v4()));
+        std::env::set_var("NC_ACKS_DIR", &dir);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let _ = EVENT_TX.set(tx);
+
+        let mut actor = StackActor::new(StackState::new(crate::config::Config::default()), Box::new(NullNotifier));
+        let item = card_with_ack();
+        let id = item.id;
+        let _ = actor.deliver(item);
+        assert_eq!(actor.state.cards.len(), 1);
+
+        let action = NotificationAction {
+            label: "驳回".into(),
+            kind: ActionKind::Url {
+                url: "notch-notify://ack?token=deploy-42&label=deny&input=1".into(),
+            },
+            wants_comment: true,
+        };
+        actor.perform_action(id, action, Some("  驳回：staging 还没回归  ".into()));
+
+        // 点了动作的活消息退役（标记已读）。
+        assert!(actor.state.cards.is_empty());
+        // 回执落盘：URL label 优先、批注 trim 后带上。
+        let store = crate::ack_store::AckStore::new(crate::ack_store::AckStore::default_dir());
+        let receipt = store.read("deploy-42").unwrap();
+        assert_eq!(receipt.label, "deny");
+        assert_eq!(receipt.comment.as_deref(), Some("驳回：staging 还没回归"));
+        std::fs::remove_dir_all(dir).ok();
+        std::env::remove_var("NC_ACKS_DIR");
+    }
+
+    #[tokio::test]
+    async fn plain_url_click_opens_and_retires_without_receipt() {
+        let _env = acks_env_guard();
+        let dir = std::env::temp_dir().join(format!("nc-acks-{}", Uuid::new_v4()));
+        std::env::set_var("NC_ACKS_DIR", &dir);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let _ = EVENT_TX.set(tx);
+
+        let mut actor = StackActor::new(StackState::new(crate::config::Config::default()), Box::new(NullNotifier));
+        let item = card_with_ack();
+        let id = item.id;
+        let _ = actor.deliver(item);
+        let action = NotificationAction {
+            label: "查看".into(),
+            kind: ActionKind::Url {
+                url: "https://example.com/x".into(),
+            },
+            wants_comment: false,
+        };
+        actor.perform_action(id, action, None);
+        assert!(actor.state.cards.is_empty());
+        assert!(!dir.exists() || std::fs::read_dir(&dir).map(|mut d| d.next().is_none()).unwrap_or(true));
+        std::fs::remove_dir_all(dir).ok();
+        std::env::remove_var("NC_ACKS_DIR");
+    }
+
+    #[tokio::test]
+    async fn script_backfill_updates_card_and_history_alike() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let _ = EVENT_TX.set(tx);
+
+        let mut actor = StackActor::new(StackState::new(crate::config::Config::default()), Box::new(NullNotifier));
+        let mut item = card_with_ack();
+        item.script = Some("ci".into());
+        let id = item.id;
+        let _ = actor.deliver(item);
+        assert_eq!(actor.state.cards.len(), 1);
+
+        actor.handle(StackEvent::ApplyScriptFields {
+            id,
+            fields: serde_json::json!({"title": "构建完成", "urgency": "critical", "timeout": 3}),
+        });
+        // 屏上的卡与历史条目是同一份消息的两处镜像，一起改写。
+        assert_eq!(actor.state.cards[0].item.title, "构建完成");
+        assert_eq!(actor.state.cards[0].item.urgency, Urgency::Critical);
+        assert_eq!(actor.state.cards[0].item.timeout, Some(3.0));
+        let entry = actor.state.log.history().iter().find(|m| m.id == id).unwrap();
+        assert_eq!(entry.title, "构建完成");
+    }
+
+    #[tokio::test]
+    async fn script_backfill_failure_writes_diagnostics_into_message() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let _ = EVENT_TX.set(tx);
+
+        let mut actor = StackActor::new(StackState::new(crate::config::Config::default()), Box::new(NullNotifier));
+        let mut item = card_with_ack();
+        item.script = Some("ci".into());
+        item.title = crate::validator::pending_title("ci");
+        let id = item.id;
+        let _ = actor.deliver(item);
+
+        actor.handle(StackEvent::ApplyScriptFailure {
+            id,
+            error: "timeout".into(),
+            logs: vec!["line1".into()],
+        });
+        // 占位标题换失败标题，错误 + 日志尾进了正文。
+        assert_eq!(actor.state.cards[0].item.title, "脚本失败：ci");
+        assert!(actor.state.cards[0].item.body_markdown.starts_with("⚠️ 脚本失败：timeout"));
+        assert!(actor.state.cards[0].item.body_markdown.contains("line1"));
     }
 }
 
@@ -758,12 +1031,32 @@ static EVENT_TX: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<StackEve
     std::sync::OnceLock::new();
 static APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
+/// 应用句柄（script_host 等无窗口上下文的模块向 toast webview 发事件的口）。
+pub fn app_handle() -> Option<&'static tauri::AppHandle> {
+    APP_HANDLE.get()
+}
+
 /// 启动装配：建通道、spawn actor（tauri 的 tokio 运行时上）。
 pub fn init(app: tauri::AppHandle) {
     let _ = APP_HANDLE.set(app.clone());
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let _ = EVENT_TX.set(tx);
-    let state = StackState::new(crate::config::Config::load());
+    let mut state = StackState::new(crate::config::Config::load());
+    // 历史回放：三态加载，坏档归档不覆盖。
+    let store = crate::history_store::NotificationHistoryStore::new(
+        crate::config::history_path(),
+    );
+    match store.load() {
+        crate::history_store::HistoryLoadOutcome::Loaded(items, read) => {
+            state.log.restore(items, read);
+        }
+        crate::history_store::HistoryLoadOutcome::Unreadable => {
+            if let Some(archived) = store.archive_unreadable() {
+                eprintln!("[history] unreadable snapshot archived: {}", archived.display());
+            }
+        }
+        crate::history_store::HistoryLoadOutcome::NoHistory => {}
+    }
     let actor = StackActor::new(state, Box::new(crate::notifier::AppNotifier::new(app)));
     tauri::async_runtime::spawn(actor.run(rx));
 }

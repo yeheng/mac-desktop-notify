@@ -93,18 +93,7 @@ function onLeave(el: Element, done: () => void) {
   }, ms);
 }
 
-// ---- Escape：收起指针所在的展开卡片（面板为 key window 时才收得到） ----
-
-function onKeyDown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return;
-  const hasExpanded = toastStore.state.presentations.some((p) => p.expanded);
-  if (!hasExpanded) return;
-  event.preventDefault();
-  toastStore.dismissExpanded();
-}
-
-onMounted(() => window.addEventListener("keydown", onKeyDown));
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
+// Esc 语义已定为空操作（无收起态）：不监听、不拦截，留给前台应用。
 </script>
 
 <template>

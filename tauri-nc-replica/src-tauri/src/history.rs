@@ -28,6 +28,11 @@ impl NotificationLog {
         &self.read_ids
     }
 
+    /// 仅测试与恢复路径使用：直接写已读集。
+    pub fn read_ids_mut(&mut self) -> &mut HashSet<Uuid> {
+        &mut self.read_ids
+    }
+
     pub fn contains(&self, id: Uuid) -> bool {
         self.history.iter().any(|m| m.id == id)
     }

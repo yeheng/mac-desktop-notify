@@ -55,6 +55,16 @@ pub fn norm_timeout(raw: Option<f64>) -> Option<f64> {
 /// 原始 JSON 动作 → model。label trim/截断且非空；kind 按
 /// script → callback → url 优先级取第一个有效值；Url 按钮的批注意图来自
 /// ack URL，其余来自 `input` 标志；最多 3 个存活。推送永不因动作失败。
+/// `native` 的 JSON 入口解码（Swift NativeDTO）：Bool 或 Int(≠0) 都算数，
+/// 其他形状 = nil = 「跟随应用设置」，绝不因坏值整推拒绝。
+pub fn norm_native(raw: Option<&Value>) -> Option<bool> {
+    match raw? {
+        Value::Bool(b) => Some(*b),
+        Value::Number(n) => n.as_i64().map(|v| v != 0),
+        _ => None,
+    }
+}
+
 pub fn norm_actions(raw: &[Value]) -> Vec<NotificationAction> {
     raw.iter()
         .filter_map(|a| {
@@ -152,6 +162,7 @@ struct Push {
     click_url: Option<String>,
     island: Option<Value>,
     script: Option<String>,
+    native: Option<Value>,
 }
 
 /// 推送入口。`Err` 时携带 (状态码, 错误 JSON)（对应 Swift PushRejection
@@ -251,7 +262,7 @@ pub fn validate(body: &[u8]) -> Result<CardPayload, (u16, Value)> {
         island: norm_island(push.island),
         script: push.script,
         occurrences: 1,
-        native: None,
+        native: norm_native(push.native.as_ref()),
     })
 }
 
